@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 
+	"github.com/fabxc/tsdb/labels"
 	"github.com/oklog/ulid"
 	"github.com/pkg/errors"
 )
@@ -40,6 +41,8 @@ type Block interface {
 type HeadBlock interface {
 	Block
 	Appendable
+	// SelectLatest will give the lastest Sample from each Series.
+	SelectLatest(cutoff int64, matchers ...labels.Matcher) []SeriesLatest
 }
 
 // Appendable defines an entity to which data can be appended.

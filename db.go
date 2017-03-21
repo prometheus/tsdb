@@ -188,6 +188,25 @@ func Open(dir string, l log.Logger, r prometheus.Registerer, opts *Options) (db 
 	return db, nil
 }
 
+// QueryLatest will return the matching series with their latest value.
+// Useful for federation.
+func (db *DB) QueryLatest(cutoff int64, matchers ...labels.Matcher) []SeriesLatest {
+	db.headmtx.RLock()
+	defer db.headmtx.RUnlock()
+
+	sl := make([]SeriesLatest, 0)
+	for _, h := range db.heads {
+		m := h.Meta()
+		if m.MaxTime < cutoff {
+			continue
+		}
+
+		sl = append(sl, h.SelectLatest(cutoff, matchers...)...)
+	}
+
+	return sl
+}
+
 func (db *DB) run() {
 	defer close(db.donec)
 
