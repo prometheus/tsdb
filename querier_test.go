@@ -20,14 +20,6 @@ func (m *mockSeriesIterator) At() (int64, float64) { return m.at() }
 func (m *mockSeriesIterator) Next() bool           { return m.next() }
 func (m *mockSeriesIterator) Err() error           { return m.err() }
 
-type mockSeries struct {
-	labels   func() labels.Labels
-	iterator func() SeriesIterator
-}
-
-func (m *mockSeries) Labels() labels.Labels    { return m.labels() }
-func (m *mockSeries) Iterator() SeriesIterator { return m.iterator() }
-
 type listSeriesIterator struct {
 	list []sample
 	idx  int
@@ -67,8 +59,8 @@ func (it *listSeriesIterator) Err() error {
 func TestMergedSeriesSet(t *testing.T) {
 	newSeries := func(l map[string]string, s []sample) Series {
 		return &mockSeries{
-			labels:   func() labels.Labels { return labels.FromMap(l) },
-			iterator: func() SeriesIterator { return newListSeriesIterator(s) },
+			lset:    labels.FromMap(l),
+			samples: s,
 		}
 	}
 
