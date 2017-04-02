@@ -2,14 +2,16 @@ package tsdb
 
 import (
 	"io/ioutil"
-	"math"
+	"math/rand"
 	"os"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 	"unsafe"
 
 	"github.com/fabxc/tsdb/labels"
+	"github.com/go-kit/kit/log"
 	"github.com/pkg/errors"
 
 	promlabels "github.com/prometheus/prometheus/pkg/labels"
@@ -76,6 +78,60 @@ func readPrometheusLabels(fn string, n int) ([]labels.Labels, error) {
 	return mets, nil
 }
 
+func TestHeadBlock_e2e(t *testing.T) {
+	dir, err := ioutil.TempDir("", "test_persistence_e2e")
+	require.NoError(t, err)
+	defer os.RemoveAll(dir)
+
+	lbls, err := readPrometheusLabels("testdata/20k.series", 15000)
+	require.NoError(t, err)
+
+	l := log.NewLogfmtLogger(os.Stdout)
+	ts := time.Now().UnixNano() / 1000000
+
+	hb, err := createHeadBlock(dir, 0, l, ts, ts+50*1000)
+	require.NoError(t, err)
+	mhb := newMockHead(dir)
+
+	// 10 scrapes of 10 targets.
+	for i := 0; i < 10; i++ {
+		for j := 0; j < 10; j++ {
+			ts := time.Now().UnixNano() / 1000000
+			app := hb.Appender()
+			go ingestScrapes(t, lbls, string(j), ts, app, mhb.Appender())
+		}
+		time.Sleep(1 * time.Second)
+	}
+
+	//mhb.Lock()
+	//hb.mtx.Lock()
+	//require.Equal(t, mhb.meta.Stats.NumSamples, hb.meta.Stats.NumSamples,
+	//"NumSamples: exp: %d, got: %d", mhb.meta.Stats.NumSamples, hb.meta.Stats.NumSamples)
+	//require.Equal(t, mhb.meta.Stats.NumSeries, hb.meta.Stats.NumSeries, "NumSeries")
+	//require.Equal(t, mhb.meta.Stats.NumChunks, hb.meta.Stats.NumChunks, "NumChunks")
+
+}
+
+func ingestScrapes(
+	t *testing.T,
+	l []labels.Labels,
+	instance string,
+	ts int64,
+	app Appender,
+	mockApp Appender,
+) {
+	for _, lset := range l {
+		lset = append(lset, labels.Label{Name: "instance", Value: instance})
+		_, err := app.Add(lset, ts, rand.Float64())
+		require.NoError(t, err)
+		//_, err = mockApp.Add(lset, ts, rand.Float64())
+		//require.NoError(t, err)
+	}
+	require.NoError(t, app.Commit())
+	//require.NoError(t, mockApp.Commit())
+	return
+}
+
 type mockSeries struct {
 	lset    labels.Labels
 	samples []sample
@@ -103,15 +159,27 @@ type mockHead struct {
 	sync.RWMutex
 }
 
-func (m mockHead) Dir() string {
+func newMockHead(dir string) *mockHead {
+	return &mockHead{
+		dir: dir,
+		postings: &memPostings{
+			m: make(map[term][]uint32),
+		},
+		values: make(map[string]stringset),
+		series: make([]mockSeries, 0),
+		lref:   newLmap(),
+	}
+}
+
+func (m *mockHead) Dir() string {
 	return m.dir
 }
 
-func (m mockHead) Meta() BlockMeta {
+func (m *mockHead) Meta() BlockMeta {
 	return m.meta
 }
 
-func (m mockHead) IndexReader() IndexReader {
+func (m *mockHead) IndexReader() IndexReader {
 	m.RLock()
 	defer m.RUnlock()
 
@@ -142,15 +210,15 @@ func (m mockHead) IndexReader() IndexReader {
 }
 
 // TODO?: Seems to be used only while persisting.
-func (m mockHead) Chunks() ChunkReader {
+func (m *mockHead) Chunks() ChunkReader {
 	return nil
 }
 
-func (m mockHead) Close() error {
+func (m *mockHead) Close() error {
 	return nil
 }
 
-func (m mockHead) Querier(mint, maxt int64) Querier {
+func (m *mockHead) Querier(mint, maxt int64) Querier {
 	m.RLock()
 	return mockHeadQuerier{
 		h:    m,
@@ -161,7 +229,7 @@ func (m mockHead) Querier(mint, maxt int64) Querier {
 }
 
 type mockHeadQuerier struct {
-	h    mockHead
+	h    *mockHead
 	i    IndexReader
 	mint int64
 	maxt int64
@@ -246,9 +314,9 @@ func (q mockHeadQuerier) Close() error {
 	return nil
 }
 
-func (m mockHead) Appender() Appender {
+func (m *mockHead) Appender() Appender {
 	atomic.AddUint64(&m.activeWriters, 1)
-	return mockHeadAppender{
+	return &mockHeadAppender{
 		h:      m,
 		series: make([][]sample, 0, 512),
 		lref:   newLmap(),
@@ -314,25 +382,24 @@ func (l lmap) get(lset labels.Labels) (int, bool) {
 }
 
 type mockHeadAppender struct {
-	h mockHead
+	h *mockHead
 
 	// The index here is the ref.
 	series [][]sample
 	lref   lmap
 }
 
-func (m mockHeadAppender) Add(l labels.Labels, t int64, v float64) (uint64, error) {
+func (m *mockHeadAppender) Add(l labels.Labels, t int64, v float64) (uint64, error) {
 	ref, ok := m.lref.get(l)
 	if !ok {
 		m.series = append(m.series, make([]sample, 0, 512))
-		m.lref.add(l, len(m.series)-1)
 		ref = len(m.series) - 1
+		m.lref.add(l, ref)
 	}
-
 	return uint64(ref), m.AddFast(uint64(ref), t, v)
 }
 
-func (m mockHeadAppender) AddFast(ref uint64, t int64, v float64) error {
+func (m *mockHeadAppender) AddFast(ref uint64, t int64, v float64) error {
 	if len(m.series) <= int(ref) {
 		return ErrNotFound
 	}
@@ -357,13 +424,11 @@ func (m mockHeadAppender) AddFast(ref uint64, t int64, v float64) error {
 	return nil
 }
 
-func (m mockHeadAppender) Commit() error {
+func (m *mockHeadAppender) Commit() error {
 	defer atomic.AddUint64(&m.h.activeWriters, ^uint64(0))
 
 	m.h.Lock()
 	defer m.h.Unlock()
-	mint := int64(math.MaxInt64)
-	maxt := int64(math.MinInt64)
 
 	for _, v := range m.lref.lref {
 		for _, rlset := range v {
@@ -384,15 +449,9 @@ func (m mockHeadAppender) Commit() error {
 
 			for _, v := range m.series[rlset.ref] {
 				samples := m.h.series[ref].samples
-				if v.t < samples[len(samples)-1].t {
-					m.h.series[ref].samples = append(m.h.series[ref].samples, v)
 
-					if mint > v.t {
-						mint = v.t
-					}
-					if maxt < v.t {
-						maxt = v.t
-					}
+				if len(samples) == 0 || v.t < samples[len(samples)-1].t {
+					m.h.series[ref].samples = append(m.h.series[ref].samples, v)
 
 					m.h.meta.Stats.NumSamples++
 				}
@@ -401,18 +460,10 @@ func (m mockHeadAppender) Commit() error {
 		}
 	}
 
-	if m.h.meta.MaxTime < maxt {
-		m.h.meta.MaxTime = maxt
-	}
-
-	if m.h.meta.MinTime > mint {
-		m.h.meta.MinTime = mint
-	}
-
 	return nil
 }
 
-func (m mockHeadAppender) addIndex(lset labels.Labels, ref int) {
+func (m *mockHeadAppender) addIndex(lset labels.Labels, ref int) {
 	for _, l := range lset {
 		valset, ok := m.h.values[l.Name]
 		if !ok {
@@ -427,7 +478,7 @@ func (m mockHeadAppender) addIndex(lset labels.Labels, ref int) {
 	m.h.postings.add(uint32(ref), term{})
 }
 
-func (m mockHeadAppender) Rollback() error {
+func (m *mockHeadAppender) Rollback() error {
 	atomic.AddUint64(&m.h.activeWriters, ^uint64(0))
 	return nil
 }
