@@ -2,6 +2,7 @@ package tsdb
 
 import (
 	"io/ioutil"
+	"math"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -361,6 +362,9 @@ func (m mockHeadAppender) Commit() error {
 
 	m.h.Lock()
 	defer m.h.Unlock()
+	mint := int64(math.MaxInt64)
+	maxt := int64(math.MinInt64)
+
 	for _, v := range m.lref.lref {
 		for _, rlset := range v {
 			// If series exists then append, else add series and append.
@@ -374,10 +378,35 @@ func (m mockHeadAppender) Commit() error {
 					samples: make([]sample, 0, 512),
 				})
 				m.addIndex(rlset.lset, ref)
+
+				m.h.meta.Stats.NumSeries++
 			}
 
-			m.h.series[ref].samples = append(m.h.series[ref].samples, m.series[rlset.ref]...)
+			for _, v := range m.series[rlset.ref] {
+				samples := m.h.series[ref].samples
+				if v.t < samples[len(samples)-1].t {
+					m.h.series[ref].samples = append(m.h.series[ref].samples, v)
+
+					if mint > v.t {
+						mint = v.t
+					}
+					if maxt < v.t {
+						maxt = v.t
+					}
+
+					m.h.meta.Stats.NumSamples++
+				}
+			}
+
 		}
+	}
+
+	if m.h.meta.MaxTime < maxt {
+		m.h.meta.MaxTime = maxt
+	}
+
+	if m.h.meta.MinTime > mint {
+		m.h.meta.MinTime = mint
 	}
 
 	return nil
