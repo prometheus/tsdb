@@ -4,6 +4,8 @@ import (
 	"io/ioutil"
 	"math/rand"
 	"os"
+	"sort"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -83,7 +85,7 @@ func TestHeadBlock_e2e(t *testing.T) {
 	require.NoError(t, err)
 	defer os.RemoveAll(dir)
 
-	lbls, err := readPrometheusLabels("testdata/20k.series", 15000)
+	lbls, err := readPrometheusLabels("testdata/20k.series", 20000)
 	require.NoError(t, err)
 
 	l := log.NewLogfmtLogger(os.Stdout)
@@ -97,19 +99,15 @@ func TestHeadBlock_e2e(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		for j := 0; j < 10; j++ {
 			ts := time.Now().UnixNano() / 1000000
-			app := hb.Appender()
-			go ingestScrapes(t, lbls, string(j), ts, app, mhb.Appender())
+			go ingestScrapes(t, lbls, strconv.Itoa(j), ts, hb.Appender(), mhb.Appender())
 		}
-		time.Sleep(1 * time.Second)
+		time.Sleep(2 * time.Second)
 	}
 
-	//mhb.Lock()
-	//hb.mtx.Lock()
-	//require.Equal(t, mhb.meta.Stats.NumSamples, hb.meta.Stats.NumSamples,
-	//"NumSamples: exp: %d, got: %d", mhb.meta.Stats.NumSamples, hb.meta.Stats.NumSamples)
-	//require.Equal(t, mhb.meta.Stats.NumSeries, hb.meta.Stats.NumSeries, "NumSeries")
-	//require.Equal(t, mhb.meta.Stats.NumChunks, hb.meta.Stats.NumChunks, "NumChunks")
-
+	require.Equal(t, mhb.meta.Stats.NumSamples, hb.meta.Stats.NumSamples,
+		"NumSamples: exp: %d, got: %d", mhb.meta.Stats.NumSamples, hb.meta.Stats.NumSamples)
+	require.Equal(t, mhb.meta.Stats.NumSeries, hb.meta.Stats.NumSeries, "NumSeries")
+	require.Equal(t, mhb.meta.Stats.NumChunks, hb.meta.Stats.NumChunks, "NumChunks")
 }
 
 func ingestScrapes(
@@ -121,14 +119,24 @@ func ingestScrapes(
 	mockApp Appender,
 ) {
 	for _, lset := range l {
-		lset = append(lset, labels.Label{Name: "instance", Value: instance})
-		_, err := app.Add(lset, ts, rand.Float64())
+		nlset := make(labels.Labels, len(lset))
+		copy(nlset, lset)
+
+		nlset = append(nlset, labels.Label{Name: "instance", Value: instance})
+		sort.Sort(nlset)
+
+		val := 100 * rand.Float64()
+		_, err := app.Add(nlset, ts, val)
+		if err != nil {
+			app.Rollback()
+		}
 		require.NoError(t, err)
-		//_, err = mockApp.Add(lset, ts, rand.Float64())
-		//require.NoError(t, err)
+
+		_, err = mockApp.Add(nlset, ts, val)
+		require.NoError(t, err)
 	}
 	require.NoError(t, app.Commit())
-	//require.NoError(t, mockApp.Commit())
+	require.NoError(t, mockApp.Commit())
 	return
 }
 
@@ -184,7 +192,7 @@ func (m *mockHead) IndexReader() IndexReader {
 	defer m.RUnlock()
 
 	index := newMockIndex()
-	for _, v := range m.lref.lref {
+	for _, v := range m.lref {
 		for _, rl := range v {
 			samples := m.series[rl.ref].samples
 
@@ -332,24 +340,20 @@ type refdLset struct {
 	ref  int
 }
 
-type lmap struct {
-	lref map[uint64][]refdLset
-}
+type lmap map[uint64][]refdLset
 
 func newLmap() lmap {
-	return lmap{
-		lref: make(map[uint64][]refdLset),
-	}
+	return make(map[uint64][]refdLset)
 }
 
 func (l lmap) add(lset labels.Labels, ref int) {
 	h := lset.Hash()
-	s, ok := l.lref[h]
+	s, ok := l[h]
 	if ok {
 		_, ok := l.get(lset)
 
 		if !ok {
-			l.lref[h] = append(l.lref[h], refdLset{lset, ref})
+			l[h] = append(l[h], refdLset{lset, ref})
 			return
 		}
 
@@ -361,13 +365,13 @@ func (l lmap) add(lset labels.Labels, ref int) {
 		}
 	}
 
-	l.lref[h] = []refdLset{{lset, ref}}
+	l[h] = []refdLset{{lset, ref}}
 	return
 }
 
 func (l lmap) get(lset labels.Labels) (int, bool) {
 	h := lset.Hash()
-	s, ok := l.lref[h]
+	s, ok := l[h]
 	if !ok {
 		return 0, ok
 	}
@@ -430,7 +434,7 @@ func (m *mockHeadAppender) Commit() error {
 	m.h.Lock()
 	defer m.h.Unlock()
 
-	for _, v := range m.lref.lref {
+	for _, v := range m.lref {
 		for _, rlset := range v {
 			// If series exists then append, else add series and append.
 			ref, ok := m.h.lref.get(rlset.lset)
@@ -450,7 +454,7 @@ func (m *mockHeadAppender) Commit() error {
 			for _, v := range m.series[rlset.ref] {
 				samples := m.h.series[ref].samples
 
-				if len(samples) == 0 || v.t < samples[len(samples)-1].t {
+				if len(samples) == 0 || v.t > samples[len(samples)-1].t {
 					m.h.series[ref].samples = append(m.h.series[ref].samples, v)
 
 					m.h.meta.Stats.NumSamples++
