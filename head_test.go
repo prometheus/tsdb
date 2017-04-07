@@ -111,6 +111,25 @@ func TestLatestValRead(t *testing.T) {
 				},
 				cutoff: 1,
 			},
+			{
+				l: []labels.Labels{
+					{{Name: "num", Value: "1"}},
+					{{Name: "num", Value: "2"}},
+					{{Name: "num", Value: "3"}},
+					{{Name: "num", Value: "4"}},
+					{{Name: "num", Value: "5"}},
+					{{Name: "num", Value: "6"}},
+				},
+				s: []sample{
+					{t: 2, v: 3},
+					{t: 2, v: 3},
+					{t: 2, v: 3},
+					{t: 2, v: 3},
+					{t: 2, v: 3},
+					{t: 2, v: 3},
+				},
+				cutoff: 1,
+			},
 		}
 
 		m := make(map[string]sample)
@@ -147,8 +166,9 @@ func TestLatestValRead(t *testing.T) {
 				require.NoError(t, it.Err())
 				require.True(t, n <= 1)
 			}
-
 			require.NoError(t, ss.Err())
+
+			db.cut(tc.cutoff)
 		}
 
 		return

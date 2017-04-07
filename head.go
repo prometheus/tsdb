@@ -250,9 +250,30 @@ func (h *headBlock) SelectLast(cutoff int64, matchers ...labels.Matcher) SeriesS
 	h.mtx.RLock()
 	defer h.mtx.RUnlock()
 
+	series := h.series[:]
 	// Select the postings
 	pq := &postingsQuerier{
 		index: h.Index(),
+		postingsMapper: func(p Postings) Postings {
+			ep := make([]uint32, 0, 64)
+
+			for p.Next() {
+				// Skip posting entries that include series added after we
+				// instantiated the querier.
+				if int(p.At()) >= len(series) {
+					break
+				}
+				ep = append(ep, p.At())
+			}
+			if err := p.Err(); err != nil {
+				return errPostings{err: errors.Wrap(err, "expand postings")}
+			}
+
+			sort.Slice(ep, func(i, j int) bool {
+				return labels.Compare(series[ep[i]].lset, series[ep[j]].lset) < 0
+			})
+			return newListPostings(ep)
+		},
 	}
 
 	p, absent := pq.Select(matchers...)
@@ -260,22 +281,22 @@ func (h *headBlock) SelectLast(cutoff int64, matchers ...labels.Matcher) SeriesS
 	return &lastSeriesSet{h: h, p: p, absent: absent, cutoff: cutoff}
 }
 
-type lastIterator struct {
+type singleIterator struct {
 	t    int64
 	v    float64
 	done bool
 }
 
-func (i *lastIterator) Seek(t int64) bool    { return t <= i.t }
-func (i *lastIterator) At() (int64, float64) { return i.t, i.v }
-func (i *lastIterator) Next() bool {
+func (i *singleIterator) Seek(t int64) bool    { return t <= i.t }
+func (i *singleIterator) At() (int64, float64) { return i.t, i.v }
+func (i *singleIterator) Next() bool {
 	if i.done {
 		return false
 	}
 	i.done = true
 	return true
 }
-func (i *lastIterator) Err() error { return nil }
+func (i *singleIterator) Err() error { return nil }
 
 type lastSeriesSet struct {
 	h      *headBlock
@@ -306,7 +327,7 @@ func (ls *lastSeriesSet) At() Series {
 		return simpleSeries{ms.lset, nopSeriesIterator{}}
 	}
 
-	return simpleSeries{ms.lset, &lastIterator{t: c.maxTime, v: ms.lastValue}}
+	return simpleSeries{ms.lset, &singleIterator{t: c.maxTime, v: ms.lastValue}}
 }
 
 func (ls *lastSeriesSet) Err() error { return ls.p.Err() }

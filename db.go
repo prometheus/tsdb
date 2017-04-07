@@ -587,102 +587,52 @@ func (a *dbAppender) appenderFor(t int64) (*metaAppender, error) {
 	return nil, ErrNotFound
 }
 
-type latestSeriesSet struct {
-	seen map[uint64][]labels.Labels
-
-	heads   []HeadBlock
-	headIdx int
-
-	cur SeriesSet
-
-	cutoff   int64
-	matchers []labels.Matcher
+type lastValSeriesSet struct {
+	s SeriesSet
 }
 
-func (l *latestSeriesSet) saw(lset labels.Labels) bool {
-	h := lset.Hash()
-	lbls, ok := l.seen[h]
-	if !ok {
-		return false
+func (l lastValSeriesSet) Next() bool { return l.s.Next() }
+func (l lastValSeriesSet) At() Series {
+	s := l.s.At()
+	it := s.Iterator()
+
+	if it.Next() {
+		t, v := it.At()
+		return &simpleSeries{s.Labels(), &singleIterator{t: t, v: v}}
 	}
 
-	for _, ls := range lbls {
-		if ls.Equals(lset) {
-			return true
-		}
-	}
-
-	return false
-}
-
-func (l *latestSeriesSet) see(lset labels.Labels) {
-	h := lset.Hash()
-	_, ok := l.seen[h]
-	if ok {
-		l.seen[h] = append(l.seen[h], lset)
-	}
-
-	l.seen[h] = []labels.Labels{lset}
-}
-
-func (l *latestSeriesSet) Next() bool {
-	if l.cur.Next() {
-		return true
-	}
-
-	if l.cur.Err() != nil {
-		return false
-	}
-
-	l.headIdx++
-	if l.headIdx == len(l.heads) {
-		return false
-	}
-
-	h := l.heads[len(l.heads)-1-l.headIdx]
-	if h.Meta().MaxTime < l.cutoff {
-		return false
-	}
-
-	l.cur = h.SelectLast(l.cutoff, l.matchers...)
-	return l.Next()
-}
-
-func (l *latestSeriesSet) At() Series {
-	s := l.cur.At()
-	// Check if the series has been seen before. If yes skip, else add it to seen.
-	// One interesting observation is when a series with nopIterator comes: if it
-	// has been marked nop in this head, there is no point checking the next head.
-	// Hence we can safely add it to seen.
-
-	lset := s.Labels()
-	if l.saw(lset) {
-		// TODO: Move to next series here
-		return simpleSeries{lset, nopSeriesIterator{}}
-	}
-
-	l.see(lset)
+	// If its a nopSeriesIterator then return the same.
 	return s
 }
 
-func (l *latestSeriesSet) Err() error { return l.cur.Err() }
+func (l lastValSeriesSet) Err() error { return l.s.Err() }
 
 // QueryLatest will return the matching series with their latest value.
 // Useful for federation.
 func (db *DB) QueryLatest(cutoff int64, matchers ...labels.Matcher) SeriesSet {
 	// Get a reference to the current heads
+	db.headmtx.RLock()
 	heads := db.heads[:]
-	cur := heads[len(heads)-1].SelectLast(cutoff, matchers...)
+	db.headmtx.RUnlock()
 
-	return &latestSeriesSet{
-		seen:    make(map[uint64][]labels.Labels),
-		heads:   heads,
-		headIdx: 0,
-		cur:     cur,
+	idx := 0
+	var ss SeriesSet
+	ss = nopSeriesSet{}
 
-		cutoff:   cutoff,
-		matchers: matchers,
+	for idx < len(heads) {
+		h := heads[len(heads)-1-idx]
+		if h.Meta().MaxTime < cutoff {
+			break
+		}
+		idx++
+
+		// We want the latest val first and not the oldest val. Hence we are breaking the
+		// sequentiality in time. But that also means that we need to wrap this
+		// SeriesSet to return only 1 value per series.
+		ss = newMergedSeriesSet(ss, h.SelectLast(cutoff, matchers...))
 	}
+
+	return lastValSeriesSet{ss}
 }
 
 // ensureHead makes sure that there is a head block for the timestamp t if
