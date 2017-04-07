@@ -4,6 +4,7 @@ import (
 	"io/ioutil"
 	"os"
 	"testing"
+	"time"
 	"unsafe"
 
 	"github.com/pkg/errors"
@@ -71,4 +72,87 @@ func readPrometheusLabels(fn string, n int) ([]labels.Labels, error) {
 		return mets, errors.Errorf("requested %d metrics but found %d", n, i)
 	}
 	return mets, nil
+}
+
+func TestLatestValRead(t *testing.T) {
+	dir, err := ioutil.TempDir("", "testlatestvalread")
+	require.NoError(t, err)
+	db, err := Open(dir, nil, nil, &Options{
+		WALFlushInterval:  10 * time.Second,
+		MinBlockDuration:  uint64(2 * time.Hour.Seconds() * 1000),
+		MaxBlockDuration:  uint64(36 * time.Hour.Seconds() * 1000),
+		AppendableBlocks:  2,
+		RetentionDuration: uint64(15 * 24 * time.Hour.Seconds() * 1000),
+	})
+
+	t.Run("simple", func(t *testing.T) {
+		// TODO: Rather simplified, there is only one label.
+		table := []struct {
+			l      []labels.Labels
+			s      []sample
+			cutoff int64
+		}{
+			{
+				l: []labels.Labels{
+					{{Name: "num", Value: "1"}},
+					{{Name: "num", Value: "2"}},
+					{{Name: "num", Value: "3"}},
+					{{Name: "num", Value: "4"}},
+					{{Name: "num", Value: "5"}},
+					{{Name: "num", Value: "6"}},
+				},
+				s: []sample{
+					{t: 1, v: 2},
+					{t: 1, v: 2},
+					{t: 1, v: 2},
+					{t: 1, v: 2},
+					{t: 1, v: 2},
+					{t: 1, v: 2},
+				},
+				cutoff: 1,
+			},
+		}
+
+		m := make(map[string]sample)
+		for _, tc := range table {
+			app := db.Appender()
+			for i, l := range tc.l {
+				s := tc.s[i]
+				_, err := app.Add(l, s.t, s.v)
+				require.NoError(t, err)
+
+				m[l[0].Value] = s
+			}
+			require.NoError(t, app.Commit())
+
+			matcher := labels.NewEqualMatcher("num", "9")
+			matcher = labels.Not(matcher)
+
+			ss := db.QueryLatest(tc.cutoff, matcher)
+			for ss.Next() {
+				s := ss.At()
+				it := s.Iterator()
+				l := s.Labels()
+
+				n := 0
+				for it.Next() {
+					n++
+					time, v := it.At()
+					require.True(t, time >= tc.cutoff)
+
+					require.Equal(t, m[l[0].Value].t, time)
+					require.Equal(t, m[l[0].Value].v, v)
+				}
+
+				require.NoError(t, it.Err())
+				require.True(t, n <= 1)
+			}
+
+			require.NoError(t, ss.Err())
+		}
+
+		return
+	})
+
+	return
 }

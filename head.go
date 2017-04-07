@@ -266,16 +266,16 @@ type lastIterator struct {
 	done bool
 }
 
-func (i lastIterator) Seek(t int64) bool    { return t <= i.t }
-func (i lastIterator) At() (int64, float64) { return i.t, i.v }
-func (i lastIterator) Next() bool {
+func (i *lastIterator) Seek(t int64) bool    { return t <= i.t }
+func (i *lastIterator) At() (int64, float64) { return i.t, i.v }
+func (i *lastIterator) Next() bool {
 	if i.done {
 		return false
 	}
 	i.done = true
 	return true
 }
-func (i lastIterator) Err() error { return nil }
+func (i *lastIterator) Err() error { return nil }
 
 type lastSeriesSet struct {
 	h      *headBlock
@@ -306,7 +306,7 @@ func (ls *lastSeriesSet) At() Series {
 		return simpleSeries{ms.lset, nopSeriesIterator{}}
 	}
 
-	return simpleSeries{ms.lset, lastIterator{t: c.maxTime, v: ms.lastValue}}
+	return simpleSeries{ms.lset, &lastIterator{t: c.maxTime, v: ms.lastValue}}
 }
 
 func (ls *lastSeriesSet) Err() error { return ls.p.Err() }

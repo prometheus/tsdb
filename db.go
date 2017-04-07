@@ -639,7 +639,12 @@ func (l *latestSeriesSet) Next() bool {
 		return false
 	}
 
-	l.cur = l.heads[len(l.heads)-1-l.headIdx].SelectLast(l.cutoff, l.matchers...)
+	h := l.heads[len(l.heads)-1-l.headIdx]
+	if h.Meta().MaxTime < l.cutoff {
+		return false
+	}
+
+	l.cur = h.SelectLast(l.cutoff, l.matchers...)
 	return l.Next()
 }
 
