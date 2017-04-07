@@ -246,6 +246,72 @@ func (h *headBlock) Busy() bool {
 	return atomic.LoadUint64(&h.activeWriters) > 0
 }
 
+func (h *headBlock) SelectLast(cutoff int64, matchers ...labels.Matcher) SeriesSet {
+	h.mtx.RLock()
+	defer h.mtx.RUnlock()
+
+	// Select the postings
+	pq := &postingsQuerier{
+		index: h.Index(),
+	}
+
+	p, absent := pq.Select(matchers...)
+
+	return &lastSeriesSet{h: h, p: p, absent: absent, cutoff: cutoff}
+}
+
+type lastIterator struct {
+	t    int64
+	v    float64
+	done bool
+}
+
+func (i lastIterator) Seek(t int64) bool    { return t <= i.t }
+func (i lastIterator) At() (int64, float64) { return i.t, i.v }
+func (i lastIterator) Next() bool {
+	if i.done {
+		return false
+	}
+	i.done = true
+	return true
+}
+func (i lastIterator) Err() error { return nil }
+
+type lastSeriesSet struct {
+	h      *headBlock
+	p      Postings
+	absent []string
+	cutoff int64
+}
+
+// TODO: Check if the initial Next() is needed.
+func (ls *lastSeriesSet) Next() bool { return ls.p.Next() }
+
+func (ls *lastSeriesSet) At() Series {
+	ls.h.mtx.RLock()
+	ms := ls.h.series[ls.p.At()]
+	ls.h.mtx.RUnlock()
+
+	ms.RLock()
+	defer ms.RUnlock()
+
+	c := ms.head()
+
+	for _, abs := range ls.absent {
+		if ms.lset.Get(abs) != "" {
+			return simpleSeries{ms.lset, nopSeriesIterator{}}
+		}
+	}
+
+	if c.maxTime < ls.cutoff {
+		return simpleSeries{ms.lset, nopSeriesIterator{}}
+	}
+
+	return simpleSeries{ms.lset, lastIterator{t: c.maxTime, v: ms.lastValue}}
+}
+
+func (ls *lastSeriesSet) Err() error { return ls.p.Err() }
+
 var headPool = sync.Pool{}
 
 func getHeadAppendBuffer() []refdSample {
