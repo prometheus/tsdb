@@ -587,6 +587,99 @@ func (a *dbAppender) appenderFor(t int64) (*metaAppender, error) {
 	return nil, ErrNotFound
 }
 
+type latestSeriesSet struct {
+	seen map[uint64][]labels.Labels
+
+	heads   []HeadBlock
+	headIdx int
+
+	cur SeriesSet
+
+	cutoff   int64
+	matchers []labels.Matcher
+}
+
+func (l *latestSeriesSet) saw(lset labels.Labels) bool {
+	h := lset.Hash()
+	lbls, ok := l.seen[h]
+	if !ok {
+		return false
+	}
+
+	for _, ls := range lbls {
+		if ls.Equals(lset) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (l *latestSeriesSet) see(lset labels.Labels) {
+	h := lset.Hash()
+	_, ok := l.seen[h]
+	if ok {
+		l.seen[h] = append(l.seen[h], lset)
+	}
+
+	l.seen[h] = []labels.Labels{lset}
+}
+
+func (l *latestSeriesSet) Next() bool {
+	if l.cur.Next() {
+		return true
+	}
+
+	if l.cur.Err() != nil {
+		return false
+	}
+
+	l.headIdx++
+	if l.headIdx == len(l.heads) {
+		return false
+	}
+
+	l.cur = l.heads[len(l.heads)-1-l.headIdx].SelectLast(l.cutoff, l.matchers...)
+	return l.Next()
+}
+
+func (l *latestSeriesSet) At() Series {
+	s := l.cur.At()
+	// Check if the series has been seen before. If yes skip, else add it to seen.
+	// One interesting observation is when a series with nopIterator comes: if it
+	// has been marked nop in this head, there is no point checking the next head.
+	// Hence we can safely add it to seen.
+
+	lset := s.Labels()
+	if l.saw(lset) {
+		// TODO: Move to next series here
+		return simpleSeries{lset, nopSeriesIterator{}}
+	}
+
+	l.see(lset)
+	return s
+}
+
+func (l *latestSeriesSet) Err() error { return l.cur.Err() }
+
+// QueryLatest will return the matching series with their latest value.
+// Useful for federation.
+func (db *DB) QueryLatest(cutoff int64, matchers ...labels.Matcher) SeriesSet {
+	// Get a reference to the current heads
+	heads := db.heads[:]
+	cur := heads[len(heads)-1].SelectLast(cutoff, matchers...)
+
+	return &latestSeriesSet{
+		seen:    make(map[uint64][]labels.Labels),
+		heads:   heads,
+		headIdx: 0,
+		cur:     cur,
+
+		cutoff:   cutoff,
+		matchers: matchers,
+	}
+}
+
 // ensureHead makes sure that there is a head block for the timestamp t if
 // it is within or after the currently appendable window.
 func (db *DB) ensureHead(t int64) error {

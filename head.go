@@ -284,7 +284,6 @@ type lastSeriesSet struct {
 	cutoff int64
 }
 
-// TODO: Check if the initial Next() is needed.
 func (ls *lastSeriesSet) Next() bool { return ls.p.Next() }
 
 func (ls *lastSeriesSet) At() Series {
@@ -292,8 +291,8 @@ func (ls *lastSeriesSet) At() Series {
 	ms := ls.h.series[ls.p.At()]
 	ls.h.mtx.RUnlock()
 
-	ms.RLock()
-	defer ms.RUnlock()
+	ms.mtx.RLock()
+	defer ms.mtx.RUnlock()
 
 	c := ms.head()
 
