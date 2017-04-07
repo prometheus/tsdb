@@ -77,6 +77,8 @@ func readPrometheusLabels(fn string, n int) ([]labels.Labels, error) {
 func TestLatestValRead(t *testing.T) {
 	dir, err := ioutil.TempDir("", "testlatestvalread")
 	require.NoError(t, err)
+	defer os.RemoveAll(dir)
+
 	db, err := Open(dir, nil, nil, &Options{
 		WALFlushInterval:  10 * time.Second,
 		MinBlockDuration:  uint64(2 * time.Hour.Seconds() * 1000),
@@ -130,6 +132,23 @@ func TestLatestValRead(t *testing.T) {
 				},
 				cutoff: 1,
 			},
+			{
+				l: []labels.Labels{
+					{{Name: "num", Value: "2"}},
+					{{Name: "num", Value: "3"}},
+					{{Name: "num", Value: "4"}},
+					{{Name: "num", Value: "5"}},
+					{{Name: "num", Value: "6"}},
+				},
+				s: []sample{
+					{t: 3, v: 4},
+					{t: 3, v: 4},
+					{t: 3, v: 4},
+					{t: 3, v: 4},
+					{t: 3, v: 4},
+				},
+				cutoff: 1,
+			},
 		}
 
 		m := make(map[string]sample)
@@ -144,7 +163,7 @@ func TestLatestValRead(t *testing.T) {
 			}
 			require.NoError(t, app.Commit())
 
-			matcher := labels.NewEqualMatcher("num", "9")
+			matcher := labels.NewEqualMatcher("num", "4")
 			matcher = labels.Not(matcher)
 
 			ss := db.QueryLatest(tc.cutoff, matcher)
