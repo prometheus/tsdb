@@ -149,6 +149,23 @@ func TestLatestValRead(t *testing.T) {
 				},
 				cutoff: 1,
 			},
+			{
+				l: []labels.Labels{
+					{{Name: "num", Value: "2"}},
+					{{Name: "num", Value: "3"}},
+					{{Name: "num", Value: "4"}},
+					{{Name: "num", Value: "5"}},
+					{{Name: "num", Value: "6"}},
+				},
+				s: []sample{
+					{t: 5, v: 5},
+					{t: 5, v: 5},
+					{t: 5, v: 5},
+					{t: 5, v: 5},
+					{t: 5, v: 5},
+				},
+				cutoff: 4,
+			},
 		}
 
 		m := make(map[string]sample)
