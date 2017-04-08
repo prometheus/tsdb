@@ -426,11 +426,6 @@ type mergedDupSeriesSet struct {
 
 func newMergedDupSeriesSet(a, b SeriesSet) *mergedDupSeriesSet {
 	s := &mergedDupSeriesSet{newMergedSeriesSet(a, b)}
-	// Initialize first elements of both sets as Next() needs
-	// one element look-ahead.
-	s.adone = !s.a.Next()
-	s.bdone = !s.b.Next()
-
 	return s
 }
 

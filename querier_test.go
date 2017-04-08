@@ -305,3 +305,199 @@ func TestMergedDupSeriesIterator(t *testing.T) {
 
 	return
 }
+
+func TestMergedDupSeriesSet(t *testing.T) {
+	newSeries := func(l map[string]string, s []sample) Series {
+		return &mockSeries{
+			labels:   func() labels.Labels { return labels.FromMap(l) },
+			iterator: func() SeriesIterator { return newListSeriesIterator(s) },
+		}
+	}
+
+	cases := []struct {
+		a, b SeriesSet
+		// The composition of a and b in the partition series set must yield
+		// results equivalent to the result series set.
+		exp SeriesSet
+	}{
+		{
+			a: newListSeriesSet([]Series{
+				newSeries(map[string]string{
+					"a": "a",
+				}, []sample{
+					{t: 1, v: 1},
+				}),
+			}),
+			b: newListSeriesSet([]Series{
+				newSeries(map[string]string{
+					"a": "a",
+				}, []sample{
+					{t: 2, v: 2},
+				}),
+				newSeries(map[string]string{
+					"b": "b",
+				}, []sample{
+					{t: 1, v: 1},
+				}),
+			}),
+			exp: newListSeriesSet([]Series{
+				newSeries(map[string]string{
+					"a": "a",
+				}, []sample{
+					{t: 1, v: 1},
+					{t: 2, v: 2},
+				}),
+				newSeries(map[string]string{
+					"b": "b",
+				}, []sample{
+					{t: 1, v: 1},
+				}),
+			}),
+		},
+		{
+			a: newListSeriesSet([]Series{
+				newSeries(map[string]string{
+					"handler":  "prometheus",
+					"instance": "127.0.0.1:9090",
+				}, []sample{
+					{t: 1, v: 1},
+				}),
+				newSeries(map[string]string{
+					"handler":  "prometheus",
+					"instance": "localhost:9090",
+				}, []sample{
+					{t: 1, v: 2},
+				}),
+			}),
+			b: newListSeriesSet([]Series{
+				newSeries(map[string]string{
+					"handler":  "prometheus",
+					"instance": "127.0.0.1:9090",
+				}, []sample{
+					{t: 2, v: 1},
+				}),
+				newSeries(map[string]string{
+					"handler":  "query",
+					"instance": "localhost:9090",
+				}, []sample{
+					{t: 2, v: 2},
+				}),
+			}),
+			exp: newListSeriesSet([]Series{
+				newSeries(map[string]string{
+					"handler":  "prometheus",
+					"instance": "127.0.0.1:9090",
+				}, []sample{
+					{t: 1, v: 1},
+					{t: 2, v: 1},
+				}),
+				newSeries(map[string]string{
+					"handler":  "prometheus",
+					"instance": "localhost:9090",
+				}, []sample{
+					{t: 1, v: 2},
+				}),
+				newSeries(map[string]string{
+					"handler":  "query",
+					"instance": "localhost:9090",
+				}, []sample{
+					{t: 2, v: 2},
+				}),
+			}),
+		},
+		{
+			a: newListSeriesSet([]Series{
+				newSeries(map[string]string{
+					"handler":  "prometheus",
+					"instance": "127.0.0.1:9090",
+				}, []sample{
+					{t: 1, v: 1},
+					{t: 2, v: 2},
+				}),
+				newSeries(map[string]string{
+					"handler":  "prometheus",
+					"instance": "localhost:9090",
+				}, []sample{
+					{t: 1, v: 2},
+					{t: 3, v: 3},
+					{t: 4, v: 4},
+				}),
+			}),
+			b: newListSeriesSet([]Series{
+				newSeries(map[string]string{
+					"handler":  "prometheus",
+					"instance": "127.0.0.1:9090",
+				}, []sample{
+					{t: 2, v: 2},
+					{t: 3, v: 4},
+				}),
+				newSeries(map[string]string{
+					"handler":  "prometheus",
+					"instance": "localhost:9090",
+				}, []sample{
+					{t: 2, v: 6},
+					{t: 4, v: 4},
+					{t: 5, v: 7},
+					{t: 6, v: 4},
+				}),
+				newSeries(map[string]string{
+					"handler":  "query",
+					"instance": "localhost:9090",
+				}, []sample{
+					{t: 2, v: 2},
+				}),
+			}),
+			exp: newListSeriesSet([]Series{
+				newSeries(map[string]string{
+					"handler":  "prometheus",
+					"instance": "127.0.0.1:9090",
+				}, []sample{
+					{t: 1, v: 1},
+					{t: 2, v: 2},
+					{t: 3, v: 4},
+				}),
+				newSeries(map[string]string{
+					"handler":  "prometheus",
+					"instance": "localhost:9090",
+				}, []sample{
+					{t: 1, v: 2},
+					{t: 2, v: 6},
+					{t: 3, v: 3},
+					{t: 4, v: 4},
+					{t: 5, v: 7},
+					{t: 6, v: 4},
+				}),
+				newSeries(map[string]string{
+					"handler":  "query",
+					"instance": "localhost:9090",
+				}, []sample{
+					{t: 2, v: 2},
+				}),
+			}),
+		},
+	}
+
+Outer:
+	for _, c := range cases {
+		res := newMergedDupSeriesSet(c.a, c.b)
+
+		for {
+			eok, rok := c.exp.Next(), res.Next()
+			require.Equal(t, eok, rok, "next")
+
+			if !eok {
+				continue Outer
+			}
+			sexp := c.exp.At()
+			sres := res.At()
+
+			require.Equal(t, sexp.Labels(), sres.Labels(), "labels")
+
+			smplExp, errExp := expandSeriesIterator(sexp.Iterator())
+			smplRes, errRes := expandSeriesIterator(sres.Iterator())
+
+			require.Equal(t, errExp, errRes, "samples error")
+			require.Equal(t, smplExp, smplRes, "samples")
+		}
+	}
+}
