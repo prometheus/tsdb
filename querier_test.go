@@ -200,3 +200,108 @@ func expandSeriesIterator(it SeriesIterator) (r []sample, err error) {
 
 	return r, it.Err()
 }
+
+func TestMergedDupSeriesIterator(t *testing.T) {
+	cases := []struct {
+		a, b SeriesIterator
+		exp  SeriesIterator
+	}{
+		{
+			a: newListSeriesIterator([]sample{}),
+			b: newListSeriesIterator([]sample{}),
+
+			exp: newListSeriesIterator([]sample{}),
+		},
+		{
+			a: newListSeriesIterator([]sample{
+				{1, 2},
+				{2, 3},
+				{3, 5},
+				{6, 1},
+			}),
+			b: newListSeriesIterator([]sample{}),
+
+			exp: newListSeriesIterator([]sample{
+				{1, 2},
+				{2, 3},
+				{3, 5},
+				{6, 1},
+			}),
+		},
+		{
+			a: newListSeriesIterator([]sample{}),
+			b: newListSeriesIterator([]sample{
+				{1, 2},
+				{2, 3},
+				{3, 5},
+				{6, 1},
+			}),
+
+			exp: newListSeriesIterator([]sample{
+				{1, 2},
+				{2, 3},
+				{3, 5},
+				{6, 1},
+			}),
+		},
+		{
+			a: newListSeriesIterator([]sample{
+				{1, 2},
+				{2, 3},
+				{3, 5},
+				{6, 1},
+			}),
+			b: newListSeriesIterator([]sample{
+				{1, 2},
+				{2, 3},
+				{3, 5},
+				{6, 1},
+			}),
+
+			exp: newListSeriesIterator([]sample{
+				{1, 2},
+				{2, 3},
+				{3, 5},
+				{6, 1},
+			}),
+		},
+		{
+			a: newListSeriesIterator([]sample{
+				{1, 2},
+				{2, 3},
+				{3, 5},
+				{7, 1},
+			}),
+			b: newListSeriesIterator([]sample{
+				{3, 5},
+				{4, 3},
+				{5, 5},
+				{6, 9},
+				{9, 10},
+			}),
+
+			exp: newListSeriesIterator([]sample{
+				{1, 2},
+				{2, 3},
+				{3, 5},
+				{4, 3},
+				{5, 5},
+				{6, 9},
+				{7, 1},
+				{9, 10},
+			}),
+		},
+	}
+
+	for _, tc := range cases {
+		res := newMergedDupSeriesIterator(tc.a, tc.b)
+
+		smplExp, errExp := expandSeriesIterator(tc.exp)
+		smplRes, errRes := expandSeriesIterator(res)
+
+		require.Equal(t, errExp, errRes, "samples error")
+		require.Equal(t, smplExp, smplRes, "samples")
+	}
+
+	return
+}
