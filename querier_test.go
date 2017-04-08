@@ -501,3 +501,125 @@ Outer:
 		}
 	}
 }
+
+func TestMergeSeriesSet(t *testing.T) {
+	newSeries := func(l map[string]string, s []sample) Series {
+		return &mockSeries{
+			labels:   func() labels.Labels { return labels.FromMap(l) },
+			iterator: func() SeriesIterator { return newListSeriesIterator(s) },
+		}
+	}
+
+	cases := []struct {
+		s []SeriesSet
+		// The composition of a and b in the partition series set must yield
+		// results equivalent to the result series set.
+		exp SeriesSet
+	}{
+		{
+			s: []SeriesSet{
+				newListSeriesSet([]Series{
+					newSeries(map[string]string{
+						"handler":  "prometheus",
+						"instance": "127.0.0.1:9090",
+					}, []sample{
+						{t: 1, v: 1},
+						{t: 2, v: 2},
+					}),
+					newSeries(map[string]string{
+						"handler":  "prometheus",
+						"instance": "localhost:9090",
+					}, []sample{
+						{t: 1, v: 2},
+						{t: 3, v: 3},
+						{t: 4, v: 4},
+					}),
+				}),
+				newListSeriesSet([]Series{
+					newSeries(map[string]string{
+						"handler":  "prometheus",
+						"instance": "127.0.0.1:9090",
+					}, []sample{
+						{t: 2, v: 2},
+						{t: 3, v: 4},
+					}),
+					newSeries(map[string]string{
+						"handler":  "prometheus",
+						"instance": "localhost:9090",
+					}, []sample{
+						{t: 2, v: 6},
+						{t: 4, v: 4},
+						{t: 5, v: 7},
+						{t: 6, v: 4},
+					}),
+				}),
+				newListSeriesSet([]Series{
+					newSeries(map[string]string{
+						"handler":  "prometheus",
+						"instance": "127.0.0.1:9090",
+					}, []sample{
+						{t: 0, v: 1},
+					}),
+					newSeries(map[string]string{
+						"handler":  "query",
+						"instance": "localhost:9090",
+					}, []sample{
+						{t: 2, v: 2},
+					}),
+				}),
+			},
+			exp: newListSeriesSet([]Series{
+				newSeries(map[string]string{
+					"handler":  "prometheus",
+					"instance": "127.0.0.1:9090",
+				}, []sample{
+					{t: 0, v: 1},
+					{t: 1, v: 1},
+					{t: 2, v: 2},
+					{t: 3, v: 4},
+				}),
+				newSeries(map[string]string{
+					"handler":  "prometheus",
+					"instance": "localhost:9090",
+				}, []sample{
+					{t: 1, v: 2},
+					{t: 2, v: 6},
+					{t: 3, v: 3},
+					{t: 4, v: 4},
+					{t: 5, v: 7},
+					{t: 6, v: 4},
+				}),
+				newSeries(map[string]string{
+					"handler":  "query",
+					"instance": "localhost:9090",
+				}, []sample{
+					{t: 2, v: 2},
+				}),
+			}),
+		},
+	}
+
+Outer:
+	for _, c := range cases {
+		res := MergeSeriesSet(c.s...)
+
+		for {
+			eok, rok := c.exp.Next(), res.Next()
+			require.Equal(t, eok, rok, "next")
+
+			if !eok {
+				continue Outer
+			}
+			sexp := c.exp.At()
+			sres := res.At()
+
+			require.Equal(t, sexp.Labels(), sres.Labels(), "labels")
+
+			smplExp, errExp := expandSeriesIterator(sexp.Iterator())
+			smplRes, errRes := expandSeriesIterator(sres.Iterator())
+
+			require.Equal(t, errExp, errRes, "samples error")
+			require.Equal(t, smplExp, smplRes, "samples")
+		}
+	}
+}
