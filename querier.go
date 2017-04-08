@@ -404,6 +404,61 @@ func (s *mergedSeriesSet) Next() bool {
 	return true
 }
 
+// MergeSeriesSet merges sorted SeriesSet deduplicating any repeated samples.
+func MergeSeriesSet(series ...SeriesSet) SeriesSet {
+	var ss SeriesSet
+	ss = nopSeriesSet{}
+
+	for _, s := range series {
+		ss = newMergedDupSeriesSet(ss, s)
+	}
+
+	return ss
+}
+
+// mergedDupSeriesSet takes two series sets as a single series set. The
+// input series sets must be sorted and in labels and time. If they have the
+// same label set, the datapoints of a can be after the datapoints of b
+// and there can be duplicates.
+type mergedDupSeriesSet struct {
+	*mergedSeriesSet
+}
+
+func newMergedDupSeriesSet(a, b SeriesSet) *mergedDupSeriesSet {
+	s := &mergedDupSeriesSet{newMergedSeriesSet(a, b)}
+	// Initialize first elements of both sets as Next() needs
+	// one element look-ahead.
+	s.adone = !s.a.Next()
+	s.bdone = !s.b.Next()
+
+	return s
+}
+
+func (s *mergedDupSeriesSet) Next() bool {
+	if s.adone && s.bdone || s.Err() != nil {
+		return false
+	}
+
+	d := s.compare()
+
+	// Both sets contain the current series. Chain them into a single one.
+	if d > 0 {
+		s.cur = s.b.At()
+		s.bdone = !s.b.Next()
+	} else if d < 0 {
+		s.cur = s.a.At()
+		s.adone = !s.a.Next()
+	} else {
+		s.cur = simpleSeries{
+			labels:   s.a.At().Labels(),
+			iterator: newMergedDupSeriesIterator(s.a.At().Iterator(), s.b.At().Iterator()),
+		}
+		s.adone = !s.a.Next()
+		s.bdone = !s.b.Next()
+	}
+	return true
+}
+
 type chunkSeriesSet interface {
 	Next() bool
 	At() (labels.Labels, []*ChunkMeta)
@@ -564,6 +619,105 @@ func (s *chainedSeries) Labels() labels.Labels {
 
 func (s *chainedSeries) Iterator() SeriesIterator {
 	return &chainedSeriesIterator{series: s.series}
+}
+
+// mergedDupSeriesIterator implements a series iterator over two
+// time-sorted, overlapping iterators.
+type mergedDupSeriesIterator struct {
+	a, b SeriesIterator
+
+	curt         int64
+	curv         float64
+	adone, bdone bool
+}
+
+func newMergedDupSeriesIterator(a, b SeriesIterator) *mergedDupSeriesIterator {
+	s := &mergedDupSeriesIterator{a: a, b: b}
+	// Initialize first elements of both sets as Next() needs
+	// one element look-ahead.
+	s.adone = !s.a.Next()
+	s.bdone = !s.b.Next()
+
+	return s
+}
+
+func (s *mergedDupSeriesIterator) compare() int {
+	if s.adone {
+		return 1
+	}
+
+	if s.bdone {
+		return -1
+	}
+
+	t1, _ := s.a.At()
+	t2, _ := s.b.At()
+
+	if t1 < t2 {
+		return -1
+	}
+	if t1 > t2 {
+		return 1
+	}
+
+	return 0
+}
+
+func (s *mergedDupSeriesIterator) Seek(t int64) bool {
+	if !s.adone {
+		s.adone = !s.a.Seek(t)
+	}
+
+	if !s.bdone {
+		s.bdone = !s.b.Seek(t)
+	}
+
+	if s.adone && s.bdone || s.Err() != nil {
+		return false
+	}
+
+	d := s.compare()
+	if d < 0 {
+		s.curt, s.curv = s.a.At()
+	} else {
+		s.curt, s.curv = s.b.At()
+	}
+
+	return true
+}
+
+func (s *mergedDupSeriesIterator) At() (t int64, v float64) {
+	return s.curt, s.curv
+}
+
+func (s *mergedDupSeriesIterator) Next() bool {
+	if s.adone && s.bdone || s.Err() != nil {
+		return false
+	}
+
+	d := s.compare()
+
+	if d < 0 {
+		s.curt, s.curv = s.a.At()
+		s.adone = !s.a.Next()
+	} else if d > 0 {
+		s.curt, s.curv = s.b.At()
+		s.bdone = !s.b.Next()
+	} else {
+		s.curt, s.curv = s.a.At()
+		s.adone = !s.a.Next()
+		s.bdone = !s.b.Next()
+	}
+
+	return true
+}
+
+func (s *mergedDupSeriesIterator) Err() error {
+	if s.a.Err() != nil {
+		return s.a.Err()
+	}
+
+	return s.b.Err()
 }
 
 // chainedSeriesIterator implements a series iterater over a list
