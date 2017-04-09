@@ -303,11 +303,15 @@ type lastSeriesSet struct {
 	p      Postings
 	absent []string
 	cutoff int64
+
+	cur Series
 }
 
-func (ls *lastSeriesSet) Next() bool { return ls.p.Next() }
+func (ls *lastSeriesSet) Next() bool {
+	if !ls.p.Next() {
+		return false
+	}
 
-func (ls *lastSeriesSet) At() Series {
 	ls.h.mtx.RLock()
 	ms := ls.h.series[ls.p.At()]
 	ls.h.mtx.RUnlock()
@@ -319,15 +323,21 @@ func (ls *lastSeriesSet) At() Series {
 
 	for _, abs := range ls.absent {
 		if ms.lset.Get(abs) != "" {
-			return simpleSeries{ms.lset, nopSeriesIterator{}}
+			return ls.Next()
 		}
 	}
 
 	if c.maxTime < ls.cutoff {
-		return simpleSeries{ms.lset, nopSeriesIterator{}}
+		return ls.Next()
 	}
 
-	return simpleSeries{ms.lset, &singleIterator{t: c.maxTime, v: ms.lastValue}}
+	ls.cur = simpleSeries{ms.lset, &singleIterator{t: c.maxTime, v: ms.lastValue}}
+	return true
+
+}
+
+func (ls *lastSeriesSet) At() Series {
+	return ls.cur
 }
 
 func (ls *lastSeriesSet) Err() error { return ls.p.Err() }

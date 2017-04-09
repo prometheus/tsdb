@@ -200,7 +200,7 @@ func TestLatestValRead(t *testing.T) {
 				}
 
 				require.NoError(t, it.Err())
-				require.True(t, n <= 1)
+				require.Equal(t, 1, n)
 			}
 			require.NoError(t, ss.Err())
 
