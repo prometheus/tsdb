@@ -23,6 +23,7 @@ import (
 
 	"github.com/oklog/ulid"
 	"github.com/pkg/errors"
+	"github.com/prometheus/tsdb/labels"
 )
 
 // DiskBlock handles reads against a Block of time series data.
@@ -53,6 +54,8 @@ type Block interface {
 type HeadBlock interface {
 	Block
 	Appendable
+
+	SelectLast(cutoff int64, matchers ...labels.Matcher) SeriesSet
 }
 
 // Appendable defines an entity to which data can be appended.

@@ -259,6 +259,102 @@ func (h *headBlock) Busy() bool {
 	return atomic.LoadUint64(&h.activeWriters) > 0
 }
 
+func (h *headBlock) SelectLast(cutoff int64, matchers ...labels.Matcher) SeriesSet {
+	h.mtx.RLock()
+	defer h.mtx.RUnlock()
+
+	series := h.series[:]
+	// Select the postings
+	pq := &postingsQuerier{
+		index: h.Index(),
+		postingsMapper: func(p Postings) Postings {
+			ep := make([]uint32, 0, 64)
+
+			for p.Next() {
+				// Skip posting entries that include series added after we
+				// instantiated the querier.
+				if int(p.At()) >= len(series) {
+					break
+				}
+				ep = append(ep, p.At())
+			}
+			if err := p.Err(); err != nil {
+				return errPostings{err: errors.Wrap(err, "expand postings")}
+			}
+
+			sort.Slice(ep, func(i, j int) bool {
+				return labels.Compare(series[ep[i]].lset, series[ep[j]].lset) < 0
+			})
+			return newListPostings(ep)
+		},
+	}
+
+	p, absent := pq.Select(matchers...)
+
+	return &lastSeriesSet{h: h, p: p, absent: absent, cutoff: cutoff}
+}
+
+type singleIterator struct {
+	t    int64
+	v    float64
+	done bool
+}
+
+func (i *singleIterator) Seek(t int64) bool    { return t <= i.t }
+func (i *singleIterator) At() (int64, float64) { return i.t, i.v }
+func (i *singleIterator) Next() bool {
+	if i.done {
+		return false
+	}
+	i.done = true
+	return true
+}
+func (i *singleIterator) Err() error { return nil }
+
+type lastSeriesSet struct {
+	h      *headBlock
+	p      Postings
+	absent []string
+	cutoff int64
+
+	cur Series
+}
+
+func (ls *lastSeriesSet) Next() bool {
+	if !ls.p.Next() {
+		return false
+	}
+
+	ls.h.mtx.RLock()
+	ms := ls.h.series[ls.p.At()]
+	ls.h.mtx.RUnlock()
+
+	ms.mtx.RLock()
+	defer ms.mtx.RUnlock()
+
+	c := ms.head()
+
+	for _, abs := range ls.absent {
+		if ms.lset.Get(abs) != "" {
+			return ls.Next()
+		}
+	}
+
+	if c.maxTime < ls.cutoff {
+		return ls.Next()
+	}
+
+	ls.cur = simpleSeries{ms.lset, &singleIterator{t: c.maxTime, v: ms.lastValue}}
+	return true
+
+}
+
+func (ls *lastSeriesSet) At() Series {
+	return ls.cur
+}
+
+func (ls *lastSeriesSet) Err() error { return ls.p.Err() }
+
 var headPool = sync.Pool{}
 
 func getHeadAppendBuffer() []refdSample {

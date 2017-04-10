@@ -600,6 +600,54 @@ func (a *dbAppender) appenderFor(t int64) (*metaAppender, error) {
 	return nil, ErrNotFound
 }
 
+type lastValSeriesSet struct {
+	s SeriesSet
+}
+
+func (l lastValSeriesSet) Next() bool { return l.s.Next() }
+func (l lastValSeriesSet) At() Series {
+	s := l.s.At()
+	it := s.Iterator()
+
+	if it.Next() {
+		t, v := it.At()
+		return &simpleSeries{s.Labels(), &singleIterator{t: t, v: v}}
+	}
+
+	// If its a nopSeriesIterator then return the same.
+	return s
+}
+
+func (l lastValSeriesSet) Err() error { return l.s.Err() }
+
+// QueryLatest will return the matching series with their latest value.
+// Useful for federation.
+func (db *DB) QueryLatest(cutoff int64, matchers ...labels.Matcher) SeriesSet {
+	// Get a reference to the current heads
+	db.headmtx.RLock()
+	heads := db.heads[:]
+	db.headmtx.RUnlock()
+
+	idx := 0
+	var ss SeriesSet
+	ss = nopSeriesSet{}
+
+	for idx < len(heads) {
+		h := heads[len(heads)-1-idx]
+		if h.Meta().MaxTime < cutoff {
+			break
+		}
+		idx++
+
+		// We want the latest val first and not the oldest val. Hence we are breaking the
+		// sequentiality in time. But that also means that we need to wrap this
+		// SeriesSet to return only 1 value per series.
+		ss = newMergedSeriesSet(ss, h.SelectLast(cutoff, matchers...))
+	}
+
+	return lastValSeriesSet{ss}
+}
+
 // ensureHead makes sure that there is a head block for the timestamp t if
 // it is within or after the currently appendable window.
 func (db *DB) ensureHead(t int64) error {
