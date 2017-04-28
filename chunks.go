@@ -61,9 +61,11 @@ type ChunkWriter interface {
 type chunkWriter struct {
 	dirFile *os.File
 	files   []*os.File
-	wbuf    *bufio.Writer
-	n       int64
-	crc32   hash.Hash
+	// XXX: In wal.go, we call the equivalent fields "cur" and "curN".
+	//      Should we make the naming consistent between both?
+	wbuf  *bufio.Writer
+	n     int64
+	crc32 hash.Hash
 
 	segmentSize int64
 }
@@ -91,6 +93,8 @@ func newChunkWriter(dir string) (*chunkWriter, error) {
 	return cw, nil
 }
 
+// XXX: should this be called head instead of tail? We also call the
+// currently active block the "head" instead of the "tail".
 func (w *chunkWriter) tail() *os.File {
 	if len(w.files) == 0 {
 		return nil
@@ -216,6 +220,8 @@ func (w *chunkWriter) WriteChunks(chks ...*ChunkMeta) error {
 		chk.Chunk = nil
 	}
 
+	// XXX: Shouldn't the CRC32 length be included in maxLen?
+	// XXX: Shouldn't w.n be incremented here?
 	if err := w.write(w.wbuf, w.crc32.Sum(nil)); err != nil {
 		return err
 	}

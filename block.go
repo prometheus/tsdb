@@ -25,6 +25,7 @@ import (
 )
 
 // DiskBlock handles reads against a Block of time series data.
+// XXX: Should we rename "*Block" to "*Segment", as that's what we call these pieces in chunks.go?
 type DiskBlock interface {
 	// Directory where block data is stored.
 	Dir() string
@@ -95,6 +96,7 @@ type BlockMeta struct {
 }
 
 const (
+	// XXX: What is the meaning of these flags?
 	flagNone = 0
 	flagStd  = 1
 )
