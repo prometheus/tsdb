@@ -77,6 +77,8 @@ const (
 // The table gets initialized with sync.Once but may still cause a race
 // with any other use of the crc32 package anywhere. Thus we initialize it
 // before.
+// XXX: Once should already do the right thing here if two callers
+//      construct the table at the same time, since it uses a lock?
 var castagnoliTable *crc32.Table
 
 func init() {
