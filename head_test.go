@@ -15,6 +15,7 @@ package tsdb
 
 import (
 	"io/ioutil"
+	"math"
 	"os"
 	"testing"
 	"unsafe"
@@ -113,4 +114,37 @@ func TestDuplicateDatapointCausesAmendError(t *testing.T) {
 
 	err = app.Commit()
 	require.NoError(t, err)
+}
+
+func TestNonDuplicateNaNDatapointsCausesAmendError(t *testing.T) {
+	tmpdir, _ := ioutil.TempDir("", "test")
+	defer os.RemoveAll(tmpdir)
+
+	hb, err := createHeadBlock(tmpdir+"/hb", 0, nil, 0, 1000)
+	if err != nil {
+		t.Fatalf("Error creating head block: %s", err)
+	}
+
+	app := hb.Appender()
+	_, err = app.Add(labels.Labels{}, 0, math.Float64frombits(0x7ff0000000000001))
+	require.NoError(t, err)
+	err = app.Commit()
+	require.NoError(t, err)
+
+	app = hb.Appender()
+	_, err = app.Add(labels.Labels{}, 0, math.Float64frombits(0x7ff0000000000002))
+	require.Equal(t, ErrAmendSample, err)
+
+	app = hb.Appender()
+	_, err = app.Add(labels.Labels{}, 0, math.NaN())
+	require.Equal(t, ErrAmendSample, err)
+
+	_, err = app.Add(labels.Labels{}, 1, math.NaN())
+	require.NoError(t, err)
+	err = app.Commit()
+	require.NoError(t, err)
+
+	app = hb.Appender()
+	_, err = app.Add(labels.Labels{}, 1, math.NaN())
+	require.Equal(t, ErrAmendSample, err)
 }
