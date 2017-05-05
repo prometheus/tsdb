@@ -2,7 +2,9 @@ package tsdb
 
 import (
 	"io/ioutil"
+	"math/rand"
 	"os"
+	"strconv"
 	"testing"
 	"time"
 	"unsafe"
@@ -211,4 +213,83 @@ func TestLatestValRead(t *testing.T) {
 	})
 
 	return
+}
+
+func BenchmarkFastPathForLatestVals(b *testing.B) {
+	// Add 20K series with 120 samples each.
+	tmpdir, _ := ioutil.TempDir("", "test")
+	defer os.RemoveAll(tmpdir)
+
+	db, err := Open(tmpdir, nil, nil, nil)
+	require.NoError(b, err)
+	defer db.Close()
+
+	for i := 0; i < 20000; i++ {
+		ts := int64(1)
+		app := db.Appender()
+		for j := 0; j < 120; j++ {
+			_, err = app.Add(labels.FromStrings("num", strconv.Itoa(i)), ts, rand.Float64())
+			require.NoError(b, err)
+
+			ts += 2
+		}
+
+		require.NoError(b, app.Commit())
+	}
+
+	m := labels.NewEqualMatcher("num", "1111")
+	//require.NoError(b, err)
+	b.ResetTimer()
+
+	// Read the latest value of all the series using fast-path.
+	for i := 0; i < b.N; i++ {
+		ss := db.QueryLatest(200, m)
+		for ss.Next() {
+			it := ss.At().Iterator()
+			for it.Next() {
+				it.At()
+			}
+		}
+	}
+}
+
+func BenchmarkQueryForLatestVals(b *testing.B) {
+	// Add 20K series with 120 samples each.
+	tmpdir, _ := ioutil.TempDir("", "test")
+	defer os.RemoveAll(tmpdir)
+
+	db, err := Open(tmpdir, nil, nil, nil)
+	require.NoError(b, err)
+	defer db.Close()
+
+	for i := 0; i < 20000; i++ {
+		ts := int64(1)
+		app := db.Appender()
+		for j := 0; j < 120; j++ {
+			_, err = app.Add(labels.FromStrings("num", strconv.Itoa(i)), ts, rand.Float64())
+			require.NoError(b, err)
+
+			ts += 2
+		}
+
+		require.NoError(b, app.Commit())
+	}
+
+	m := labels.NewEqualMatcher("num", "1111")
+	//require.NoError(b, err)
+	b.ResetTimer()
+
+	// Read the latest value of all the series using the query-path.
+	for i := 0; i < b.N; i++ {
+		q := db.Querier(200, 250)
+		ss := q.Select(m)
+		for ss.Next() {
+			it := ss.At().Iterator()
+			for it.Next() {
+				it.At()
+			}
+		}
+
+		q.Close()
+	}
 }
