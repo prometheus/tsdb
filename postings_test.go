@@ -78,23 +78,35 @@ func TestIntersect(t *testing.T) {
 
 func TestMultiIntersect(t *testing.T) {
 	var cases = []struct {
-		a, b, c []uint32
-		res     []uint32
+		p   [][]uint32
+		res []uint32
 	}{
 		{
-			a:   []uint32{1, 2, 3, 4, 5, 6, 1000, 1001},
-			b:   []uint32{2, 4, 5, 6, 7, 8, 999, 1001},
-			c:   []uint32{1, 2, 5, 6, 7, 8, 1001, 1200},
+			p: [][]uint32{
+				{1, 2, 3, 4, 5, 6, 1000, 1001},
+				{2, 4, 5, 6, 7, 8, 999, 1001},
+				{1, 2, 5, 6, 7, 8, 1001, 1200},
+			},
 			res: []uint32{2, 5, 6, 1001},
+		},
+		{
+			p: [][]uint32{
+				{1, 2},
+				{1, 2},
+				{1, 2},
+				{2},
+			},
+			res: []uint32{2},
 		},
 	}
 
 	for _, c := range cases {
-		pa := newListPostings(c.a)
-		pb := newListPostings(c.b)
-		pc := newListPostings(c.c)
+		ps := make([]Postings, 0, len(c.p))
+		for _, postings := range c.p {
+			ps = append(ps, newListPostings(postings))
+		}
 
-		res, err := expandPostings(Intersect(pa, pb, pc))
+		res, err := expandPostings(Intersect(ps...))
 
 		require.NoError(t, err)
 		require.Equal(t, c.res, res)
