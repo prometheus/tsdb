@@ -212,12 +212,12 @@ func TestMergedPostingsSeek(t *testing.T) {
 		res     []uint32
 	}{
 		{
-			a: []uint32{1, 2, 3, 4, 5},
+			a: []uint32{2, 3, 4, 5},
 			b: []uint32{6, 7, 8, 9, 10},
 
-			seek:    0,
+			seek:    1,
 			success: true,
-			res:     []uint32{1, 2, 3, 4, 5, 6, 7, 8, 9, 10},
+			res:     []uint32{2, 3, 4, 5, 6, 7, 8, 9, 10},
 		},
 		{
 			a: []uint32{1, 2, 3, 4, 5},
@@ -252,9 +252,16 @@ func TestMergedPostingsSeek(t *testing.T) {
 		p := newMergedPostings(a, b)
 
 		require.Equal(t, c.success, p.Seek(c.seek))
-		lst, err := expandPostings(p)
-		require.NoError(t, err)
-		require.Equal(t, c.res, lst)
+
+		// After Seek(), At() should be called.
+		if c.success {
+			start := p.At()
+			lst, err := expandPostings(p)
+			require.NoError(t, err)
+
+			lst = append([]uint32{start}, lst...)
+			require.Equal(t, c.res, lst)
+		}
 	}
 
 	return
@@ -305,16 +312,16 @@ func TestBigEndian(t *testing.T) {
 				ls[600] + 1, ls[601], true,
 			},
 			{
-				ls[600] + 1, ls[602], true,
+				ls[600] + 1, ls[601], true,
 			},
 			{
-				ls[600] + 1, ls[603], true,
+				ls[600] + 1, ls[601], true,
 			},
 			{
-				ls[0], ls[604], true,
+				ls[0], ls[601], true,
 			},
 			{
-				ls[600], ls[605], true,
+				ls[600], ls[601], true,
 			},
 			{
 				ls[999], ls[999], true,
