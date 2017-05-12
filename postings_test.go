@@ -340,3 +340,18 @@ func TestBigEndian(t *testing.T) {
 		}
 	})
 }
+
+func TestIntersectWithMerge(t *testing.T) {
+	a := newListPostings([]uint32{21, 22, 23, 24, 25, 30})
+
+	b := newMergedPostings(
+		newListPostings([]uint32{10, 20, 30}),
+		newListPostings([]uint32{15, 26, 30}),
+	)
+
+	p := Intersect(a, b)
+	res, err := expandPostings(p)
+
+	require.NoError(t, err)
+	require.Equal(t, []uint32{30}, res)
+}
