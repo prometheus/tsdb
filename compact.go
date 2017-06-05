@@ -145,6 +145,22 @@ func (c *compactor) Plan() ([][]string, error) {
 		return [][]string{res}
 	}
 
+	// Check if any "large" blocks need to be recompacted due to deletions.
+	var compactDirs [][]string
+	for _, dm := range dms {
+		if dm.meta.MaxTime-dm.meta.MinTime > int64(c.opts.maxBlockRange/2) {
+			if dm.meta.Stats.NumTombstones > 0 &&
+				(dm.meta.Stats.NumSeries/dm.meta.Stats.NumTombstones) <= 20 { // 5%
+				compactDirs = append(compactDirs, []string{dm.dir})
+			}
+			continue
+		}
+		break
+	}
+
+	if len(compactDirs) > 0 {
+		return compactDirs, nil
+	}
 	// Then we care about compacting multiple blocks, starting with the oldest.
 	for i := 0; i < len(dms)-compactionBlocksLen+1; i++ {
 		if c.match(dms[i : i+3]) {
