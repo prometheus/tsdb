@@ -14,6 +14,7 @@
 package tsdb
 
 import (
+	"encoding/binary"
 	"fmt"
 	"math/rand"
 	"os"
@@ -145,6 +146,22 @@ func (c *compactor) Plan() ([][]string, error) {
 		return [][]string{res}
 	}
 
+	// Check if any "large" blocks need to be recompacted due to deletions.
+	var compactDirs [][]string
+	for _, dm := range dms {
+		if dm.meta.MaxTime-dm.meta.MinTime > int64(c.opts.maxBlockRange/2) {
+			if dm.meta.Stats.NumTombstones > 0 &&
+				(dm.meta.Stats.NumSeries/dm.meta.Stats.NumTombstones) <= 20 { // 5%
+				compactDirs = append(compactDirs, []string{dm.dir})
+			}
+			continue
+		}
+		break
+	}
+
+	if len(compactDirs) > 0 {
+		return compactDirs, nil
+	}
 	// Then we care about compacting multiple blocks, starting with the oldest.
 	for i := 0; i < len(dms)-compactionBlocksLen+1; i++ {
 		if c.match(dms[i : i+3]) {
@@ -174,9 +191,6 @@ func mergeBlockMetas(blocks ...Block) (res BlockMeta) {
 
 	res.Compaction.Generation = m0.Compaction.Generation + 1
 
-	for _, b := range blocks {
-		res.Stats.NumSamples += b.Meta().Stats.NumSamples
-	}
 	return res
 }
 
@@ -347,22 +361,29 @@ func populateBlock(blocks []Block, indexw IndexWriter, chunkw ChunkWriter) (*Blo
 			return nil, err
 		}
 
-		indexw.AddSeries(i, lset, chks...)
+		// Add a series only if the chunks exist.
+		if len(chks) > 0 {
+			indexw.AddSeries(i, lset, chks...)
 
-		meta.Stats.NumChunks += uint64(len(chks))
-		meta.Stats.NumSeries++
-
-		for _, l := range lset {
-			valset, ok := values[l.Name]
-			if !ok {
-				valset = stringset{}
-				values[l.Name] = valset
+			meta.Stats.NumChunks += uint64(len(chks))
+			meta.Stats.NumSeries++
+			for _, chk := range chks {
+				meta.Stats.NumSamples += uint64(binary.BigEndian.Uint16(chk.Chunk.Bytes()))
 			}
-			valset.set(l.Value)
 
-			postings.add(i, term{name: l.Name, value: l.Value})
+			for _, l := range lset {
+				valset, ok := values[l.Name]
+				if !ok {
+					valset = stringset{}
+					values[l.Name] = valset
+				}
+				valset.set(l.Value)
+
+				postings.add(i, term{name: l.Name, value: l.Value})
+			}
+
+			i++
 		}
-		i++
 	}
 	if set.Err() != nil {
 		return nil, set.Err()
