@@ -124,6 +124,73 @@ func (q *querier) Close() error {
 	return merr.Err()
 }
 
+// postingsQuerier provides querying access for the latest datapoint.
+type postingsQuerier struct {
+	index IndexReader
+
+	postingsMapper func(Postings) Postings
+}
+
+func (q *postingsQuerier) Select(ms ...labels.Matcher) (Postings, []string) {
+	var (
+		its    []Postings
+		absent []string
+	)
+	for _, m := range ms {
+		// If the matcher checks absence of a label, don't select them
+		// but propagate the check into the series set.
+		if _, ok := m.(*labels.EqualMatcher); ok && m.Matches("") {
+			absent = append(absent, m.Name())
+			continue
+		}
+		its = append(its, q.selectSingle(m))
+	}
+
+	p := Intersect(its...)
+
+	if q.postingsMapper != nil {
+		p = q.postingsMapper(p)
+	}
+
+	return p, absent
+}
+
+func (q *postingsQuerier) selectSingle(m labels.Matcher) Postings {
+	tpls, err := q.index.LabelValues(m.Name())
+	if err != nil {
+		return errPostings{err: err}
+	}
+	// TODO(fabxc): use interface upgrading to provide fast solution
+	// for equality and prefix matches. Tuples are lexicographically sorted.
+	var res []string
+
+	for i := 0; i < tpls.Len(); i++ {
+		vals, err := tpls.At(i)
+		if err != nil {
+			return errPostings{err: err}
+		}
+		if m.Matches(vals[0]) {
+			res = append(res, vals[0])
+		}
+	}
+
+	if len(res) == 0 {
+		return emptyPostings
+	}
+
+	var rit []Postings
+
+	for _, v := range res {
+		it, err := q.index.Postings(m.Name(), v)
+		if err != nil {
+			return errPostings{err: err}
+		}
+		rit = append(rit, it)
+	}
+
+	return Merge(rit...)
+}
+
 // blockQuerier provides querying access to a single block database.
 type blockQuerier struct {
 	index      IndexReader

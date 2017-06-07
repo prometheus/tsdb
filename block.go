@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/fabxc/tsdb/labels"
 	"github.com/oklog/ulid"
 	"github.com/pkg/errors"
 	"github.com/prometheus/tsdb/labels"
@@ -60,6 +61,8 @@ type Block interface {
 type headBlock interface {
 	Block
 	Appendable
+	// SelectLatest will give the lastest Sample from each Series.
+	SelectLatest(cutoff int64, matchers ...labels.Matcher) []SeriesLatest
 }
 
 // Snapshottable defines an entity that can be backedup online.

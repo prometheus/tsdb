@@ -394,6 +394,50 @@ func (h *HeadBlock) Busy() bool {
 	return atomic.LoadUint64(&h.activeWriters) > 0
 }
 
+// SeriesLatest is series with its latest value.
+type SeriesLatest struct {
+	Lset      labels.Labels
+	LastValue float64
+}
+
+func (h *headBlock) SelectLatest(cutoff int64, matchers ...labels.Matcher) []SeriesLatest {
+	h.mtx.RLock()
+	defer h.mtx.RUnlock()
+
+	if h.closed {
+		panic(fmt.Sprintf("block %s already closed", h.dir))
+	}
+
+	lq := &postingsQuerier{
+		index:          h.Index(),
+		postingsMapper: h.remapPostings,
+	}
+
+	p, absent := lq.Select(matchers...)
+
+	sl := make([]SeriesLatest, 0)
+
+Outer:
+	for p.Next() {
+		ms := h.series[p.At()]
+
+		// If this series did not have a sample after cutoff, ignore.
+		if ms.chunks[len(ms.chunks)-1].maxTime < cutoff {
+			continue
+		}
+
+		for _, abs := range absent {
+			if ms.lset.Get(abs) != "" {
+				continue Outer
+			}
+		}
+
+		sl = append(sl, SeriesLatest{Lset: ms.lset, LastValue: ms.lastValue})
+	}
+
+	return sl
+}
+
 var headPool = sync.Pool{}
 
 func getHeadAppendBuffer() []RefSample {
