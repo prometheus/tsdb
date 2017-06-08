@@ -549,6 +549,11 @@ func (a *headAppender) createSeries() {
 		a.create(l.hash, l.labels)
 	}
 
+	// Write all new series to the WAL.
+	if err := a.wal.LogSeries(a.newLabels); err != nil {
+		return errors.Wrap(err, "WAL log series")
+	}
+
 	a.mtx.Unlock()
 	a.mtx.RLock()
 }
@@ -568,11 +573,8 @@ func (a *headAppender) Commit() error {
 		}
 	}
 
-	// Write all new series and samples to the WAL and add it to the
+	// Write all new samples to the WAL and add them to the
 	// in-mem database on success.
-	if err := a.wal.LogSeries(a.newLabels); err != nil {
-		return errors.Wrap(err, "WAL log series")
-	}
 	if err := a.wal.LogSamples(a.samples); err != nil {
 		return errors.Wrap(err, "WAL log samples")
 	}
