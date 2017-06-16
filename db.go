@@ -115,6 +115,14 @@ type DB struct {
 	// cmtx is used to control compactions and deletions.
 	cmtx               sync.Mutex
 	compactionsEnabled bool
+
+	// Mutex for accessing writeWatermark and writesOpen.
+	// block layout.
+	writeMtx sync.Mutex
+	// Each write is given an internal id.
+	writeLastId uint64
+	// Which writes are currently in progress.
+	writesOpen map[uint64]struct{}
 }
 
 type dbMetrics struct {
@@ -197,6 +205,7 @@ func Open(dir string, l log.Logger, r prometheus.Registerer, opts *Options) (db 
 		dir:                dir,
 		logger:             l,
 		opts:               opts,
+		writesOpen:         map[uint64]struct{}{},
 		compactc:           make(chan struct{}, 1),
 		donec:              make(chan struct{}),
 		stopc:              make(chan struct{}),
@@ -334,7 +343,13 @@ func (db *DB) retentionCutoff() (b bool, err error) {
 
 // Appender opens a new appender against the database.
 func (db *DB) Appender() Appender {
-	return dbAppender{db: db, Appender: db.head.Appender()}
+	db.writeMtx.Lock()
+	id := db.writeLastId
+	db.writeLastId++
+	db.writesOpen[id] = struct{}{}
+	db.writeMtx.Unlock()
+
+	return dbAppender{db: db, Appender: db.head.Appender(id), writeId: id}
 }
 
 // dbAppender wraps the DB's head appender and triggers compactions on commit
@@ -342,6 +357,8 @@ func (db *DB) Appender() Appender {
 type dbAppender struct {
 	Appender
 	db *DB
+
+	writeId uint64
 }
 
 func (a dbAppender) Commit() error {
@@ -355,6 +372,11 @@ func (a dbAppender) Commit() error {
 		default:
 		}
 	}
+
+	a.db.writeMtx.Lock()
+	delete(a.db.writesOpen, a.writeId)
+	a.db.writeMtx.Unlock()
+
 	return err
 }
 
@@ -684,6 +706,7 @@ func (db *DB) Querier(mint, maxt int64) (Querier, error) {
 	sq := &querier{
 		blocks: make([]Querier, 0, len(blocks)),
 	}
+
 	for _, b := range blocks {
 		q, err := NewBlockQuerier(b, mint, maxt)
 		if err == nil {

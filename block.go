@@ -133,7 +133,10 @@ type BlockReader interface {
 // Appendable defines an entity to which data can be appended.
 type Appendable interface {
 	// Appender returns a new Appender against an underlying store.
-	Appender() Appender
+	Appender(writeId uint64) Appender
+
+	// Busy returns whether there are any currently active appenders.
+	Busy() bool
 }
 
 // BlockMeta provides meta information about a block.

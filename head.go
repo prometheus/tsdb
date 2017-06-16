@@ -216,7 +216,7 @@ func (h *Head) processWALSamples(
 				unknownRefs++
 				continue
 			}
-			_, chunkCreated := ms.append(s.T, s.V)
+			_, chunkCreated := ms.append(s.T, s.V, 0)
 			if chunkCreated {
 				h.metrics.chunksCreated.Inc()
 				h.metrics.chunks.Inc()
@@ -409,7 +409,7 @@ func (a *initAppender) Add(lset labels.Labels, t int64, v float64) (uint64, erro
 		return a.app.Add(lset, t, v)
 	}
 	a.head.initTime(t)
-	a.app = a.head.appender()
+	a.app = a.head.appender(0)
 
 	return a.app.Add(lset, t, v)
 }
@@ -436,7 +436,7 @@ func (a *initAppender) Rollback() error {
 }
 
 // Appender returns a new Appender on the database.
-func (h *Head) Appender() Appender {
+func (h *Head) Appender(writeId uint64) Appender {
 	h.metrics.activeAppenders.Inc()
 
 	// The head cache might not have a starting point yet. The init appender
@@ -444,15 +444,16 @@ func (h *Head) Appender() Appender {
 	if h.MinTime() == math.MinInt64 {
 		return &initAppender{head: h}
 	}
-	return h.appender()
+	return h.appender(writeId)
 }
 
-func (h *Head) appender() *headAppender {
+func (h *Head) appender(writeId uint64) *headAppender {
 	return &headAppender{
 		head:          h,
 		mint:          h.MaxTime() - h.chunkRange/2,
 		samples:       h.getAppendBuffer(),
 		highTimestamp: math.MinInt64,
+		writeId:       writeId,
 	}
 }
 
@@ -475,6 +476,8 @@ type headAppender struct {
 	series        []RefSeries
 	samples       []RefSample
 	highTimestamp int64
+
+	writeId uint64
 }
 
 func (a *headAppender) Add(lset labels.Labels, t int64, v float64) (uint64, error) {
@@ -535,7 +538,7 @@ func (a *headAppender) Commit() error {
 
 	for _, s := range a.samples {
 		s.series.Lock()
-		ok, chunkCreated := s.series.append(s.T, s.V)
+		ok, chunkCreated := s.series.append(s.T, s.V, a.writeId)
 		s.series.Unlock()
 
 		if !ok {
@@ -1103,6 +1106,9 @@ type memSeries struct {
 	sampleBuf [4]sample
 
 	app chunkenc.Appender // Current appender for the chunk.
+
+	// Write ids of the tail of the list of samples.
+	writeIds []uint64
 }
 
 func (s *memSeries) minTime() int64 {
@@ -1139,6 +1145,7 @@ func newMemSeries(lset labels.Labels, id uint64, chunkRange int64) *memSeries {
 		ref:        id,
 		chunkRange: chunkRange,
 		nextAt:     math.MinInt64,
+		writeIds:   []uint64{},
 	}
 	return s
 }
@@ -1193,7 +1200,7 @@ func (s *memSeries) truncateChunksBefore(mint int64) (removed int) {
 }
 
 // append adds the sample (t, v) to the series.
-func (s *memSeries) append(t int64, v float64) (success, chunkCreated bool) {
+func (s *memSeries) append(t int64, v float64, writeId uint64) (success, chunkCreated bool) {
 	const samplesPerChunk = 120
 
 	c := s.head()
@@ -1228,6 +1235,8 @@ func (s *memSeries) append(t int64, v float64) (success, chunkCreated bool) {
 	s.sampleBuf[1] = s.sampleBuf[2]
 	s.sampleBuf[2] = s.sampleBuf[3]
 	s.sampleBuf[3] = sample{t: t, v: v}
+
+	s.writeIds = append(s.writeIds, writeId)
 
 	return true, chunkCreated
 }
