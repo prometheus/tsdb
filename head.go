@@ -1264,16 +1264,42 @@ func (s *memSeries) iterator(id int, isolation *IsolationState) chunkenc.Iterato
 		return chunkenc.NewNopIterator()
 	}
 
-	if id-s.firstChunkID < len(s.chunks)-1 {
-		return c.chunk.Iterator()
+	numSamples := c.chunk.NumSamples()
+	stopAfter := numSamples
+
+	if isolation != nil {
+		for index, writeId := range s.writeIds {
+			if _, ok := isolation.incompleteWrites[writeId]; ok || writeId > isolation.maxWriteId {
+				for _, c2 := range s.chunks[:id] {
+					index -= c2.chunk.NumSamples()
+				}
+				if index < numSamples {
+					stopAfter = index
+				}
+				break
+			}
+		}
 	}
+
+	if id-s.firstChunkID < len(s.chunks)-1 {
+		it := &memSafeIterator{
+			Iterator:  c.chunk.Iterator(),
+			i:         -1,
+			total:     numSamples,
+			stopAfter: stopAfter,
+		}
+		return it
+	}
+
 	// Serve the last 4 samples for the last chunk from the sample buffer
 	// as their compressed bytes may be mutated by added samples.
 	it := &memSafeIterator{
-		Iterator: c.chunk.Iterator(),
-		i:        -1,
-		total:    c.chunk.NumSamples(),
-		buf:      s.sampleBuf,
+		Iterator:        c.chunk.Iterator(),
+		i:               -1,
+		total:           numSamples,
+		stopAfter:       stopAfter,
+		bufferedSamples: 4,
+		buf:             s.sampleBuf,
 	}
 	return it
 }
@@ -1293,27 +1319,29 @@ type memChunk struct {
 type memSafeIterator struct {
 	chunkenc.Iterator
 
-	i     int
-	total int
-	buf   [4]sample
+	i               int
+	total           int
+	stopAfter       int
+	bufferedSamples int
+	buf             [4]sample
 }
 
 func (it *memSafeIterator) Next() bool {
-	if it.i+1 >= it.total {
+	if it.i+1 >= it.stopAfter {
 		return false
 	}
 	it.i++
-	if it.total-it.i > 4 {
+	if it.total-it.i > it.bufferedSamples {
 		return it.Iterator.Next()
 	}
 	return true
 }
 
 func (it *memSafeIterator) At() (int64, float64) {
-	if it.total-it.i > 4 {
+	if it.total-it.i > it.bufferedSamples {
 		return it.Iterator.At()
 	}
-	s := it.buf[4-(it.total-it.i)]
+	s := it.buf[it.bufferedSamples-(it.total-it.i)]
 	return s.t, s.v
 }
 
