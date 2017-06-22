@@ -980,3 +980,33 @@ func TestDBCannotSeePartialCommits(t *testing.T) {
 
 	require.Equal(t, 0, inconsistencies, "Some queries saw inconsistent results.")
 }
+
+func TestDBQueryDoesntSeeAppendsAfterCreation(t *testing.T) {
+	tmpdir, _ := ioutil.TempDir("", "test")
+	defer os.RemoveAll(tmpdir)
+
+	db, err := Open(tmpdir, nil, nil, nil)
+	require.NoError(t, err)
+	defer db.Close()
+
+	querier := db.Querier(0, 1000000)
+	defer querier.Close()
+
+	app := db.Appender()
+	_, err = app.Add(labels.FromStrings("foo", "bar"), 0, 0)
+	require.NoError(t, err)
+	// This commit is after the querier is created, so should not be returned.
+	err = app.Commit()
+	require.NoError(t, err)
+
+	seriesSet, err := readSeriesSet(querier.Select(labels.NewEqualMatcher("foo", "bar")))
+	require.NoError(t, err)
+	require.Equal(t, map[string][]sample{}, seriesSet)
+
+	querier = db.Querier(0, 1000000)
+	defer querier.Close()
+	seriesSet, err = readSeriesSet(querier.Select(labels.NewEqualMatcher("foo", "bar")))
+	require.NoError(t, err)
+	require.Equal(t, seriesSet, map[string][]sample{`{foo="bar"}`: []sample{{t: 0, v: 0}}})
+
+}
