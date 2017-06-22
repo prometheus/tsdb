@@ -389,8 +389,8 @@ func (h *rangeHead) Index() (IndexReader, error) {
 	return h.head.indexRange(h.mint, h.maxt), nil
 }
 
-func (h *rangeHead) Chunks() (ChunkReader, error) {
-	return h.head.chunksRange(h.mint, h.maxt), nil
+func (h *rangeHead) Chunks(*IsolationState) (ChunkReader, error) {
+	return h.head.chunksRange(h.mint, h.maxt, nil), nil
 }
 
 func (h *rangeHead) Tombstones() (TombstoneReader, error) {
@@ -667,15 +667,15 @@ func (h *Head) indexRange(mint, maxt int64) *headIndexReader {
 }
 
 // Chunks returns a ChunkReader against the block.
-func (h *Head) Chunks() (ChunkReader, error) {
-	return h.chunksRange(math.MinInt64, math.MaxInt64), nil
+func (h *Head) Chunks(isolation *IsolationState) (ChunkReader, error) {
+	return h.chunksRange(math.MinInt64, math.MaxInt64, isolation), nil
 }
 
-func (h *Head) chunksRange(mint, maxt int64) *headChunkReader {
+func (h *Head) chunksRange(mint, maxt int64, isolation *IsolationState) *headChunkReader {
 	if hmin := h.MinTime(); hmin > mint {
 		mint = hmin
 	}
-	return &headChunkReader{head: h, mint: mint, maxt: maxt}
+	return &headChunkReader{head: h, mint: mint, maxt: maxt, isolation: isolation}
 }
 
 // MinTime returns the lowest time bound on visible data in the head.
@@ -696,6 +696,8 @@ func (h *Head) Close() error {
 type headChunkReader struct {
 	head       *Head
 	mint, maxt int64
+
+	isolation *IsolationState
 }
 
 func (h *headChunkReader) Close() error {
@@ -755,11 +757,13 @@ type safeChunk struct {
 	chunkenc.Chunk
 	s   *memSeries
 	cid int
+
+	isolation *IsolationState
 }
 
 func (c *safeChunk) Iterator() chunkenc.Iterator {
 	c.s.Lock()
-	it := c.s.iterator(c.cid)
+	it := c.s.iterator(c.cid, c.isolation)
 	c.s.Unlock()
 	return it
 }
@@ -1251,7 +1255,7 @@ func computeChunkEndTime(start, cur, max int64) int64 {
 	return start + (max-start)/a
 }
 
-func (s *memSeries) iterator(id int) chunkenc.Iterator {
+func (s *memSeries) iterator(id int, isolation *IsolationState) chunkenc.Iterator {
 	c := s.chunk(id)
 	// TODO(fabxc): Work around! A querier may have retrieved a pointer to a series' chunk,
 	// which got then garbage collected before it got accessed.

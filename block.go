@@ -124,7 +124,7 @@ type BlockReader interface {
 	Index() (IndexReader, error)
 
 	// Chunks returns a ChunkReader over the block's data.
-	Chunks() (ChunkReader, error)
+	Chunks(*IsolationState) (ChunkReader, error)
 
 	// Tombstones returns a TombstoneReader over the block's deleted data.
 	Tombstones() (TombstoneReader, error)
@@ -137,6 +137,12 @@ type Appendable interface {
 
 	// Busy returns whether there are any currently active appenders.
 	Busy() bool
+}
+
+type IsolationState struct {
+	// We will ignore all writes above the max, and that are incomplete.
+	maxWriteId       uint64
+	incompleteWrites map[uint64]struct{}
 }
 
 // BlockMeta provides meta information about a block.
@@ -328,7 +334,7 @@ func (pb *Block) Index() (IndexReader, error) {
 }
 
 // Chunks returns a new ChunkReader against the block data.
-func (pb *Block) Chunks() (ChunkReader, error) {
+func (pb *Block) Chunks(_ *IsolationState) (ChunkReader, error) {
 	if err := pb.startRead(); err != nil {
 		return nil, err
 	}

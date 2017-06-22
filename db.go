@@ -693,6 +693,16 @@ func (db *DB) Querier(mint, maxt int64) (Querier, error) {
 	db.mtx.RLock()
 	defer db.mtx.RUnlock()
 
+	db.writeMtx.Lock()
+	isolation := &IsolationState{
+		maxWriteId:       db.writeLastId,
+		incompleteWrites: make(map[uint64]struct{}, len(db.writesOpen)),
+	}
+	for k, _ := range db.writesOpen {
+		isolation.incompleteWrites[k] = struct{}{}
+	}
+	db.writeMtx.Unlock()
+
 	for _, b := range db.blocks {
 		m := b.Meta()
 		if intervalOverlap(mint, maxt, m.MinTime, m.MaxTime) {
