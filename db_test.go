@@ -57,6 +57,10 @@ func query(t testing.TB, q Querier, matchers ...labels.Matcher) map[string][]sam
 		}
 		testutil.Ok(t, it.Err())
 
+		if len(samples) == 0 {
+			continue
+		}
+
 		name := series.Labels().String()
 		result[name] = samples
 	}
@@ -916,13 +920,13 @@ func TestDBCannotSeePartialCommits(t *testing.T) {
 				_, err := app.Add(labels.FromStrings("foo", "bar", "a", strconv.Itoa(j)), int64(iter), float64(iter))
 				require.NoError(t, err)
 			}
+			err = app.Commit()
+			require.NoError(t, err)
+
 			if iter == 0 {
 				close(firstInsert)
 			}
 			iter++
-
-			err = app.Commit()
-			require.NoError(t, err)
 
 			select {
 			case <-stop:

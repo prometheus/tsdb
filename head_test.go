@@ -226,8 +226,9 @@ func TestMemSeries_truncateChunks(t *testing.T) {
 	testutil.Assert(t, ok == true, "")
 
 	it2 := s.iterator(s.chunkID(len(s.chunks)-2), nil)
-	_, ok = it2.(*memSafeIterator)
-	testutil.Assert(t, ok == false, "non-last chunk incorrectly wrapped with sample buffer")
+	it2MSI, ok := it2.(*memSafeIterator)
+	testutil.Assert(t, ok == true, "")
+	testutil.Assert(t, it2MSI.bufferedSamples == 0, "non-last chunk incorrectly wrapped with sample buffer")
 }
 
 func TestHeadDeleteSimple(t *testing.T) {
