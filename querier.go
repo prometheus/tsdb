@@ -123,7 +123,7 @@ func NewBlockQuerier(b BlockReader, mint, maxt int64) (Querier, error) {
 	if err != nil {
 		return nil, errors.Wrapf(err, "open index reader")
 	}
-	chunkr, err := b.Chunks()
+	chunkr, err := b.Chunks(nil)
 	if err != nil {
 		indexr.Close()
 		return nil, errors.Wrapf(err, "open chunk reader")

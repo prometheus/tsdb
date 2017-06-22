@@ -398,6 +398,6 @@ func metaRange(name string, mint, maxt int64, stats *BlockStats) dirMeta {
 
 type erringBReader struct{}
 
-func (erringBReader) Index() (IndexReader, error)          { return nil, errors.New("index") }
-func (erringBReader) Chunks() (ChunkReader, error)         { return nil, errors.New("chunks") }
-func (erringBReader) Tombstones() (TombstoneReader, error) { return nil, errors.New("tombstones") }
+func (erringBReader) Index() (IndexReader, error)                 { return nil, errors.New("index") }
+func (erringBReader) Chunks(*IsolationState) (ChunkReader, error) { return nil, errors.New("chunks") }
+func (erringBReader) Tombstones() (TombstoneReader, error)        { return nil, errors.New("tombstones") }
