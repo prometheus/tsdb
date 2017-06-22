@@ -19,11 +19,13 @@ import (
 	"math/rand"
 	"os"
 	"sort"
+	"strconv"
 	"testing"
 
 	"github.com/pkg/errors"
 	"github.com/prometheus/tsdb/labels"
 	"github.com/prometheus/tsdb/testutil"
+	"github.com/stretchr/testify/require"
 )
 
 func openTestDB(t testing.TB, opts *Options) (db *DB, close func()) {
@@ -891,4 +893,86 @@ func expandSeriesSet(ss SeriesSet) ([]labels.Labels, error) {
 	}
 
 	return result, ss.Err()
+}
+
+func TestDBCannotSeePartialCommits(t *testing.T) {
+	tmpdir, _ := ioutil.TempDir("", "test")
+	defer os.RemoveAll(tmpdir)
+
+	db, err := Open(tmpdir, nil, nil, nil)
+	require.NoError(t, err)
+	defer db.Close()
+
+	stop := make(chan struct{})
+	firstInsert := make(chan struct{})
+
+	// Insert data in batches.
+	go func() {
+		iter := 0
+		for {
+			app := db.Appender()
+
+			for j := 0; j < 100; j++ {
+				_, err := app.Add(labels.FromStrings("foo", "bar", "a", strconv.Itoa(j)), int64(iter), float64(iter))
+				require.NoError(t, err)
+			}
+			if iter == 0 {
+				close(firstInsert)
+			}
+			iter++
+
+			err = app.Commit()
+			require.NoError(t, err)
+
+			select {
+			case <-stop:
+				return
+			default:
+			}
+		}
+	}()
+
+	<-firstInsert
+
+	// This is a race condition, so do a few tests to tickle it.
+	// Usually most will fail.
+	inconsistencies := 0
+	for i := 0; i < 10; i++ {
+		func() {
+			querier, err := db.Querier(0, 1000000)
+			testutil.Ok(t, err)
+			defer querier.Close()
+
+			ss, err := querier.Select(labels.NewEqualMatcher("foo", "bar"))
+			testutil.Ok(t, err)
+
+			seriesSet := make(map[string][]sample)
+			for ss.Next() {
+				series := ss.At()
+
+				samples := []sample{}
+				it := series.Iterator()
+				for it.Next() {
+					t, v := it.At()
+					samples = append(samples, sample{t: t, v: v})
+				}
+
+				name := series.Labels().String()
+				seriesSet[name] = samples
+			}
+			testutil.Ok(t, ss.Err())
+
+			require.NoError(t, err)
+			values := map[float64]struct{}{}
+			for _, series := range seriesSet {
+				values[series[len(series)-1].v] = struct{}{}
+			}
+			if len(values) != 1 {
+				inconsistencies++
+			}
+		}()
+	}
+	stop <- struct{}{}
+
+	require.Equal(t, 0, inconsistencies, "Some queries saw inconsistent results.")
 }
