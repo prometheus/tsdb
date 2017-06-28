@@ -950,21 +950,7 @@ func TestDBCannotSeePartialCommits(t *testing.T) {
 			ss, err := querier.Select(labels.NewEqualMatcher("foo", "bar"))
 			testutil.Ok(t, err)
 
-			seriesSet := make(map[string][]sample)
-			for ss.Next() {
-				series := ss.At()
-
-				samples := []sample{}
-				it := series.Iterator()
-				for it.Next() {
-					t, v := it.At()
-					samples = append(samples, sample{t: t, v: v})
-				}
-
-				name := series.Labels().String()
-				seriesSet[name] = samples
-			}
-			testutil.Ok(t, ss.Err())
+			seriesSet := readSeriesSet(t, ss)
 
 			require.NoError(t, err)
 			values := map[float64]struct{}{}
@@ -989,7 +975,8 @@ func TestDBQueryDoesntSeeAppendsAfterCreation(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
-	querier := db.Querier(0, 1000000)
+	querier, err := db.Querier(0, 1000000)
+	testutil.Ok(t, err)
 	defer querier.Close()
 
 	app := db.Appender()
@@ -999,14 +986,37 @@ func TestDBQueryDoesntSeeAppendsAfterCreation(t *testing.T) {
 	err = app.Commit()
 	require.NoError(t, err)
 
-	seriesSet, err := readSeriesSet(querier.Select(labels.NewEqualMatcher("foo", "bar")))
-	require.NoError(t, err)
+	ss, err := querier.Select(labels.NewEqualMatcher("foo", "bar"))
+	testutil.Ok(t, err)
+
+	seriesSet := readSeriesSet(t, ss)
 	require.Equal(t, map[string][]sample{}, seriesSet)
 
-	querier = db.Querier(0, 1000000)
+	querier, err = db.Querier(0, 1000000)
+	testutil.Ok(t, err)
 	defer querier.Close()
-	seriesSet, err = readSeriesSet(querier.Select(labels.NewEqualMatcher("foo", "bar")))
-	require.NoError(t, err)
-	require.Equal(t, seriesSet, map[string][]sample{`{foo="bar"}`: []sample{{t: 0, v: 0}}})
 
+	ss, err = querier.Select(labels.NewEqualMatcher("foo", "bar"))
+	seriesSet = readSeriesSet(t, ss)
+	require.Equal(t, seriesSet, map[string][]sample{`{foo="bar"}`: []sample{{t: 0, v: 0}}})
+}
+
+func readSeriesSet(t *testing.T, ss SeriesSet) map[string][]sample {
+	seriesSet := make(map[string][]sample)
+	for ss.Next() {
+		series := ss.At()
+
+		samples := []sample{}
+		it := series.Iterator()
+		for it.Next() {
+			t, v := it.At()
+			samples = append(samples, sample{t: t, v: v})
+		}
+
+		name := series.Labels().String()
+		seriesSet[name] = samples
+	}
+	testutil.Ok(t, ss.Err())
+
+	return seriesSet
 }

@@ -143,6 +143,8 @@ type IsolationState struct {
 	// We will ignore all writes above the max, and that are incomplete.
 	maxWriteId       uint64
 	incompleteWrites map[uint64]struct{}
+	readId           uint64
+	db               *DB
 }
 
 // BlockMeta provides meta information about a block.
