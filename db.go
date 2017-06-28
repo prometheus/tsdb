@@ -116,13 +116,18 @@ type DB struct {
 	cmtx               sync.Mutex
 	compactionsEnabled bool
 
-	// Mutex for accessing writeWatermark and writesOpen.
-	// block layout.
+	// Mutex for accessing writeLastId and writesOpen.
 	writeMtx sync.Mutex
 	// Each write is given an internal id.
 	writeLastId uint64
 	// Which writes are currently in progress.
 	writesOpen map[uint64]struct{}
+	// Mutex for accessing readLastId.
+	readMtx sync.Mutex
+	// Each isolated read is given an internal id.
+	readLastId uint64
+	// All current in use isolationStates.
+	readsOpen map[uint64]*IsolationState
 }
 
 type dbMetrics struct {
@@ -206,6 +211,7 @@ func Open(dir string, l log.Logger, r prometheus.Registerer, opts *Options) (db 
 		logger:             l,
 		opts:               opts,
 		writesOpen:         map[uint64]struct{}{},
+		readsOpen:          map[uint64]*IsolationState{},
 		compactc:           make(chan struct{}, 1),
 		donec:              make(chan struct{}),
 		stopc:              make(chan struct{}),
@@ -714,7 +720,9 @@ func (db *DB) Querier(mint, maxt int64) (Querier, error) {
 	}
 
 	sq := &querier{
-		blocks: make([]Querier, 0, len(blocks)),
+		blocks:    make([]Querier, 0, len(blocks)),
+		db:        db,
+		isolation: db.IsolationState(),
 	}
 
 	for _, b := range blocks {
@@ -735,6 +743,30 @@ func (db *DB) Querier(mint, maxt int64) (Querier, error) {
 func rangeForTimestamp(t int64, width int64) (mint, maxt int64) {
 	mint = (t / width) * width
 	return mint, mint + width
+}
+
+// readLowWatermark returns the writeId below which
+// we no longer need to track which writes were from
+// which writeId.
+// TODO: Optimise this, needs to be O(1).
+func (db *DB) readLowWatermark() uint64 {
+	db.writeMtx.Lock()
+	id := db.writeLastId
+	db.writeMtx.Unlock()
+
+	db.readMtx.Lock()
+	for _, isolation := range db.readsOpen {
+		if isolation.maxWriteId < id {
+			id = isolation.maxWriteId
+		}
+		for i := range isolation.incompleteWrites {
+			if i < id {
+				id = i
+			}
+		}
+	}
+	db.readMtx.Unlock()
+	return id
 }
 
 // Delete implements deletion of metrics. It only has atomicity guarantees on a per-block basis.
