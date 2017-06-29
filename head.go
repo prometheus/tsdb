@@ -1113,8 +1113,10 @@ type memSeries struct {
 
 	app chunkenc.Appender // Current appender for the chunk.
 
-	// Write ids of most recent samples.
-	writeIds []uint64
+	// Write ids of most recent samples. This is a ring buffer.
+	writeIds     []uint64
+	writeIdFirst int // Position of first id in the ring.
+	writeIdCount int // How many ids in the ring.
 }
 
 func (s *memSeries) minTime() int64 {
@@ -1151,7 +1153,7 @@ func newMemSeries(lset labels.Labels, id uint64, chunkRange int64) *memSeries {
 		ref:        id,
 		chunkRange: chunkRange,
 		nextAt:     math.MinInt64,
-		writeIds:   []uint64{},
+		writeIds:   make([]uint64, 4),
 	}
 	return s
 }
@@ -1242,7 +1244,16 @@ func (s *memSeries) append(t int64, v float64, writeId uint64) (success, chunkCr
 	s.sampleBuf[2] = s.sampleBuf[3]
 	s.sampleBuf[3] = sample{t: t, v: v}
 
-	s.writeIds = append(s.writeIds, writeId)
+	if s.writeIdCount == len(s.writeIds) {
+		// Ring buffer is full, expand by doubling.
+		newRing := make([]uint64, s.writeIdCount*2)
+		copy(newRing[s.writeIdCount+s.writeIdFirst:], s.writeIds[s.writeIdFirst:])
+		copy(newRing, s.writeIds[:s.writeIdFirst])
+		s.writeIds = newRing
+		s.writeIdFirst += s.writeIdCount
+	}
+	s.writeIds[(s.writeIdFirst+s.writeIdCount)%len(s.writeIds)] = writeId
+	s.writeIdCount++
 
 	return true, chunkCreated
 }
@@ -1250,18 +1261,22 @@ func (s *memSeries) append(t int64, v float64, writeId uint64) (success, chunkCr
 // cleanupWriteIdsBelow cleans up older writeIds. Has to be called after acquiring
 // lock.
 func (s *memSeries) cleanupWriteIdsBelow(bound uint64) {
-	toRemove := 0
-	for _, id := range s.writeIds {
-		if id < bound {
-			toRemove++
+	pos := s.writeIdFirst
+
+	for s.writeIdCount > 0 {
+		if s.writeIds[pos] < bound {
+			s.writeIdFirst++
+			s.writeIdCount--
 		} else {
 			break
 		}
+		pos++
+		if pos == len(s.writeIds) {
+			pos = 0
+		}
 	}
-
-	if toRemove != 0 {
-		// XXX This doesn't free the RAM.
-		s.writeIds = s.writeIds[toRemove:]
+	if s.writeIdFirst >= len(s.writeIds) {
+		s.writeIdFirst -= len(s.writeIds)
 	}
 }
 
@@ -1297,17 +1312,22 @@ func (s *memSeries) iterator(id int, isolation *IsolationState) chunkenc.Iterato
 				previousSamples += d.chunk.NumSamples()
 			}
 		}
-		writeIdsToConsider := (previousSamples + c.chunk.NumSamples()) - (totalSamples - len(s.writeIds))
-		if writeIdsToConsider > 0 {
-			// writeIds extends back to at least this chunk.
-			for index, writeId := range s.writeIds[:writeIdsToConsider] {
-				if _, ok := isolation.incompleteWrites[writeId]; ok || writeId > isolation.maxWriteId {
-					stopAfter = index - (writeIdsToConsider - c.chunk.NumSamples())
-					if stopAfter < 0 {
-						stopAfter = 0 // Stopped in a previous chunk.
-					}
-					break
+		writeIdsToConsider := (previousSamples + c.chunk.NumSamples()) - (totalSamples - s.writeIdCount)
+		// Iterate over the ring, find the first one that the isolation state says not
+		// to return.
+		pos := s.writeIdFirst
+		for index := 0; index < writeIdsToConsider; index++ {
+			writeId := s.writeIds[pos]
+			if _, ok := isolation.incompleteWrites[writeId]; ok || writeId > isolation.maxWriteId {
+				stopAfter = index - (writeIdsToConsider - c.chunk.NumSamples())
+				if stopAfter < 0 {
+					stopAfter = 0 // Stopped in a previous chunk.
 				}
+				break
+			}
+			pos++
+			if pos == len(s.writeIds) {
+				pos = 0
 			}
 		}
 	}
