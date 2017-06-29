@@ -355,7 +355,7 @@ func (db *DB) Appender() Appender {
 	db.writesOpen[id] = struct{}{}
 	db.writeMtx.Unlock()
 
-	return dbAppender{db: db, Appender: db.head.Appender(id), writeId: id}
+	return dbAppender{db: db, Appender: db.head.Appender(id, db.readLowWatermark()), writeId: id}
 }
 
 // dbAppender wraps the DB's head appender and triggers compactions on commit
