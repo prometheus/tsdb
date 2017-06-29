@@ -151,12 +151,12 @@ func (q *querier) Close() error {
 }
 
 // NewBlockQuerier returns a queries against the readers.
-func NewBlockQuerier(b BlockReader, mint, maxt int64) (Querier, error) {
+func NewBlockQuerier(b BlockReader, mint, maxt int64, isolation *IsolationState) (Querier, error) {
 	indexr, err := b.Index()
 	if err != nil {
 		return nil, errors.Wrapf(err, "open index reader")
 	}
-	chunkr, err := b.Chunks(nil)
+	chunkr, err := b.Chunks(isolation)
 	if err != nil {
 		indexr.Close()
 		return nil, errors.Wrapf(err, "open chunk reader")

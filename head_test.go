@@ -22,6 +22,7 @@ import (
 	"github.com/prometheus/tsdb/index"
 	"github.com/prometheus/tsdb/labels"
 	"github.com/prometheus/tsdb/testutil"
+	"github.com/stretchr/testify/require"
 )
 
 func BenchmarkCreateSeries(b *testing.B) {
@@ -63,7 +64,6 @@ func (w *memoryWAL) Read(series func([]RefSeries), samples func([]RefSample), de
 		}
 	}
 	return nil
-
 }
 
 func TestHead_ReadWAL(t *testing.T) {
@@ -284,7 +284,7 @@ Outer:
 		}
 
 		// Compare the result.
-		q, err := NewBlockQuerier(head, head.MinTime(), head.MaxTime())
+		q, err := NewBlockQuerier(head, head.MinTime(), head.MaxTime(), nil)
 		testutil.Ok(t, err)
 		res, err := q.Select(labels.NewEqualMatcher("a", "b"))
 		testutil.Ok(t, err)
@@ -744,4 +744,75 @@ func TestGCSeriesAccess(t *testing.T) {
 	testutil.Equals(t, ErrNotFound, err)
 	_, err = cr.Chunk(chunks[1].Ref)
 	testutil.Equals(t, ErrNotFound, err)
+}
+
+func TestMemSeriesIsolation(t *testing.T) {
+	// Put a series, select it. GC it and then access it.
+	hb, err := NewHead(nil, nil, NopWAL(), 1000)
+	testutil.Ok(t, err)
+	defer hb.Close()
+
+	lastValue := func(maxWriteId uint64) int {
+		querier, err := NewBlockQuerier(hb, 0, 10000, &IsolationState{maxWriteId: maxWriteId})
+		testutil.Ok(t, err)
+		defer querier.Close()
+
+		ss, err := querier.Select(labels.NewEqualMatcher("foo", "bar"))
+		testutil.Ok(t, err)
+
+		seriesSet := readSeriesSet(t, ss)
+		for _, series := range seriesSet {
+			return int(series[len(series)-1].v)
+		}
+		return -1
+	}
+
+	i := 0
+	for ; i <= 1000; i++ {
+		app := hb.Appender(uint64(i), 0)
+		_, err := app.Add(labels.FromStrings("foo", "bar"), int64(i), float64(i))
+		require.NoError(t, err, "Failed to add sample")
+		require.NoError(t, app.Commit(), "Unexpected error committing appender")
+	}
+
+	// Test simple cases in different chunks when no writeId cleanup has been performed.
+	require.Equal(t, 10, lastValue(10))
+	require.Equal(t, 130, lastValue(130))
+	require.Equal(t, 160, lastValue(160))
+	require.Equal(t, 240, lastValue(240))
+	require.Equal(t, 500, lastValue(500))
+	require.Equal(t, 750, lastValue(750))
+	require.Equal(t, 995, lastValue(995))
+	require.Equal(t, 999, lastValue(999))
+
+	// Cleanup writeIds below 500.
+	app := hb.Appender(uint64(i), 500)
+	_, err = app.Add(labels.FromStrings("foo", "bar"), int64(i), float64(i))
+	require.NoError(t, err, "Failed to add sample")
+	require.NoError(t, app.Commit(), "Unexpected error committing appender")
+	i++
+
+	// We should not get queries with a maxWriteId below 500 after the cleanup,
+	// but they only take the remaining writeIds into account.
+	require.Equal(t, 499, lastValue(10))
+	require.Equal(t, 499, lastValue(130))
+	require.Equal(t, 499, lastValue(160))
+	require.Equal(t, 499, lastValue(240))
+	require.Equal(t, 500, lastValue(500))
+	require.Equal(t, 995, lastValue(995))
+	require.Equal(t, 999, lastValue(999))
+
+	// Cleanup writeIds below 1000, which means the sample buffer is
+	// the only thing with writeIds.
+	app = hb.Appender(uint64(i), 1000)
+	_, err = app.Add(labels.FromStrings("foo", "bar"), int64(i), float64(i))
+	require.NoError(t, err, "Failed to add sample")
+	require.NoError(t, app.Commit(), "Unexpected error committing appender")
+	i++
+	require.Equal(t, 999, lastValue(998))
+	require.Equal(t, 999, lastValue(999))
+	require.Equal(t, 1000, lastValue(1000))
+	require.Equal(t, 1001, lastValue(1001))
+	require.Equal(t, 1002, lastValue(1002))
+	require.Equal(t, 1002, lastValue(1003))
 }

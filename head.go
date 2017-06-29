@@ -541,6 +541,7 @@ func (a *headAppender) Commit() error {
 	for _, s := range a.samples {
 		s.series.Lock()
 		ok, chunkCreated := s.series.append(s.T, s.V, a.writeId)
+		s.series.cleanupWriteIdsBelow(a.cleanupWriteIdsBelow)
 		s.series.Unlock()
 
 		if !ok {
@@ -1249,10 +1250,9 @@ func (s *memSeries) append(t int64, v float64, writeId uint64) (success, chunkCr
 	return true, chunkCreated
 }
 
+// cleanupWriteIdsBelow cleans up older writeIds. Has to be called after acquiring
+// lock.
 func (s *memSeries) cleanupWriteIdsBelow(bound uint64) {
-	s.Lock()
-	defer s.Unlock()
-
 	toRemove := 0
 	for _, id := range s.writeIds {
 		if id < bound {
