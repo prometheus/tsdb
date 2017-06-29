@@ -726,7 +726,7 @@ func (db *DB) Querier(mint, maxt int64) (Querier, error) {
 	}
 
 	for _, b := range blocks {
-		q, err := NewBlockQuerier(b, mint, maxt)
+		q, err := NewBlockQuerier(b, mint, maxt, isolation)
 		if err == nil {
 			sq.blocks = append(sq.blocks, q)
 			continue
