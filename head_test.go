@@ -63,6 +63,7 @@ func (w *memoryWAL) Read(series func([]RefSeries), samples func([]RefSample), de
 		}
 	}
 	return nil
+
 }
 
 func TestHead_ReadWAL(t *testing.T) {
@@ -237,7 +238,7 @@ func TestHeadDeleteSimple(t *testing.T) {
 	testutil.Ok(t, err)
 	defer head.Close()
 
-	app := head.Appender(0)
+	app := head.Appender(0, 0)
 	smpls := make([]float64, numSamples)
 	for i := int64(0); i < numSamples; i++ {
 		smpls[i] = rand.Float64()

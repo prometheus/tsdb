@@ -133,14 +133,14 @@ type BlockReader interface {
 // Appendable defines an entity to which data can be appended.
 type Appendable interface {
 	// Appender returns a new Appender against an underlying store.
-	Appender(writeId uint64) Appender
+	Appender(writeId, cleanupWriteIdsBelow uint64) Appender
 
 	// Busy returns whether there are any currently active appenders.
 	Busy() bool
 }
 
 type IsolationState struct {
-	// We will ignore all writes above the max, and that are incomplete.
+	// We will ignore all writes above the max, or that are incomplete.
 	maxWriteId       uint64
 	incompleteWrites map[uint64]struct{}
 	readId           uint64
