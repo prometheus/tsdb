@@ -134,17 +134,18 @@ type BlockReader interface {
 type Appendable interface {
 	// Appender returns a new Appender against an underlying store.
 	Appender(writeId, cleanupWriteIdsBelow uint64) Appender
-
-	// Busy returns whether there are any currently active appenders.
-	Busy() bool
 }
 
 type IsolationState struct {
 	// We will ignore all writes above the max, or that are incomplete.
 	maxWriteId       uint64
 	incompleteWrites map[uint64]struct{}
-	readId           uint64
+	lowWaterMark     uint64 // Lowest of incompleteWrites/maxWriteId.
 	db               *DB
+
+	// Doubly linked list of active reads.
+	next *IsolationState
+	prev *IsolationState
 }
 
 // BlockMeta provides meta information about a block.
