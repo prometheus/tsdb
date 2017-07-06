@@ -87,10 +87,19 @@ func newCompactorMetrics(r prometheus.Registerer) *compactorMetrics {
 }
 
 type compactorOptions struct {
-	maxBlockRange uint64
+	blockRanges []int64
 }
 
 func newCompactor(dir string, r prometheus.Registerer, l log.Logger, opts *compactorOptions) *compactor {
+	if opts.blockRanges == nil {
+		opts.blockRanges = []int64{
+			int64(2 * time.Hour),
+			int64(6 * time.Hour),
+			int64(24 * time.Hour),
+			int64(72 * time.Hour),  // 3d
+			int64(216 * time.Hour), // 9d
+		}
+	}
 	return &compactor{
 		dir:     dir,
 		opts:    opts,
@@ -133,37 +142,75 @@ func (c *compactor) Plan() ([][]string, error) {
 		return dms[i].meta.MinTime < dms[j].meta.MinTime
 	})
 
-	if len(dms) == 0 {
+	if len(dms) <= 1 {
 		return nil, nil
 	}
 
-	sliceDirs := func(i, j int) [][]string {
+	sliceDirs := func(dms []dirMeta) [][]string {
+		if len(dms) == 0 {
+			return nil
+		}
 		var res []string
-		for k := i; k < j; k++ {
-			res = append(res, dms[k].dir)
+		for _, dm := range dms {
+			res = append(res, dm.dir)
 		}
 		return [][]string{res}
 	}
 
-	// Then we care about compacting multiple blocks, starting with the oldest.
-	for i := 0; i < len(dms)-compactionBlocksLen+1; i++ {
-		if c.match(dms[i : i+3]) {
-			return sliceDirs(i, i+compactionBlocksLen), nil
-		}
-	}
-
-	return nil, nil
+	return sliceDirs(c.selectDirs(dms)), nil
 }
 
-func (c *compactor) match(dirs []dirMeta) bool {
-	g := dirs[0].meta.Compaction.Generation
+func (c *compactor) selectDirs(ds []dirMeta) []dirMeta {
+	return selectRecurse(ds, c.opts.blockRanges)
+}
 
-	for _, d := range dirs {
-		if d.meta.Compaction.Generation != g {
-			return false
+func selectRecurse(dms []dirMeta, intervals []int64) []dirMeta {
+	if len(intervals) == 0 {
+		return dms
+	}
+
+	// Get the blocks by the max interval
+	blocks := splitByRange(dms, intervals[len(intervals)-1])
+	dirs := []dirMeta{}
+	for i := len(blocks) - 1; i >= 0; i-- {
+		// Choose the blocks to compact, largest (at the end) first.
+		// And if there is more than 1 block, compact it.
+		if len(blocks[i]) > 1 {
+			dirs = blocks[i]
+			break
 		}
 	}
-	return uint64(dirs[len(dirs)-1].meta.MaxTime-dirs[0].meta.MinTime) <= c.opts.maxBlockRange
+
+	// If there are too many blocks, see if a smaller interval will catch them.
+	if len(dirs) > 2 {
+		smallerDirs := selectRecurse(dirs, intervals[:len(intervals)-1])
+		if len(smallerDirs) > 1 {
+			return smallerDirs
+		}
+	}
+
+	return dirs
+}
+
+func splitByRange(ds []dirMeta, tr int64) [][]dirMeta {
+	// TODO(gouthamve): Optimise
+	rMap := make(map[int64][]dirMeta)
+	for _, dir := range ds {
+		t0 := dir.meta.MinTime - dir.meta.MinTime%tr
+		if intervalContains(t0, t0+tr, dir.meta.MinTime) && intervalContains(t0, t0+tr, dir.meta.MaxTime) {
+			rMap[t0] = append(rMap[t0], dir)
+		}
+	}
+	res := make([][]dirMeta, 0, len(rMap))
+	for _, v := range rMap {
+		res = append(res, v)
+	}
+
+	sort.Slice(res, func(i, j int) bool {
+		return res[i][0].meta.MinTime < res[j][0].meta.MinTime
+	})
+
+	return res
 }
 
 func compactBlockMetas(blocks ...BlockMeta) (res BlockMeta) {
