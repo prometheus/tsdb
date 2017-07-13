@@ -112,12 +112,12 @@ func TestAmendDatapointCausesError(t *testing.T) {
 
 	hb := createTestHeadBlock(t, dir, 0, 1000)
 
-	app := hb.Appender()
+	app := hb.Appender(1, 0)
 	_, err := app.Add(labels.Labels{}, 0, 0)
 	require.NoError(t, err, "Failed to add sample")
 	require.NoError(t, app.Commit(), "Unexpected error committing appender")
 
-	app = hb.Appender()
+	app = hb.Appender(1, 0)
 	_, err = app.Add(labels.Labels{}, 0, 1)
 	require.Equal(t, ErrAmendSample, err)
 }
@@ -128,12 +128,12 @@ func TestDuplicateNaNDatapointNoAmendError(t *testing.T) {
 
 	hb := createTestHeadBlock(t, dir, 0, 1000)
 
-	app := hb.Appender()
+	app := hb.Appender(1, 0)
 	_, err := app.Add(labels.Labels{}, 0, math.NaN())
 	require.NoError(t, err, "Failed to add sample")
 	require.NoError(t, app.Commit(), "Unexpected error committing appender")
 
-	app = hb.Appender()
+	app = hb.Appender(1, 0)
 	_, err = app.Add(labels.Labels{}, 0, math.NaN())
 	require.NoError(t, err)
 }
@@ -144,12 +144,12 @@ func TestNonDuplicateNaNDatapointsCausesAmendError(t *testing.T) {
 
 	hb := createTestHeadBlock(t, dir, 0, 1000)
 
-	app := hb.Appender()
+	app := hb.Appender(1, 0)
 	_, err := app.Add(labels.Labels{}, 0, math.Float64frombits(0x7ff0000000000001))
 	require.NoError(t, err, "Failed to add sample")
 	require.NoError(t, app.Commit(), "Unexpected error committing appender")
 
-	app = hb.Appender()
+	app = hb.Appender(1, 0)
 	_, err = app.Add(labels.Labels{}, 0, math.Float64frombits(0x7ff0000000000002))
 	require.Equal(t, ErrAmendSample, err)
 }
@@ -161,7 +161,7 @@ func TestSkippingInvalidValuesInSameTxn(t *testing.T) {
 	hb := createTestHeadBlock(t, dir, 0, 1000)
 
 	// Append AmendedValue.
-	app := hb.Appender()
+	app := hb.Appender(1, 0)
 	_, err := app.Add(labels.Labels{{"a", "b"}}, 0, 1)
 	require.NoError(t, err)
 	_, err = app.Add(labels.Labels{{"a", "b"}}, 0, 2)
@@ -170,7 +170,7 @@ func TestSkippingInvalidValuesInSameTxn(t *testing.T) {
 	require.Equal(t, uint64(1), hb.Meta().Stats.NumSamples)
 
 	// Make sure the right value is stored.
-	q := hb.Querier(0, 10)
+	q := hb.Querier(0, 10, nil)
 	ss := q.Select(labels.NewEqualMatcher("a", "b"))
 	ssMap, err := readSeriesSet(ss)
 	require.NoError(t, err)
@@ -182,7 +182,7 @@ func TestSkippingInvalidValuesInSameTxn(t *testing.T) {
 	require.NoError(t, q.Close())
 
 	// Append Out of Order Value.
-	app = hb.Appender()
+	app = hb.Appender(1, 0)
 	_, err = app.Add(labels.Labels{{"a", "b"}}, 10, 3)
 	require.NoError(t, err)
 	_, err = app.Add(labels.Labels{{"a", "b"}}, 7, 5)
@@ -190,7 +190,7 @@ func TestSkippingInvalidValuesInSameTxn(t *testing.T) {
 	require.NoError(t, app.Commit())
 	require.Equal(t, uint64(2), hb.Meta().Stats.NumSamples)
 
-	q = hb.Querier(0, 10)
+	q = hb.Querier(0, 10, nil)
 	ss = q.Select(labels.NewEqualMatcher("a", "b"))
 	ssMap, err = readSeriesSet(ss)
 	require.NoError(t, err)
@@ -260,7 +260,7 @@ func TestHeadBlock_e2e(t *testing.T) {
 	defer os.RemoveAll(dir)
 
 	hb := createTestHeadBlock(t, dir, minTime, maxTime)
-	app := hb.Appender()
+	app := hb.Appender(1, 0)
 
 	for _, l := range lbls {
 		ls := labels.New(l...)
@@ -326,7 +326,7 @@ func TestHeadBlock_e2e(t *testing.T) {
 			mint := rand.Int63n(300)
 			maxt := mint + rand.Int63n(timeInterval*int64(numDatapoints))
 
-			q := hb.Querier(mint, maxt)
+			q := hb.Querier(mint, maxt, nil)
 			ss := q.Select(qry.ms...)
 
 			// Build the mockSeriesSet.
@@ -389,7 +389,7 @@ func TestHBDeleteSimple(t *testing.T) {
 	defer os.RemoveAll(dir)
 
 	hb := createTestHeadBlock(t, dir, 0, numSamples)
-	app := hb.Appender()
+	app := hb.Appender(1, 0)
 
 	smpls := make([]float64, numSamples)
 	for i := int64(0); i < numSamples; i++ {
@@ -435,7 +435,7 @@ Outer:
 		}
 
 		// Compare the result.
-		q := hb.Querier(0, numSamples)
+		q := hb.Querier(0, numSamples, nil)
 		res := q.Select(labels.NewEqualMatcher("a", "b"))
 
 		expSamples := make([]sample, 0, len(c.remaint))
@@ -480,7 +480,7 @@ func TestDeleteUntilCurMax(t *testing.T) {
 	defer os.RemoveAll(dir)
 
 	hb := createTestHeadBlock(t, dir, 0, 2*numSamples)
-	app := hb.Appender()
+	app := hb.Appender(1, 0)
 
 	smpls := make([]float64, numSamples)
 	for i := int64(0); i < numSamples; i++ {
@@ -490,12 +490,12 @@ func TestDeleteUntilCurMax(t *testing.T) {
 
 	require.NoError(t, app.Commit())
 	require.NoError(t, hb.Delete(0, 10000, labels.NewEqualMatcher("a", "b")))
-	app = hb.Appender()
+	app = hb.Appender(1, 0)
 	_, err := app.Add(labels.Labels{{"a", "b"}}, 11, 1)
 	require.NoError(t, err)
 	require.NoError(t, app.Commit())
 
-	q := hb.Querier(0, 100000)
+	q := hb.Querier(0, 100000, nil)
 	res := q.Select(labels.NewEqualMatcher("a", "b"))
 
 	require.True(t, res.Next())
@@ -565,7 +565,7 @@ func TestDelete_e2e(t *testing.T) {
 	defer os.RemoveAll(dir)
 
 	hb := createTestHeadBlock(t, dir, minTime, maxTime)
-	app := hb.Appender()
+	app := hb.Appender(1, 0)
 
 	for _, l := range lbls {
 		ls := labels.New(l...)
@@ -643,7 +643,7 @@ func TestDelete_e2e(t *testing.T) {
 			mint := rand.Int63n(200)
 			maxt := mint + rand.Int63n(timeInterval*int64(numDatapoints))
 
-			q := hb.Querier(mint, maxt)
+			q := hb.Querier(mint, maxt, nil)
 			ss := q.Select(del.ms...)
 
 			// Build the mockSeriesSet.
@@ -772,4 +772,71 @@ func TestComputeChunkEndTime(t *testing.T) {
 			t.Errorf("expected %d for (start: %d, cur: %d, max: %d), got %d", c.res, c.start, c.cur, c.max, got)
 		}
 	}
+}
+
+func TestMemSeriesIsolation(t *testing.T) {
+	dir, _ := ioutil.TempDir("", "test")
+	defer os.RemoveAll(dir)
+
+	hb := createTestHeadBlock(t, dir, 0, 10000)
+
+	lastValue := func(maxWriteId uint64) int {
+		querier := hb.Querier(0, 10000, &IsolationState{maxWriteId: maxWriteId})
+		defer querier.Close()
+		seriesSet, err := readSeriesSet(querier.Select(labels.NewEqualMatcher("foo", "bar")))
+		require.NoError(t, err)
+		for _, series := range seriesSet {
+			return int(series[len(series)-1].v)
+		}
+		return -1
+	}
+
+	i := 0
+	for ; i <= 1000; i++ {
+		app := hb.Appender(uint64(i), 0)
+		_, err := app.Add(labels.FromStrings("foo", "bar"), int64(i), float64(i))
+		require.NoError(t, err, "Failed to add sample")
+		require.NoError(t, app.Commit(), "Unexpected error committing appender")
+	}
+
+	// Test simple cases in different chunks when no writeId cleanup has been performed.
+	require.Equal(t, 10, lastValue(10))
+	require.Equal(t, 130, lastValue(130))
+	require.Equal(t, 160, lastValue(160))
+	require.Equal(t, 240, lastValue(240))
+	require.Equal(t, 500, lastValue(500))
+	require.Equal(t, 750, lastValue(750))
+	require.Equal(t, 995, lastValue(995))
+	require.Equal(t, 999, lastValue(999))
+
+	// Cleanup writeIds below 500.
+	app := hb.Appender(uint64(i), 500)
+	_, err := app.Add(labels.FromStrings("foo", "bar"), int64(i), float64(i))
+	require.NoError(t, err, "Failed to add sample")
+	require.NoError(t, app.Commit(), "Unexpected error committing appender")
+	i++
+
+	// We should not get queries with a maxWriteId below 500 after the cleanup,
+	// but they only take the remaining writeIds into account.
+	require.Equal(t, 499, lastValue(10))
+	require.Equal(t, 499, lastValue(130))
+	require.Equal(t, 499, lastValue(160))
+	require.Equal(t, 499, lastValue(240))
+	require.Equal(t, 500, lastValue(500))
+	require.Equal(t, 995, lastValue(995))
+	require.Equal(t, 999, lastValue(999))
+
+	// Cleanup writeIds below 1000, which means the sample buffer is
+	// the only thing with writeIds.
+	app = hb.Appender(uint64(i), 1000)
+	_, err = app.Add(labels.FromStrings("foo", "bar"), int64(i), float64(i))
+	require.NoError(t, err, "Failed to add sample")
+	require.NoError(t, app.Commit(), "Unexpected error committing appender")
+	i++
+	require.Equal(t, 999, lastValue(998))
+	require.Equal(t, 999, lastValue(999))
+	require.Equal(t, 1000, lastValue(1000))
+	require.Equal(t, 1001, lastValue(1001))
+	require.Equal(t, 1002, lastValue(1002))
+	require.Equal(t, 1002, lastValue(1003))
 }

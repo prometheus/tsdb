@@ -17,6 +17,7 @@ import (
 	"io/ioutil"
 	"math/rand"
 	"os"
+	"strconv"
 	"testing"
 
 	"github.com/pkg/errors"
@@ -36,6 +37,10 @@ func readSeriesSet(ss SeriesSet) (map[string][]sample, error) {
 		for it.Next() {
 			t, v := it.At()
 			samples = append(samples, sample{t: t, v: v})
+		}
+
+		if len(samples) == 0 {
+			continue
 		}
 
 		name := series.Labels().String()
@@ -215,4 +220,97 @@ Outer:
 			require.Equal(t, smplExp, smplRes, "samples")
 		}
 	}
+}
+
+func TestDBCannotSeePartialCommits(t *testing.T) {
+	tmpdir, _ := ioutil.TempDir("", "test")
+	defer os.RemoveAll(tmpdir)
+
+	db, err := Open(tmpdir, nil, nil, nil)
+	require.NoError(t, err)
+	defer db.Close()
+
+	stop := make(chan struct{})
+	firstInsert := make(chan struct{})
+
+	// Insert data in batches.
+	go func() {
+		iter := 0
+		for {
+			app := db.Appender()
+
+			for j := 0; j < 100; j++ {
+				_, err := app.Add(labels.FromStrings("foo", "bar", "a", strconv.Itoa(j)), int64(iter), float64(iter))
+				require.NoError(t, err)
+			}
+			err = app.Commit()
+			require.NoError(t, err)
+
+			if iter == 0 {
+				close(firstInsert)
+			}
+			iter++
+
+			select {
+			case <-stop:
+				return
+			default:
+			}
+		}
+	}()
+
+	<-firstInsert
+
+	// This is a race condition, so do a few tests to tickle it.
+	// Usually most will fail.
+	inconsistencies := 0
+	for i := 0; i < 10; i++ {
+		func() {
+			querier := db.Querier(0, 1000000)
+			defer querier.Close()
+
+			seriesSet, err := readSeriesSet(querier.Select(labels.NewEqualMatcher("foo", "bar")))
+			require.NoError(t, err)
+			values := map[float64]struct{}{}
+			for _, series := range seriesSet {
+				values[series[len(series)-1].v] = struct{}{}
+			}
+			if len(values) != 1 {
+				inconsistencies++
+			}
+		}()
+	}
+	stop <- struct{}{}
+
+	require.Equal(t, 0, inconsistencies, "Some queries saw inconsistent results.")
+}
+
+func TestDBQueryDoesntSeeAppendsAfterCreation(t *testing.T) {
+	tmpdir, _ := ioutil.TempDir("", "test")
+	defer os.RemoveAll(tmpdir)
+
+	db, err := Open(tmpdir, nil, nil, nil)
+	require.NoError(t, err)
+	defer db.Close()
+
+	querier := db.Querier(0, 1000000)
+	defer querier.Close()
+
+	app := db.Appender()
+	_, err = app.Add(labels.FromStrings("foo", "bar"), 0, 0)
+	require.NoError(t, err)
+	// This commit is after the querier is created, so should not be returned.
+	err = app.Commit()
+	require.NoError(t, err)
+
+	seriesSet, err := readSeriesSet(querier.Select(labels.NewEqualMatcher("foo", "bar")))
+	require.NoError(t, err)
+	require.Equal(t, map[string][]sample{}, seriesSet)
+
+	querier = db.Querier(0, 1000000)
+	defer querier.Close()
+	seriesSet, err = readSeriesSet(querier.Select(labels.NewEqualMatcher("foo", "bar")))
+	require.NoError(t, err)
+	require.Equal(t, seriesSet, map[string][]sample{`{foo="bar"}`: []sample{{t: 0, v: 0}}})
+
 }

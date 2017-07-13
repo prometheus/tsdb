@@ -141,7 +141,7 @@ func (h *HeadBlock) init() error {
 				return errors.Errorf("unknown series reference %d (max %d); abort WAL restore",
 					s.Ref, len(h.series))
 			}
-			h.series[s.Ref].append(s.T, s.V)
+			h.series[s.Ref].append(s.T, s.V, 0)
 
 			if !h.inBounds(s.T) {
 				return errors.Wrap(ErrOutOfBounds, "consume WAL")
@@ -335,10 +335,12 @@ func (h *HeadBlock) Dir() string { return h.dir }
 func (h *HeadBlock) Index() IndexReader { return &headIndexReader{h} }
 
 // Chunks returns a ChunkReader against the block.
-func (h *HeadBlock) Chunks() ChunkReader { return &headChunkReader{h} }
+func (h *HeadBlock) Chunks(isolation *IsolationState) ChunkReader {
+	return &headChunkReader{HeadBlock: h, isolation: isolation}
+}
 
 // Querier returns a new Querier against the block for the range [mint, maxt].
-func (h *HeadBlock) Querier(mint, maxt int64) Querier {
+func (h *HeadBlock) Querier(mint, maxt int64, isolation *IsolationState) Querier {
 	h.mtx.RLock()
 	defer h.mtx.RUnlock()
 
@@ -353,7 +355,7 @@ func (h *HeadBlock) Querier(mint, maxt int64) Querier {
 		mint:       mint,
 		maxt:       maxt,
 		index:      h.Index(),
-		chunks:     h.Chunks(),
+		chunks:     h.Chunks(isolation),
 		tombstones: h.Tombstones(),
 
 		postingsMapper: func(p Postings) Postings {
@@ -380,7 +382,7 @@ func (h *HeadBlock) Querier(mint, maxt int64) Querier {
 }
 
 // Appender returns a new Appender against the head block.
-func (h *HeadBlock) Appender() Appender {
+func (h *HeadBlock) Appender(writeId, cleanupWriteIdsBelow uint64) Appender {
 	atomic.AddUint64(&h.activeWriters, 1)
 
 	h.mtx.RLock()
@@ -388,7 +390,7 @@ func (h *HeadBlock) Appender() Appender {
 	if h.closed {
 		panic(fmt.Sprintf("block %s already closed", h.dir))
 	}
-	return &headAppender{HeadBlock: h, samples: getHeadAppendBuffer()}
+	return &headAppender{HeadBlock: h, samples: getHeadAppendBuffer(), writeId: writeId, cleanupWriteIdsBelow: cleanupWriteIdsBelow}
 }
 
 // ActiveWriters returns true if the block has open write transactions.
@@ -418,9 +420,11 @@ func putHeadAppendBuffer(b []RefSample) {
 type headAppender struct {
 	*HeadBlock
 
-	newSeries []*hashedLabels
-	newLabels []labels.Labels
-	newHashes map[uint64]uint64
+	newSeries            []*hashedLabels
+	newLabels            []labels.Labels
+	newHashes            map[uint64]uint64
+	writeId              uint64
+	cleanupWriteIdsBelow uint64
 
 	samples       []RefSample
 	highTimestamp int64
@@ -595,9 +599,12 @@ func (a *headAppender) Commit() error {
 	total := uint64(len(a.samples))
 
 	for _, s := range a.samples {
-		if !a.series[s.Ref].append(s.T, s.V) {
+		if !a.series[s.Ref].append(s.T, s.V, a.writeId) {
 			total--
 		}
+		// Also take the opportuinty to GC writeIds in the memSeries
+		// that are no longer required.
+		a.series[s.Ref].cleanupWriteIdsBelow(a.cleanupWriteIdsBelow)
 	}
 
 	atomic.AddUint64(&a.meta.Stats.NumSamples, total)
@@ -625,6 +632,7 @@ func (a *headAppender) Rollback() error {
 
 type headChunkReader struct {
 	*HeadBlock
+	isolation *IsolationState
 }
 
 // Chunk returns the chunk for the reference number.
@@ -636,23 +644,25 @@ func (h *headChunkReader) Chunk(ref uint64) (chunks.Chunk, error) {
 	ci := (ref << 32) >> 32
 
 	c := &safeChunk{
-		Chunk: h.series[si].chunks[ci].chunk,
-		s:     h.series[si],
-		i:     int(ci),
+		Chunk:     h.series[si].chunks[ci].chunk,
+		s:         h.series[si],
+		i:         int(ci),
+		isolation: h.isolation,
 	}
 	return c, nil
 }
 
 type safeChunk struct {
 	chunks.Chunk
-	s *memSeries
-	i int
+	s         *memSeries
+	i         int
+	isolation *IsolationState
 }
 
 func (c *safeChunk) Iterator() chunks.Iterator {
 	c.s.mtx.RLock()
 	defer c.s.mtx.RUnlock()
-	return c.s.iterator(c.i)
+	return c.s.iterator(c.i, c.isolation)
 }
 
 // func (c *safeChunk) Appender() (chunks.Appender, error) { panic("illegal") }
@@ -784,6 +794,11 @@ type memSeries struct {
 	lastValue float64
 	sampleBuf [4]sample
 
+	// Write ids of most recent samples. This is a ring buffer.
+	writeIds     []uint64
+	writeIdFirst int // Position of first id in the ring.
+	writeIdCount int // How many ids in the ring.
+
 	app chunks.Appender // Current appender for the chunk.
 }
 
@@ -805,15 +820,16 @@ func (s *memSeries) cut(mint int64) *memChunk {
 
 func newMemSeries(lset labels.Labels, id uint32, maxt int64) *memSeries {
 	s := &memSeries{
-		lset:   lset,
-		ref:    id,
-		maxt:   maxt,
-		nextAt: math.MinInt64,
+		lset:     lset,
+		ref:      id,
+		maxt:     maxt,
+		nextAt:   math.MinInt64,
+		writeIds: make([]uint64, 4),
 	}
 	return s
 }
 
-func (s *memSeries) append(t int64, v float64) bool {
+func (s *memSeries) append(t int64, v float64, writeId uint64) bool {
 	const samplesPerChunk = 120
 
 	s.mtx.Lock()
@@ -847,7 +863,41 @@ func (s *memSeries) append(t int64, v float64) bool {
 	s.sampleBuf[2] = s.sampleBuf[3]
 	s.sampleBuf[3] = sample{t: t, v: v}
 
+	if s.writeIdCount == len(s.writeIds) {
+		// Ring buffer is full, expand by doubling.
+		newRing := make([]uint64, s.writeIdCount*2)
+		copy(newRing[s.writeIdCount+s.writeIdFirst:], s.writeIds[s.writeIdFirst:])
+		copy(newRing, s.writeIds[:s.writeIdFirst])
+		s.writeIds = newRing
+		s.writeIdFirst += s.writeIdCount
+	}
+	s.writeIds[(s.writeIdFirst+s.writeIdCount)%len(s.writeIds)] = writeId
+	s.writeIdCount++
+
 	return true
+}
+
+func (s *memSeries) cleanupWriteIdsBelow(bound uint64) {
+	s.mtx.Lock()
+	defer s.mtx.Unlock()
+
+	pos := s.writeIdFirst
+
+	for s.writeIdCount > 0 {
+		if s.writeIds[pos] < bound {
+			s.writeIdFirst++
+			s.writeIdCount--
+		} else {
+			break
+		}
+		pos++
+		if pos == len(s.writeIds) {
+			pos = 0
+		}
+	}
+	if s.writeIdFirst >= len(s.writeIds) {
+		s.writeIdFirst -= len(s.writeIds)
+	}
 }
 
 // computeChunkEndTime estimates the end timestamp based the beginning of a chunk,
@@ -861,18 +911,56 @@ func computeChunkEndTime(start, cur, max int64) int64 {
 	return start + (max-start)/a
 }
 
-func (s *memSeries) iterator(i int) chunks.Iterator {
+func (s *memSeries) iterator(i int, isolation *IsolationState) chunks.Iterator {
 	c := s.chunks[i]
 
+	stopAfter := c.samples
+	if isolation != nil {
+		totalSamples := 0
+		previousSamples := 0 // Samples before this chunk.
+		for j, d := range s.chunks {
+			totalSamples += d.samples
+			if j < i {
+				previousSamples += d.samples
+			}
+		}
+		writeIdsToConsider := (previousSamples + c.samples) - (totalSamples - s.writeIdCount)
+		// Iterate over the ring, find the first one that the isolation state says not
+		// to return.
+		pos := s.writeIdFirst
+		for index := 0; index < writeIdsToConsider; index++ {
+			writeId := s.writeIds[pos]
+			if _, ok := isolation.incompleteWrites[writeId]; ok || writeId > isolation.maxWriteId {
+				stopAfter = index - (writeIdsToConsider - c.samples)
+				if stopAfter < 0 {
+					stopAfter = 0 // Stopped in a previous chunk.
+				}
+				break
+			}
+			pos++
+			if pos == len(s.writeIds) {
+				pos = 0
+			}
+		}
+	}
+
 	if i < len(s.chunks)-1 {
-		return c.chunk.Iterator()
+		it := &memSafeIterator{
+			Iterator:  c.chunk.Iterator(),
+			i:         -1,
+			total:     c.samples,
+			stopAfter: stopAfter,
+		}
+		return it
 	}
 
 	it := &memSafeIterator{
-		Iterator: c.chunk.Iterator(),
-		i:        -1,
-		total:    c.samples,
-		buf:      s.sampleBuf,
+		Iterator:        c.chunk.Iterator(),
+		i:               -1,
+		total:           c.samples,
+		stopAfter:       stopAfter,
+		bufferedSamples: 4,
+		buf:             s.sampleBuf,
 	}
 	return it
 }
@@ -890,26 +978,28 @@ type memChunk struct {
 type memSafeIterator struct {
 	chunks.Iterator
 
-	i     int
-	total int
-	buf   [4]sample
+	i               int
+	total           int
+	stopAfter       int
+	bufferedSamples int
+	buf             [4]sample
 }
 
 func (it *memSafeIterator) Next() bool {
-	if it.i+1 >= it.total {
+	if it.i+1 >= it.stopAfter {
 		return false
 	}
 	it.i++
-	if it.total-it.i > 4 {
+	if it.total-it.i > it.bufferedSamples {
 		return it.Iterator.Next()
 	}
 	return true
 }
 
 func (it *memSafeIterator) At() (int64, float64) {
-	if it.total-it.i > 4 {
+	if it.total-it.i > it.bufferedSamples {
 		return it.Iterator.At()
 	}
-	s := it.buf[4-(it.total-it.i)]
+	s := it.buf[it.bufferedSamples-(it.total-it.i)]
 	return s.t, s.v
 }

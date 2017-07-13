@@ -402,7 +402,7 @@ func populateBlock(blocks []Block, indexw IndexWriter, chunkw ChunkWriter) (*Blo
 		if err != nil {
 			return nil, err
 		}
-		s := newCompactionSeriesSet(b.Index(), b.Chunks(), b.Tombstones(), all)
+		s := newCompactionSeriesSet(b.Index(), b.Chunks(nil), b.Tombstones(), all)
 
 		if i == 0 {
 			set = s

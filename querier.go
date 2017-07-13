@@ -49,8 +49,43 @@ type Series interface {
 // querier aggregates querying results from time blocks within
 // a single partition.
 type querier struct {
-	db     *DB
-	blocks []Querier
+	db        *DB
+	isolation *IsolationState
+	blocks    []Querier
+}
+
+// IsolationState returns an objet used to control isolation
+// between a query and writes. Must be closed when complete.
+func (s *DB) IsolationState() *IsolationState {
+	s.writeMtx.Lock() // Take write mutex before read mutex.
+	defer s.writeMtx.Unlock()
+	isolation := &IsolationState{
+		maxWriteId:       s.writeLastId,
+		lowWaterMark:     s.writeLastId,
+		incompleteWrites: make(map[uint64]struct{}, len(s.writesOpen)),
+		db:               s,
+	}
+	for k, _ := range s.writesOpen {
+		isolation.incompleteWrites[k] = struct{}{}
+		if k < isolation.lowWaterMark {
+			isolation.lowWaterMark = k
+		}
+	}
+
+	s.readMtx.Lock()
+	defer s.readMtx.Unlock()
+	isolation.prev = s.readsOpen
+	isolation.next = s.readsOpen.next
+	s.readsOpen.next.prev = isolation
+	s.readsOpen.next = isolation
+	return isolation
+}
+
+func (i *IsolationState) Close() {
+	i.db.readMtx.Lock()
+	i.next.prev = i.prev
+	i.prev.next = i.next
+	i.db.readMtx.Unlock()
 }
 
 // Querier returns a new querier over the data partition for the given
@@ -63,11 +98,12 @@ func (s *DB) Querier(mint, maxt int64) Querier {
 	s.headmtx.RUnlock()
 
 	sq := &querier{
-		blocks: make([]Querier, 0, len(blocks)),
-		db:     s,
+		blocks:    make([]Querier, 0, len(blocks)),
+		db:        s,
+		isolation: s.IsolationState(),
 	}
 	for _, b := range blocks {
-		sq.blocks = append(sq.blocks, b.Querier(mint, maxt))
+		sq.blocks = append(sq.blocks, b.Querier(mint, maxt, sq.isolation))
 	}
 
 	return sq
@@ -123,6 +159,7 @@ func (q *querier) Close() error {
 		merr.Add(bq.Close())
 	}
 	q.db.mtx.RUnlock()
+	q.isolation.Close()
 
 	return merr.Err()
 }

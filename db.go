@@ -104,6 +104,19 @@ type DB struct {
 	mtx    sync.RWMutex
 	blocks []Block
 
+	// Mutex for accessing writeLastId and writesOpen.
+	writeMtx sync.Mutex
+	// Each write is given an internal id.
+	writeLastId uint64
+	// Which writes are currently in progress.
+	writesOpen map[uint64]struct{}
+
+	// Mutex for accessing readLastId.
+	// If taking both writeMtx and readMtx, take writeMtx first.
+	readMtx sync.Mutex
+	// All current in use isolationStates. This is a doubly-linked list.
+	readsOpen *IsolationState
+
 	// Mutex that must be held when modifying just the head blocks
 	// or the general layout.
 	// Must never be held when acquiring a blocks's mutex!
@@ -124,6 +137,8 @@ type DB struct {
 type dbMetrics struct {
 	activeAppenders      prometheus.Gauge
 	loadedBlocks         prometheus.GaugeFunc
+	lowWatermark         prometheus.GaugeFunc
+	highWatermark        prometheus.GaugeFunc
 	reloads              prometheus.Counter
 	reloadsFailed        prometheus.Counter
 	reloadDuration       prometheus.Summary
@@ -145,6 +160,20 @@ func newDBMetrics(db *DB, r prometheus.Registerer) *dbMetrics {
 		db.mtx.RLock()
 		defer db.mtx.RUnlock()
 		return float64(len(db.blocks))
+	})
+	m.lowWatermark = prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+		Name: "tsdb_isolation_low_watermark",
+		Help: "The lowest write id that is still referenced.",
+	}, func() float64 {
+		return float64(db.readLowWatermark())
+	})
+	m.highWatermark = prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+		Name: "tsdb_isolation_high_watermark",
+		Help: "The highest write id that has been given out.",
+	}, func() float64 {
+		db.writeMtx.Lock()
+		defer db.writeMtx.Unlock()
+		return float64(db.writeLastId)
 	})
 	m.reloads = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "tsdb_reloads_total",
@@ -171,6 +200,8 @@ func newDBMetrics(db *DB, r prometheus.Registerer) *dbMetrics {
 		r.MustRegister(
 			m.activeAppenders,
 			m.loadedBlocks,
+			m.lowWatermark,
+			m.highWatermark,
 			m.reloads,
 			m.reloadsFailed,
 			m.reloadDuration,
@@ -196,10 +227,16 @@ func Open(dir string, l log.Logger, r prometheus.Registerer, opts *Options) (db 
 		opts = DefaultOptions
 	}
 
+	head := &IsolationState{}
+	head.next = head
+	head.prev = head
+
 	db = &DB{
 		dir:        dir,
 		logger:     l,
 		opts:       opts,
+		writesOpen: map[uint64]struct{}{},
+		readsOpen:  head,
 		compactc:   make(chan struct{}, 1),
 		donec:      make(chan struct{}),
 		stopc:      make(chan struct{}),
@@ -601,12 +638,20 @@ func (db *DB) Appender() Appender {
 	db.metrics.activeAppenders.Inc()
 
 	db.mtx.RLock()
-	return &dbAppender{db: db}
+
+	db.writeMtx.Lock()
+	db.writeLastId++
+	id := db.writeLastId
+	db.writesOpen[id] = struct{}{}
+	db.writeMtx.Unlock()
+	return &dbAppender{db: db, writeId: id, cleanupWriteIdsBelow: db.readLowWatermark()}
 }
 
 type dbAppender struct {
-	db    *DB
-	heads []*metaAppender
+	db                   *DB
+	heads                []*metaAppender
+	writeId              uint64
+	cleanupWriteIdsBelow uint64
 
 	samples int
 }
@@ -693,7 +738,7 @@ func (a *dbAppender) appenderAt(t int64) (*metaAppender, error) {
 	// Instantiate appender after returning headmtx!
 	app := &metaAppender{
 		meta: hb.Meta(),
-		app:  hb.Appender(),
+		app:  hb.Appender(a.writeId, a.cleanupWriteIdsBelow),
 	}
 	a.heads = append(a.heads, app)
 
@@ -741,9 +786,28 @@ func (db *DB) ensureHead(t int64) error {
 	return err
 }
 
+// readLowWatermark returns the writeId below which
+// we no longer need to track which writes were from
+// which writeId.
+func (db *DB) readLowWatermark() uint64 {
+	db.writeMtx.Lock() // Take writeMtx first.
+	defer db.writeMtx.Unlock()
+	db.readMtx.Lock()
+	defer db.readMtx.Unlock()
+	if db.readsOpen.prev == db.readsOpen {
+		return db.writeLastId
+	}
+	return db.readsOpen.prev.lowWaterMark
+}
+
 func (a *dbAppender) Commit() error {
 	defer a.db.metrics.activeAppenders.Dec()
 	defer a.db.mtx.RUnlock()
+	defer func() {
+		a.db.writeMtx.Lock()
+		delete(a.db.writesOpen, a.writeId)
+		a.db.writeMtx.Unlock()
+	}()
 
 	// Commits to partial appenders must be concurrent as concurrent appenders
 	// may have conflicting locks on head appenders.
@@ -775,6 +839,10 @@ func (a *dbAppender) Commit() error {
 func (a *dbAppender) Rollback() error {
 	defer a.db.metrics.activeAppenders.Dec()
 	defer a.db.mtx.RUnlock()
+
+	a.db.writeMtx.Lock()
+	delete(a.db.writesOpen, a.writeId)
+	a.db.writeMtx.Unlock()
 
 	var g errgroup.Group
 
