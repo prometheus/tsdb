@@ -170,7 +170,7 @@ func (c *LeveledCompactor) Plan(dir string) ([]string, error) {
 			break
 		}
 
-		if meta.Stats.NumSeries/meta.Stats.NumTombstones <= 20 { // 5%
+		if meta.Stats.NumTombstones > 0 && meta.Stats.NumSeries/meta.Stats.NumTombstones <= 20 { // 5%
 			return []string{dms[i].dir}, nil
 		}
 	}
