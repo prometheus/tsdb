@@ -794,7 +794,7 @@ func (r *walReader) decodeDeletes(flag byte, b []byte) ([]Stone, error) {
 	for db.len() > 0 {
 		var s Stone
 		s.ref = db.uvarint32()
-		s.intervals = intervals{{db.varint64(), db.varint64()}}
+		s.intervals = Intervals{{db.varint64(), db.varint64()}}
 		if db.err() != nil {
 			return nil, db.err()
 		}

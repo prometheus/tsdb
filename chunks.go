@@ -59,7 +59,7 @@ func (cm *ChunkMeta) writeHash(h hash.Hash) error {
 type deletedIterator struct {
 	it chunks.Iterator
 
-	intervals intervals
+	intervals Intervals
 }
 
 func (it *deletedIterator) At() (int64, float64) {

@@ -161,11 +161,11 @@ func TestDeleteSimple(t *testing.T) {
 
 	require.NoError(t, app.Commit())
 	cases := []struct {
-		intervals intervals
+		intervals Intervals
 		remaint   []int64
 	}{
 		{
-			intervals: intervals{{1, 3}, {4, 7}},
+			intervals: Intervals{{1, 3}, {4, 7}},
 			remaint:   []int64{0, 8, 9},
 		},
 	}

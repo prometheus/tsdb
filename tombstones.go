@@ -83,12 +83,12 @@ func writeTombstoneFile(dir string, tr tombstoneReader) error {
 // that is deleted.
 type Stone struct {
 	ref       uint32
-	intervals intervals
+	intervals Intervals
 }
 
 // TombstoneReader is the iterator over tombstones.
 type TombstoneReader interface {
-	Get(ref uint32) intervals
+	Get(ref uint32) Intervals
 }
 
 func readTombstones(dir string) (tombstoneReader, error) {
@@ -131,39 +131,40 @@ func readTombstones(dir string) (tombstoneReader, error) {
 			return nil, d.err()
 		}
 
-		stonesMap.add(k, interval{mint, maxt})
+		stonesMap.add(k, Interval{mint, maxt})
 	}
 
 	return newTombstoneReader(stonesMap), nil
 }
 
-type tombstoneReader map[uint32]intervals
+type tombstoneReader map[uint32]Intervals
 
-func newTombstoneReader(ts map[uint32]intervals) tombstoneReader {
+func newTombstoneReader(ts map[uint32]Intervals) tombstoneReader {
 	return tombstoneReader(ts)
 }
 
 func newEmptyTombstoneReader() tombstoneReader {
-	return tombstoneReader(make(map[uint32]intervals))
+	return tombstoneReader(make(map[uint32]Intervals))
 }
 
-func (t tombstoneReader) Get(ref uint32) intervals {
+func (t tombstoneReader) Get(ref uint32) Intervals {
 	return t[ref]
 }
 
-func (t tombstoneReader) add(ref uint32, itv interval) {
+func (t tombstoneReader) add(ref uint32, itv Interval) {
 	t[ref] = t[ref].add(itv)
 }
 
-type interval struct {
+// Interval represents a single time-interval.
+type Interval struct {
 	mint, maxt int64
 }
 
-func (tr interval) inBounds(t int64) bool {
+func (tr Interval) inBounds(t int64) bool {
 	return t >= tr.mint && t <= tr.maxt
 }
 
-func (tr interval) isSubrange(dranges intervals) bool {
+func (tr Interval) isSubrange(dranges Intervals) bool {
 	for _, r := range dranges {
 		if r.inBounds(tr.mint) && r.inBounds(tr.maxt) {
 			return true
@@ -173,11 +174,12 @@ func (tr interval) isSubrange(dranges intervals) bool {
 	return false
 }
 
-type intervals []interval
+// Intervals represents	a set of increasing and non-overlapping time-intervals.
+type Intervals []Interval
 
 // This adds the new time-range to the existing ones.
 // The existing ones must be sorted.
-func (itvs intervals) add(n interval) intervals {
+func (itvs Intervals) add(n Interval) Intervals {
 	for i, r := range itvs {
 		// TODO(gouthamve): Make this codepath easier to digest.
 		if r.inBounds(n.mint-1) || r.inBounds(n.mint) {
@@ -209,7 +211,7 @@ func (itvs intervals) add(n interval) intervals {
 		}
 
 		if n.mint < r.mint {
-			newRange := make(intervals, i, len(itvs[:i])+1)
+			newRange := make(Intervals, i, len(itvs[:i])+1)
 			copy(newRange, itvs[:i])
 			newRange = append(newRange, n)
 			newRange = append(newRange, itvs[i:]...)
