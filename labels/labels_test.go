@@ -23,8 +23,8 @@ import (
 	"unsafe"
 
 	"github.com/pkg/errors"
-	promlabels "github.com/prometheus/prometheus/pkg/labels"
-	"github.com/prometheus/prometheus/pkg/textparse"
+	promlabels "github.com/prometheus/common/labels"
+	"github.com/prometheus/common/textparse"
 	"github.com/stretchr/testify/require"
 )
 

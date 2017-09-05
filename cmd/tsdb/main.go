@@ -29,8 +29,8 @@ import (
 	"unsafe"
 
 	"github.com/pkg/errors"
-	promlabels "github.com/prometheus/prometheus/pkg/labels"
-	"github.com/prometheus/prometheus/pkg/textparse"
+	promlabels "github.com/prometheus/common/labels"
+	"github.com/prometheus/common/textparse"
 	"github.com/prometheus/tsdb"
 	"github.com/prometheus/tsdb/labels"
 	"github.com/spf13/cobra"
