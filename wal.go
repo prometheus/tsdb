@@ -14,7 +14,6 @@
 package tsdb
 
 import (
-	"bufio"
 	"encoding/binary"
 	"fmt"
 	"hash"
@@ -27,6 +26,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/alin-sinpalean/concurrent-writer/concurrent"
 	"github.com/coreos/etcd/pkg/fileutil"
 	"github.com/go-kit/kit/log"
 	"github.com/pkg/errors"
@@ -161,7 +161,7 @@ type SegmentWAL struct {
 	segmentSize   int64
 
 	crc32 hash.Hash32
-	cur   *bufio.Writer
+	cur   *concurrent.Writer
 	curN  int64
 
 	stopc   chan struct{}
@@ -525,12 +525,15 @@ func (w *SegmentWAL) createSegmentFile(name string) (*os.File, error) {
 func (w *SegmentWAL) cut() error {
 	// Sync current head to disk and close.
 	if hf := w.head(); hf != nil {
-		if err := w.flush(); err != nil {
-			return err
-		}
+		cur := w.cur
 		// Finish last segment asynchronously to not block the WAL moving along
 		// in the new segment.
 		go func() {
+			if cur != nil {
+				if err := cur.Flush(); err != nil {
+					w.logger.Log("msg", "finish old segment", "segment", hf.Name(), "err", err)
+				}
+			}
 			off, err := hf.Seek(0, os.SEEK_CUR)
 			if err != nil {
 				w.logger.Log("msg", "finish old segment", "segment", hf.Name(), "err", err)
@@ -565,7 +568,7 @@ func (w *SegmentWAL) cut() error {
 	w.files = append(w.files, newSegmentFile(f))
 
 	// TODO(gouthamve): make the buffer size a constant.
-	w.cur = bufio.NewWriterSize(f, 8*1024*1024)
+	w.cur = concurrent.NewWriterSize(f, 8*1024*1024)
 	w.curN = 8
 
 	return nil
@@ -580,43 +583,27 @@ func (w *SegmentWAL) head() *segmentFile {
 
 // Sync flushes the changes to disk.
 func (w *SegmentWAL) Sync() error {
-	var head *segmentFile
-	var err error
+	// Retrieve references to the head segment and current writer under mutex lock.
+	w.mtx.Lock()
+	cur := w.cur
+	head := w.head()
+	w.mtx.Unlock()
 
-	// Flush the writer and retrieve the reference to the head segment under mutex lock.
-	func() {
-		w.mtx.Lock()
-		defer w.mtx.Unlock()
-		if err = w.flush(); err != nil {
-			return
-		}
-		head = w.head()
-	}()
-	if err != nil {
+	// But only flush and fsync after releasing the mutex as it will block on disk I/O.
+	return syncImpl(cur, head)
+}
+
+func syncImpl(cur *concurrent.Writer, head *segmentFile) error {
+	if cur == nil {
+		return nil
+	}
+	if err := cur.Flush(); err != nil {
 		return errors.Wrap(err, "flush buffer")
 	}
 	if head != nil {
-		// But only fsync the head segment after releasing the mutex as it will block on disk I/O.
 		return fileutil.Fdatasync(head.File)
 	}
 	return nil
-}
-
-func (w *SegmentWAL) sync() error {
-	if err := w.flush(); err != nil {
-		return err
-	}
-	if w.head() == nil {
-		return nil
-	}
-	return fileutil.Fdatasync(w.head().File)
-}
-
-func (w *SegmentWAL) flush() error {
-	if w.cur == nil {
-		return nil
-	}
-	return w.cur.Flush()
 }
 
 func (w *SegmentWAL) run(interval time.Duration) {
@@ -647,15 +634,17 @@ func (w *SegmentWAL) Close() error {
 	<-w.donec
 
 	w.mtx.Lock()
-	defer w.mtx.Unlock()
+	cur := w.cur
+	head := w.head()
+	w.mtx.Unlock()
 
-	if err := w.sync(); err != nil {
+	if err := syncImpl(cur, head); err != nil {
 		return err
 	}
 	// On opening, a WAL must be fully consumed once. Afterwards
 	// only the current segment will still be open.
-	if hf := w.head(); hf != nil {
-		return errors.Wrapf(hf.Close(), "closing WAL head %s", hf.Name())
+	if head != nil {
+		return errors.Wrapf(head.Close(), "closing WAL head %s", head.Name())
 	}
 	return nil
 }
