@@ -380,77 +380,75 @@ func TestWALRestoreCorrupted(t *testing.T) {
 			},
 		},
 	}
-	for x := 0; x < 10; x++ {
-		for _, c := range cases {
-			t.Run(c.name, func(t *testing.T) {
-				// Generate testing data. It does not make semantical sense but
-				// for the purpose of this test.
-				dir, err := ioutil.TempDir("", "test_corrupted")
-				require.NoError(t, err)
-				defer os.RemoveAll(dir)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			// Generate testing data. It does not make semantical sense but
+			// for the purpose of this test.
+			dir, err := ioutil.TempDir("", "test_corrupted")
+			require.NoError(t, err)
+			defer os.RemoveAll(dir)
 
-				w, err := OpenSegmentWAL(dir, nil, 0)
-				require.NoError(t, err)
+			w, err := OpenSegmentWAL(dir, nil, 0)
+			require.NoError(t, err)
 
-				require.NoError(t, w.LogSamples([]RefSample{{T: 1, V: 2}}))
-				require.NoError(t, w.LogSamples([]RefSample{{T: 2, V: 3}}))
+			require.NoError(t, w.LogSamples([]RefSample{{T: 1, V: 2}}))
+			require.NoError(t, w.LogSamples([]RefSample{{T: 2, V: 3}}))
 
-				done := make(chan interface{})
-				require.NoError(t, w.cut(done))
-				<-done
+			done := make(chan interface{})
+			require.NoError(t, w.cut(done))
+			<-done
 
-				require.NoError(t, w.LogSamples([]RefSample{{T: 3, V: 4}}))
-				require.NoError(t, w.LogSamples([]RefSample{{T: 5, V: 6}}))
+			require.NoError(t, w.LogSamples([]RefSample{{T: 3, V: 4}}))
+			require.NoError(t, w.LogSamples([]RefSample{{T: 5, V: 6}}))
 
-				require.NoError(t, w.Close())
+			require.NoError(t, w.Close())
 
-				// Corrupt the second entry in the first file.
-				// After re-opening we must be able to read the first entry
-				// and the rest, including the second file, must be truncated for clean further
-				// writes.
-				c.f(t, w)
+			// Corrupt the second entry in the first file.
+			// After re-opening we must be able to read the first entry
+			// and the rest, including the second file, must be truncated for clean further
+			// writes.
+			c.f(t, w)
 
-				logger := log.NewLogfmtLogger(os.Stderr)
+			logger := log.NewLogfmtLogger(os.Stderr)
 
-				w2, err := OpenSegmentWAL(dir, logger, 0)
-				require.NoError(t, err)
+			w2, err := OpenSegmentWAL(dir, logger, 0)
+			require.NoError(t, err)
 
-				r := w2.Reader()
+			r := w2.Reader()
 
-				serf := func(l []RefSeries) error {
-					require.Equal(t, 0, len(l))
-					return nil
-				}
-				delf := func([]Stone) error { return nil }
+			serf := func(l []RefSeries) error {
+				require.Equal(t, 0, len(l))
+				return nil
+			}
+			delf := func([]Stone) error { return nil }
 
-				// Weird hack to check order of reads.
-				i := 0
-				samplf := func(s []RefSample) error {
-					if i == 0 {
-						require.Equal(t, []RefSample{{T: 1, V: 2}}, s)
-						i++
-					} else {
-						require.Equal(t, []RefSample{{T: 99, V: 100}}, s)
-					}
-
-					return nil
+			// Weird hack to check order of reads.
+			i := 0
+			samplf := func(s []RefSample) error {
+				if i == 0 {
+					require.Equal(t, []RefSample{{T: 1, V: 2}}, s)
+					i++
+				} else {
+					require.Equal(t, []RefSample{{T: 99, V: 100}}, s)
 				}
 
-				require.NoError(t, r.Read(serf, samplf, delf))
+				return nil
+			}
 
-				require.NoError(t, w2.LogSamples([]RefSample{{T: 99, V: 100}}))
-				require.NoError(t, w2.Close())
+			require.NoError(t, r.Read(serf, samplf, delf))
 
-				// We should see the first valid entry and the new one, everything after
-				// is truncated.
-				w3, err := OpenSegmentWAL(dir, logger, 0)
-				require.NoError(t, err)
+			require.NoError(t, w2.LogSamples([]RefSample{{T: 99, V: 100}}))
+			require.NoError(t, w2.Close())
 
-				r = w3.Reader()
+			// We should see the first valid entry and the new one, everything after
+			// is truncated.
+			w3, err := OpenSegmentWAL(dir, logger, 0)
+			require.NoError(t, err)
 
-				i = 0
-				require.NoError(t, r.Read(serf, samplf, delf))
-			})
-		}
+			r = w3.Reader()
+
+			i = 0
+			require.NoError(t, r.Read(serf, samplf, delf))
+		})
 	}
 }
