@@ -39,6 +39,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/tsdb/chunks"
 	"github.com/prometheus/tsdb/labels"
+	"math"
 )
 
 // DefaultOptions used for the DB. They are sane for setups using
@@ -123,6 +124,7 @@ type dbMetrics struct {
 	reloads              prometheus.Counter
 	reloadsFailed        prometheus.Counter
 	compactionsTriggered prometheus.Counter
+	oldestTime           prometheus.GaugeFunc
 }
 
 func newDBMetrics(db *DB, r prometheus.Registerer) *dbMetrics {
@@ -148,6 +150,12 @@ func newDBMetrics(db *DB, r prometheus.Registerer) *dbMetrics {
 		Name: "tsdb_compactions_triggered_total",
 		Help: "Total number of triggered compactions for the partition.",
 	})
+	m.oldestTime = prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+		Name: "tsdb_oldest_timestamp",
+		Help: "Oldest timestamp in the database.",
+	}, func() float64 {
+		return float64(db.OldestTime())
+	})
 
 	if r != nil {
 		r.MustRegister(
@@ -155,6 +163,7 @@ func newDBMetrics(db *DB, r prometheus.Registerer) *dbMetrics {
 			m.reloads,
 			m.reloadsFailed,
 			m.compactionsTriggered,
+			m.oldestTime,
 		)
 	}
 	return m
@@ -657,6 +666,17 @@ func (db *DB) Delete(mint, maxt int64, ms ...labels.Matcher) error {
 	}
 
 	return nil
+}
+
+func (db *DB) OldestTime() int64 {
+	var oldestTime int64 = math.MaxInt64
+	for _, b := range db.blocks {
+		m := b.Meta()
+		if m.MinTime < oldestTime {
+			oldestTime = m.MinTime
+		}
+	}
+	return oldestTime
 }
 
 func intervalOverlap(amin, amax, bmin, bmax int64) bool {
