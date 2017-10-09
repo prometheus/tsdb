@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/go-kit/kit/log"
+	"github.com/go-kit/kit/log/level"
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/tsdb/chunks"
@@ -117,13 +118,13 @@ func newHeadMetrics(h *Head, r prometheus.Registerer) *headMetrics {
 		Name: "tsdb_head_gc_duration_seconds",
 		Help: "Runtime of garbage collection in the head block.",
 	})
-	m.minTime = prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+	m.maxTime = prometheus.NewGaugeFunc(prometheus.GaugeOpts{
 		Name: "tsdb_head_max_time",
 		Help: "Maximum timestamp of the head block.",
 	}, func() float64 {
 		return float64(h.MaxTime())
 	})
-	m.maxTime = prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+	m.minTime = prometheus.NewGaugeFunc(prometheus.GaugeOpts{
 		Name: "tsdb_head_min_time",
 		Help: "Minimum time bound of the head block.",
 	}, func() float64 {
@@ -177,7 +178,7 @@ func NewHead(r prometheus.Registerer, l log.Logger, wal WAL, chunkRange int64) (
 		series:     newStripeSeries(),
 		values:     map[string]stringset{},
 		symbols:    map[string]struct{}{},
-		postings:   newMemPostings(),
+		postings:   newUnorderedMemPostings(),
 		tombstones: newEmptyTombstoneReader(),
 	}
 	h.metrics = newHeadMetrics(h, r)
@@ -185,13 +186,24 @@ func NewHead(r prometheus.Registerer, l log.Logger, wal WAL, chunkRange int64) (
 	return h, nil
 }
 
+// ReadWAL initializes the head by consuming the write ahead log.
 func (h *Head) ReadWAL() error {
+	defer h.postings.ensureOrder()
+
 	r := h.wal.Reader()
 	mint := h.MinTime()
 
+	// Track number of samples that referenced a series we don't know about
+	// for error reporting.
+	var unknownRefs int
+
 	seriesFunc := func(series []RefSeries) error {
 		for _, s := range series {
-			h.create(s.Labels.Hash(), s.Labels)
+			h.getOrCreateWithID(s.Ref, s.Labels.Hash(), s.Labels)
+
+			if h.lastSeriesID < s.Ref {
+				h.lastSeriesID = s.Ref
+			}
 		}
 		return nil
 	}
@@ -202,7 +214,8 @@ func (h *Head) ReadWAL() error {
 			}
 			ms := h.series.getByID(s.Ref)
 			if ms == nil {
-				return errors.Errorf("unknown series reference %d; abort WAL restore", s.Ref)
+				unknownRefs++
+				continue
 			}
 			_, chunkCreated := ms.append(s.T, s.V)
 			if chunkCreated {
@@ -210,7 +223,6 @@ func (h *Head) ReadWAL() error {
 				h.metrics.chunks.Inc()
 			}
 		}
-
 		return nil
 	}
 	deletesFunc := func(stones []Stone) error {
@@ -222,8 +234,11 @@ func (h *Head) ReadWAL() error {
 				h.tombstones.add(s.ref, itv)
 			}
 		}
-
 		return nil
+	}
+
+	if unknownRefs > 0 {
+		level.Warn(h.logger).Log("msg", "unknown series references in WAL samples", "count", unknownRefs)
 	}
 
 	if err := r.Read(seriesFunc, samplesFunc, deletesFunc); err != nil {
@@ -236,9 +251,6 @@ func (h *Head) ReadWAL() error {
 func (h *Head) Truncate(mint int64) error {
 	initialize := h.MinTime() == math.MinInt64
 
-	if mint%h.chunkRange != 0 {
-		return errors.Errorf("truncating at %d not aligned", mint)
-	}
 	if h.MinTime() >= mint {
 		return nil
 	}
@@ -258,20 +270,18 @@ func (h *Head) Truncate(mint int64) error {
 	start := time.Now()
 
 	h.gc()
-	h.logger.Log("msg", "head GC completed", "duration", time.Since(start))
+	level.Info(h.logger).Log("msg", "head GC completed", "duration", time.Since(start))
 	h.metrics.gcDuration.Observe(time.Since(start).Seconds())
 
 	start = time.Now()
 
-	p, err := h.indexRange(mint, math.MaxInt64).Postings("", "")
-	if err != nil {
-		return err
+	keep := func(id uint64) bool {
+		return h.series.getByID(id) != nil
 	}
-
-	if err := h.wal.Truncate(mint, p); err == nil {
-		h.logger.Log("msg", "WAL truncation completed", "duration", time.Since(start))
+	if err := h.wal.Truncate(mint, keep); err == nil {
+		level.Info(h.logger).Log("msg", "WAL truncation completed", "duration", time.Since(start))
 	} else {
-		h.logger.Log("msg", "WAL truncation failed", "err", err, "duration", time.Since(start))
+		level.Error(h.logger).Log("msg", "WAL truncation failed", "err", err, "duration", time.Since(start))
 	}
 	h.metrics.walTruncateDuration.Observe(time.Since(start).Seconds())
 
@@ -379,17 +389,12 @@ func (a *headAppender) Add(lset labels.Labels, t int64, v float64) (uint64, erro
 	if t < a.mint {
 		return 0, ErrOutOfBounds
 	}
-	hash := lset.Hash()
 
-	s := a.head.series.getByHash(hash, lset)
-
-	if s == nil {
-		s = a.head.create(hash, lset)
-
+	s, created := a.head.getOrCreate(lset.Hash(), lset)
+	if created {
 		a.series = append(a.series, RefSeries{
 			Ref:    s.ref,
 			Labels: lset,
-			hash:   hash,
 		})
 	}
 	return s.ref, a.AddFast(s.ref, t, v)
@@ -839,19 +844,31 @@ func (h *headIndexReader) LabelIndices() ([][]string, error) {
 	return res, nil
 }
 
-func (h *Head) create(hash uint64, lset labels.Labels) *memSeries {
-	h.metrics.series.Inc()
-	h.metrics.seriesCreated.Inc()
+func (h *Head) getOrCreate(hash uint64, lset labels.Labels) (*memSeries, bool) {
+	// Just using `getOrSet` below would be semantically sufficient, but we'd create
+	// a new series on every sample inserted via Add(), which causes allocations
+	// and makes our series IDs rather random and harder to compress in postings.
+	s := h.series.getByHash(hash, lset)
+	if s != nil {
+		return s, false
+	}
 
 	// Optimistically assume that we are the first one to create the series.
 	id := atomic.AddUint64(&h.lastSeriesID, 1)
+
+	return h.getOrCreateWithID(id, hash, lset)
+}
+
+func (h *Head) getOrCreateWithID(id, hash uint64, lset labels.Labels) (*memSeries, bool) {
 	s := newMemSeries(lset, id, h.chunkRange)
 
 	s, created := h.series.getOrSet(hash, s)
-	// Skip indexing if we didn't actually create the series.
 	if !created {
-		return s
+		return s, false
 	}
+
+	h.metrics.series.Inc()
+	h.metrics.seriesCreated.Inc()
 
 	h.postings.add(id, lset)
 
@@ -870,7 +887,7 @@ func (h *Head) create(hash uint64, lset labels.Labels) *memSeries {
 		h.symbols[l.Value] = struct{}{}
 	}
 
-	return s
+	return s, true
 }
 
 // seriesHashmap is a simple hashmap for memSeries by their label set. It is built
@@ -1027,8 +1044,6 @@ func (s *stripeSeries) getOrSet(hash uint64, series *memSeries) (*memSeries, boo
 		return prev, false
 	}
 	s.hashes[i].set(hash, series)
-
-	s.hashes[i][hash] = append(s.hashes[i][hash], series)
 	s.locks[i].Unlock()
 
 	i = series.ref & stripeMask
