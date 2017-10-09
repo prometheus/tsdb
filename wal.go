@@ -547,7 +547,9 @@ func (w *SegmentWAL) createSegmentFile(name string) (*os.File, error) {
 
 // cut finishes the currently active segments and opens the next one.
 // The encoder is reset to point to the new segment.
-func (w *SegmentWAL) cut() error {
+// Optionally a channel may be provided to allow the caller to wait on the
+// current segment having been finished, as this is done asynchronously.
+func (w *SegmentWAL) cut(done chan interface{}) error {
 	// Sync current head to disk and close.
 	if hf := w.head(); hf != nil {
 		cur := w.cur
@@ -571,6 +573,9 @@ func (w *SegmentWAL) cut() error {
 			}
 			if err := hf.Close(); err != nil {
 				level.Error(w.logger).Log("msg", "finish old segment", "segment", hf.Name(), "err", err)
+			}
+			if done != nil {
+				close(done)
 			}
 		}()
 	}
@@ -697,7 +702,7 @@ func (w *SegmentWAL) write(t WALEntryType, flag uint8, buf []byte) error {
 	// XXX(fabxc): this currently cuts a new file whenever the WAL was newly opened.
 	// Probably fine in general but may yield a lot of short files in some cases.
 	if w.cur == nil || w.curN > w.segmentSize || newsz > w.segmentSize && sz <= w.segmentSize {
-		if err := w.cut(); err != nil {
+		if err := w.cut(nil); err != nil {
 			return err
 		}
 	}
