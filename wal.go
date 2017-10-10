@@ -547,7 +547,7 @@ func (w *SegmentWAL) createSegmentFile(name string) (*os.File, error) {
 
 // cut finishes the currently active segments and opens the next one.
 // The encoder is reset to point to the new segment.
-// Optionally a channel may be provided to allow the caller to wait on the
+// Optionally, a channel may be provided to allow the caller to wait on the
 // current segment having been finished, as this is done asynchronously.
 func (w *SegmentWAL) cut(done chan interface{}) error {
 	// Sync current head to disk and close.
@@ -620,10 +620,10 @@ func (w *SegmentWAL) Sync() error {
 	w.mtx.Unlock()
 
 	// But only flush and fsync after releasing the mutex as it will block on disk I/O.
-	return syncImpl(cur, head)
+	return syncImpl(cur, head, w.metrics.fsyncDuration)
 }
 
-func syncImpl(cur *concurrent.Writer, head *segmentFile) error {
+func syncImpl(cur *concurrent.Writer, head *segmentFile, fsyncDuration prometheus.Summary) error {
 	if cur == nil {
 		return nil
 	}
@@ -633,7 +633,7 @@ func syncImpl(cur *concurrent.Writer, head *segmentFile) error {
 	if head != nil {
 		start := time.Now()
 		err := fileutil.Fdatasync(head.File)
-		w.metrics.fsyncDuration.Observe(time.Since(start).Seconds())
+		fsyncDuration.Observe(time.Since(start).Seconds())
 		return err
 	}
 	return nil
@@ -668,16 +668,16 @@ func (w *SegmentWAL) Close() error {
 
 	w.mtx.Lock()
 	cur := w.cur
-	head := w.head()
+	hf := w.head()
 	w.mtx.Unlock()
 
-	if err := syncImpl(cur, head); err != nil {
+	if err := syncImpl(cur, hf, w.metrics.fsyncDuration); err != nil {
 		return err
 	}
 	// On opening, a WAL must be fully consumed once. Afterwards
 	// only the current segment will still be open.
-	if head != nil {
-		return errors.Wrapf(head.Close(), "closing WAL head %s", head.Name())
+	if hf != nil {
+		return errors.Wrapf(hf.Close(), "closing WAL head %s", hf.Name())
 	}
 	return nil
 }
