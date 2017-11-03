@@ -36,9 +36,7 @@ const (
 
 	indexFormatV1 = 1
 
-	size_unit = 4 // should be power of 2
-
-	padding_and = size_unit - 1
+	size_unit = 4
 )
 
 const indexFilename = "index"
@@ -209,10 +207,11 @@ func (w *indexWriter) write(bufs ...[]byte) error {
 
 // addPadding adds zero byte padding until the file size is a multiple size_unit.
 func (w *indexWriter) addPadding() error {
-	p := size_unit - (int(w.pos) & padding_and)
-	if p == size_unit {
+	p := w.pos % size_unit
+	if p == 0 {
 		return nil
 	}
+	p = size_unit - p
 	return errors.Wrap(w.write(make([]byte, p)), "add padding")
 }
 
