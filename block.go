@@ -133,7 +133,7 @@ func writeMetaFile(dir string, meta *BlockMeta) error {
 	return renameFile(tmp, path)
 }
 
-// Block represents a directory of time series data covering a continous time range.
+// Block represents a directory of time series data covering a continuous time range.
 type Block struct {
 	mtx            sync.RWMutex
 	closing        bool
@@ -142,8 +142,8 @@ type Block struct {
 	dir  string
 	meta BlockMeta
 
-	chunkr *chunkReader
-	indexr *indexReader
+	chunkr ChunkReader
+	indexr IndexReader
 
 	tombstones tombstoneReader
 }
@@ -156,11 +156,11 @@ func OpenBlock(dir string, pool chunks.Pool) (*Block, error) {
 		return nil, err
 	}
 
-	cr, err := newChunkReader(chunkDir(dir), pool)
+	cr, err := NewDirChunkReader(chunkDir(dir), pool)
 	if err != nil {
 		return nil, err
 	}
-	ir, err := newIndexReader(dir)
+	ir, err := NewFileIndexReader(filepath.Join(dir, "index"))
 	if err != nil {
 		return nil, err
 	}
