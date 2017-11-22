@@ -122,6 +122,7 @@ type dbMetrics struct {
 	reloads              prometheus.Counter
 	reloadsFailed        prometheus.Counter
 	compactionsTriggered prometheus.Counter
+	tombCleanTimer       prometheus.Histogram
 }
 
 func newDBMetrics(db *DB, r prometheus.Registerer) *dbMetrics {
@@ -147,6 +148,10 @@ func newDBMetrics(db *DB, r prometheus.Registerer) *dbMetrics {
 		Name: "prometheus_tsdb_compactions_triggered_total",
 		Help: "Total number of triggered compactions for the partition.",
 	})
+	m.tombCleanTimer = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name: "prometheus_tsdb_tombstone_cleanup_seconds",
+		Help: "The time taken to recompact blocks to remove tombstones.",
+	})
 
 	if r != nil {
 		r.MustRegister(
@@ -154,6 +159,7 @@ func newDBMetrics(db *DB, r prometheus.Registerer) *dbMetrics {
 			m.reloads,
 			m.reloadsFailed,
 			m.compactionsTriggered,
+			m.tombCleanTimer,
 		)
 	}
 	return m
@@ -684,6 +690,31 @@ func (db *DB) Delete(mint, maxt int64, ms ...labels.Matcher) error {
 		return err
 	}
 	return nil
+}
+
+func (db *DB) CleanTombstones() error {
+	db.cmtx.Lock()
+	defer db.cmtx.Unlock()
+
+	start := time.Now()
+	defer db.metrics.tombCleanTimer.Observe(float64(time.Since(start)))
+
+	var g errgroup.Group
+
+	db.mtx.RLock()
+	blocks := db.blocks[:]
+	db.mtx.RUnlock()
+
+	for _, b := range blocks {
+		g.Go(func(b *Block) func() error {
+			return func() error { return b.CleanCompact(db.Dir(), db.compactor) }
+		}(b))
+	}
+	if err := g.Wait(); err != nil {
+		return err
+	}
+
+	return db.reload()
 }
 
 func intervalOverlap(amin, amax, bmin, bmax int64) bool {

@@ -335,6 +335,18 @@ Outer:
 	return writeMetaFile(pb.dir, &pb.meta)
 }
 
+func (pb *Block) CleanCompact(dest string, c Compactor) error {
+	if len(pb.tombstones) == 0 {
+		return nil
+	}
+
+	if err := c.Write(dest, pb, pb.meta.MinTime, pb.meta.MaxTime); err != nil {
+		return nil
+	}
+
+	return os.RemoveAll(pb.Dir())
+}
+
 // Snapshot creates snapshot of the block into dir.
 func (pb *Block) Snapshot(dir string) error {
 	blockDir := filepath.Join(dir, pb.meta.ULID.String())
