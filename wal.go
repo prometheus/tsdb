@@ -479,10 +479,9 @@ func (w *SegmentWAL) LogSamples(samples []RefSample) error {
 	}
 	tf := w.head()
 
-	for _, s := range samples {
-		if tf.maxTime < s.T {
-			tf.maxTime = s.T
-		}
+	//samples are "sorted" by timestamp already
+	if len(samples) > 0 && tf.maxTime < samples[len(samples)-1].T {
+		tf.maxTime = samples[len(samples)-1].T
 	}
 	return nil
 }
