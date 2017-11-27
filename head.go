@@ -713,9 +713,6 @@ func (h *Head) Index() (IndexReader, error) {
 }
 
 func (h *Head) indexRange(mint, maxt int64) *headIndexReader {
-	if hmin := h.MinTime(); hmin > mint {
-		mint = hmin
-	}
 	return &headIndexReader{head: h, mint: mint, maxt: maxt}
 }
 
@@ -725,9 +722,6 @@ func (h *Head) Chunks() (ChunkReader, error) {
 }
 
 func (h *Head) chunksRange(mint, maxt int64) *headChunkReader {
-	if hmin := h.MinTime(); hmin > mint {
-		mint = hmin
-	}
 	return &headChunkReader{head: h, mint: mint, maxt: maxt}
 }
 
