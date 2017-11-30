@@ -523,6 +523,12 @@ func (w *SegmentWAL) openSegmentFile(name string) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	//Sync the file first to see any unflushed buffers.
+	if err := fileutil.Fdatasync(f); err != nil {
+		return nil, err
+	}
+
 	metab := make([]byte, 8)
 
 	// If there is an error, we need close f for platform windows before gc.
