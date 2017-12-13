@@ -544,6 +544,7 @@ func (s *populatedChunkSeries) Next() bool {
 			chks = chks[1:]
 		}
 
+		validChks := make([]ChunkMeta, 0, len(chks))
 		for i := range chks {
 			c := &chks[i]
 
@@ -554,15 +555,23 @@ func (s *populatedChunkSeries) Next() bool {
 			}
 			c.Chunk, s.err = s.chunks.Chunk(c.Ref)
 			if s.err != nil {
+				// This means that the chunk has be garbage collected. Move on to the next one.
+				if s.err == ErrNotFound {
+					s.err = nil
+					continue
+				}
+
 				return false
 			}
+
+			validChks = append(validChks, *c)
 		}
-		if len(chks) == 0 {
+		if len(validChks) == 0 {
 			continue
 		}
 
 		s.lset = lset
-		s.chks = chks
+		s.chks = validChks
 		s.intervals = dranges
 
 		return true

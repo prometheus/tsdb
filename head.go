@@ -779,6 +779,12 @@ func (h *headChunkReader) Chunk(ref uint64) (chunks.Chunk, error) {
 
 	s.Lock()
 	c := s.chunk(int(cid))
+
+	if c == nil {
+		s.Unlock()
+		return nil, ErrNotFound
+	}
+
 	mint, maxt := c.minTime, c.maxTime
 	s.Unlock()
 
