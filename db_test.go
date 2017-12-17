@@ -807,3 +807,32 @@ func TestDB_Retention(t *testing.T) {
 	testutil.Equals(t, 1, len(db.blocks))
 	testutil.Equals(t, int64(100), db.blocks[0].meta.MaxTime) // To verify its the right block.
 }
+
+func TestNotMatcherSelectsLabelsUnsetSeries(t *testing.T) {
+	tmpdir, _ := ioutil.TempDir("", "test")
+	defer os.RemoveAll(tmpdir)
+
+	db, err := Open(tmpdir, nil, nil, nil)
+	testutil.Ok(t, err)
+	defer db.Close()
+
+	lbls := labels.Labels{labels.Label{Name: "labelname", Value: "labelvalue"}}
+
+	app := db.Appender()
+	_, err = app.Add(lbls, 0, 1)
+	testutil.Ok(t, err)
+	testutil.Ok(t, app.Commit())
+
+	q, err := db.Querier(0, 10)
+	testutil.Ok(t, err)
+	defer q.Close()
+
+	ss, err := q.Select(labels.Not(labels.NewEqualMatcher("lname", "lvalue")))
+	testutil.Ok(t, err)
+
+	testutil.Equals(t, true, ss.Next())
+	s := ss.At()
+	testutil.Equals(t, lbls, s.Labels())
+	testutil.Equals(t, false, ss.Next())
+	testutil.Ok(t, ss.Err())
+}
