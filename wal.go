@@ -44,6 +44,18 @@ const (
 
 	// WALFormatDefault is the version flag for the default outer segment file format.
 	WALFormatDefault = byte(1)
+
+	// count of bytes needed hold flag byte, type byte, length of buffer, and crc32 hash
+	// = 1 + 1 + 4 + 4 = 10
+	INFOByteCount = 10
+)
+
+var (
+	//HEADBytes to hold flag, type and length of a series of samples buffer
+	HEADBytes = []byte{0, 0, 0, 0, 0, 0}
+
+	//CRCBytes to hold the crc value for a series or samples
+	CRCBytes = []byte{0, 0, 0, 0}
 )
 
 // Entry types in a segment file.
@@ -86,6 +98,7 @@ type WAL interface {
 	Reader() WALReader
 	LogSeries([]RefSeries) error
 	LogSamples([]RefSample) error
+	LogSeriesAndSamples([]RefSeries, []RefSample) error
 	LogDeletes([]Stone) error
 	Truncate(mint int64, keep func(uint64) bool) error
 	Close() error
@@ -105,12 +118,13 @@ func (nopWAL) Read(
 ) error {
 	return nil
 }
-func (w nopWAL) Reader() WALReader                     { return w }
-func (nopWAL) LogSeries([]RefSeries) error             { return nil }
-func (nopWAL) LogSamples([]RefSample) error            { return nil }
-func (nopWAL) LogDeletes([]Stone) error                { return nil }
-func (nopWAL) Truncate(int64, func(uint64) bool) error { return nil }
-func (nopWAL) Close() error                            { return nil }
+func (w nopWAL) Reader() WALReader                                { return w }
+func (nopWAL) LogSeries([]RefSeries) error                        { return nil }
+func (nopWAL) LogSamples([]RefSample) error                       { return nil }
+func (nopWAL) LogSeriesAndSamples([]RefSeries, []RefSample) error { return nil }
+func (nopWAL) LogDeletes([]Stone) error                           { return nil }
+func (nopWAL) Truncate(int64, func(uint64) bool) error            { return nil }
+func (nopWAL) Close() error                                       { return nil }
 
 // WALReader reads entries from a WAL.
 type WALReader interface {
@@ -141,30 +155,25 @@ type RefSample struct {
 // the truncation threshold can be compacted.
 type segmentFile struct {
 	*os.File
-	maxTime   int64  // highest tombstone or sample timpstamp in segment
-	minSeries uint64 // lowerst series ID in segment
+	maxTime    int64   // highest tombstone or sample timpstamp in segment
+	minSeries  uint64  // lowerst series ID in segment
+	truncateAt []int64 // in case of write failures, where can be safely truncated
 }
 
 func newSegmentFile(f *os.File) *segmentFile {
-	return &segmentFile{
-		File:      f,
-		maxTime:   math.MinInt64,
-		minSeries: math.MaxUint64,
+	ret := &segmentFile{
+		File:       f,
+		maxTime:    math.MinInt64,
+		minSeries:  math.MaxUint64,
+		truncateAt: make([]int64, 0, 1024),
 	}
+	ret.truncateAt = append(ret.truncateAt, 0)
+	return ret
 }
 
 const (
 	walSegmentSizeBytes = 256 * 1024 * 1024 // 256 MB
 )
-
-// The table gets initialized with sync.Once but may still cause a race
-// with any other use of the crc32 package anywhere. Thus we initialize it
-// before.
-var castagnoliTable *crc32.Table
-
-func init() {
-	castagnoliTable = crc32.MakeTable(crc32.Castagnoli)
-}
 
 // newCRC32 initializes a CRC32 hash with a preconfigured polynomial, so the
 // polynomial may be easily changed in one location at a later time, if necessary.
@@ -240,7 +249,7 @@ func OpenSegmentWAL(dir string, logger log.Logger, flushInterval time.Duration, 
 		}
 		break
 	}
-
+	getErrorHandler().add(w)
 	go w.run(flushInterval)
 
 	return w, nil
@@ -380,7 +389,9 @@ func (w *SegmentWAL) Truncate(mint int64, keep func(uint64) bool) error {
 		}
 
 		buf := w.getBuffer()
+		buf.putBytes(HEADBytes)
 		flag = w.encodeSeries(buf, activeSeries)
+		buf.putBytes(CRCBytes)
 
 		_, err = w.writeTo(csf, crc32, WALEntrySeries, flag, buf.get())
 		w.putBuffer(buf)
@@ -438,7 +449,9 @@ func (w *SegmentWAL) Truncate(mint int64, keep func(uint64) bool) error {
 func (w *SegmentWAL) LogSeries(series []RefSeries) error {
 	buf := w.getBuffer()
 
+	buf.putBytes(HEADBytes)
 	flag := w.encodeSeries(buf, series)
+	buf.putBytes(CRCBytes)
 
 	w.mtx.Lock()
 	defer w.mtx.Unlock()
@@ -464,12 +477,11 @@ func (w *SegmentWAL) LogSeries(series []RefSeries) error {
 // LogSamples writes a batch of new samples to the log.
 func (w *SegmentWAL) LogSamples(samples []RefSample) error {
 	buf := w.getBuffer()
-
+	buf.putBytes(HEADBytes)
 	flag := w.encodeSamples(buf, samples)
-
+	buf.putBytes(CRCBytes)
 	w.mtx.Lock()
 	defer w.mtx.Unlock()
-
 	err := w.write(WALEntrySamples, flag, buf.get())
 
 	w.putBuffer(buf)
@@ -483,14 +495,67 @@ func (w *SegmentWAL) LogSamples(samples []RefSample) error {
 	if len(samples) > 0 && tf.maxTime < samples[len(samples)-1].T {
 		tf.maxTime = samples[len(samples)-1].T
 	}
+
 	return nil
+}
+
+// LogSeriesAndSamples writes a batch of new series labels and samples to the log.
+// All the data for series will be written or none from them
+// In case of write error, panic as otherwise corruption may happen and subsequent
+// write may also fail
+
+func (w *SegmentWAL) LogSeriesAndSamples(series []RefSeries, samples []RefSample) error {
+	buf := w.getBuffer()
+
+	// 6 bytes to hold type, flag and buf len
+	buf.putBytes([]byte{byte(WALEntrySeries), walSeriesSimple, 0, 0, 0, 0})
+	w.encodeSeries(buf, series)
+	binary.BigEndian.PutUint32(buf.get()[2:], uint32(buf.len()-6))
+	w.mtx.Lock()
+	w.crc32.Reset()
+	w.crc32.Write(buf.get())
+	chksum := w.crc32.Sum([]byte{})
+	w.mtx.Unlock()
+	buf.putBytes(chksum)
+
+	samples_start := buf.len()
+	buf.putBytes([]byte{byte(WALEntrySamples), walSamplesSimple, 0, 0, 0, 0})
+	w.encodeSamples(buf, samples)
+	binary.BigEndian.PutUint32(buf.get()[samples_start+2:], uint32(buf.len()-samples_start-6))
+	w.mtx.Lock()
+	w.crc32.Reset()
+	w.crc32.Write(buf.get()[samples_start:])
+	chksum = w.crc32.Sum([]byte{})
+	w.mtx.Unlock()
+	buf.putBytes(chksum)
+
+	w.mtx.Lock()
+	defer w.mtx.Unlock()
+
+	err := w.rawWrite(buf.get())
+	w.putBuffer(buf)
+	tf := w.head()
+	if err == nil {
+		for _, s := range series {
+			if tf.minSeries > s.Ref {
+				tf.minSeries = s.Ref
+			}
+		}
+
+		//samples are "sorted" by timestamp already
+		if len(samples) > 0 && tf.maxTime < samples[len(samples)-1].T {
+			tf.maxTime = samples[len(samples)-1].T
+		}
+	}
+	return err
 }
 
 // LogDeletes write a batch of new deletes to the log.
 func (w *SegmentWAL) LogDeletes(stones []Stone) error {
 	buf := w.getBuffer()
-
+	buf.putBytes(HEADBytes)
 	flag := w.encodeDeletes(buf, stones)
+	buf.putBytes(CRCBytes)
 
 	w.mtx.Lock()
 	defer w.mtx.Unlock()
@@ -692,6 +757,11 @@ func (w *SegmentWAL) run(interval time.Duration) {
 	for {
 		// Processing all enqueued operations has precedence over shutdown and
 		// background syncs.
+
+		if getErrorHandler().getFatalErrorCount() > 0 {
+			return
+		}
+
 		select {
 		case f := <-w.actorc:
 			if err := f(); err != nil {
@@ -735,6 +805,11 @@ func (w *SegmentWAL) Close() error {
 	return w.dirFile.Close()
 }
 
+func (w *SegmentWAL) handleError(err error) {
+	w.Close()
+	getErrorHandler().errorHandled()
+}
+
 const (
 	minSectorSize = 512
 
@@ -744,7 +819,63 @@ const (
 	walPageBytes = 16 * minSectorSize
 )
 
+// safeWrite looks for any write failure and calls fatal error handler in case of failures
+// as these errors are not recoverable
+func (w *SegmentWAL) safeWrite(buf []byte) error {
+	curFile := len(w.files) - 1
+	n, err := w.cur.Write(buf)
+	curPos, _ := w.files[curFile].Seek(0, os.SEEK_CUR)
+	if err == nil && n == len(buf) {
+		w.curN += int64(n)
+		w.files[curFile].truncateAt = append(w.files[curFile].truncateAt, w.curN)
+		y := sort.Search(len(w.files[curFile].truncateAt), func(l int) bool {
+			return w.files[curFile].truncateAt[l] > curPos
+		})
+		if y > 0 {
+			w.files[curFile].truncateAt = w.files[curFile].truncateAt[y-1:]
+		}
+	} else {
+		// write Failed, may be disk space issue, cannot recover, truncate the file at last safe
+		// position
+		y := sort.Search(len(w.files[curFile].truncateAt), func(l int) bool {
+			return w.files[curFile].truncateAt[l] > curPos
+		})
+		if y > 0 {
+			w.files[curFile].Truncate(w.files[curFile].truncateAt[y-1])
+		}
+	}
+	if n != len(buf) {
+		if err != nil {
+			err = errors.New("Partial write")
+		} else {
+			err = errors.Wrap(err, "Partial write")
+		}
+		getErrorHandler().handleError(err)
+	}
+	return err
+}
+
+func (w *SegmentWAL) rawWrite(buf []byte) error {
+	sz := int64(len(buf))
+	if getErrorHandler().getFatalErrorCount() > 0 {
+		return errors.New("Fatal error was detcted before")
+	}
+
+	newsz := w.curN + sz
+	if w.cur == nil || w.curN > w.segmentSize || newsz > w.segmentSize && sz <= w.segmentSize {
+		if err := w.cut(); err != nil {
+			// cannot recover from such error, better to exit
+			getErrorHandler().handleError(errors.Wrap(err, "wal file create problem"))
+			return err
+		}
+	}
+	return w.safeWrite(buf)
+}
+
 func (w *SegmentWAL) write(t WALEntryType, flag uint8, buf []byte) error {
+	if getErrorHandler().getFatalErrorCount() > 0 {
+		return errors.New("Fatal error was detcted before")
+	}
 	// Cut to the next segment if the entry exceeds the file size unless it would also
 	// exceed the size of a new segment.
 	// TODO(gouthamve): Add a test for this case where the commit is greater than segmentSize.
@@ -759,37 +890,42 @@ func (w *SegmentWAL) write(t WALEntryType, flag uint8, buf []byte) error {
 			return err
 		}
 	}
-	n, err := w.writeTo(w.cur, w.crc32, t, flag, buf)
 
-	w.curN += int64(n)
+	return w.safeWriteTo(w.crc32, t, flag, buf)
+}
 
-	return err
+func (w *SegmentWAL) updateExtraInfo(crc32 hash.Hash, t WALEntryType, flag uint8, buf []byte) error {
+	if len(buf) < INFOByteCount {
+		return errors.New("Insufficient data")
+	}
+	crc32.Reset()
+	buf[0] = byte(t)
+	buf[1] = flag
+
+	binary.BigEndian.PutUint32(buf[2:], uint32(len(buf))-INFOByteCount)
+	crc32.Write(buf[:len(buf)-4])
+	sums := crc32.Sum([]byte{})
+	copy(buf[len(buf)-4:], sums)
+
+	return nil
 }
 
 func (w *SegmentWAL) writeTo(wr io.Writer, crc32 hash.Hash, t WALEntryType, flag uint8, buf []byte) (int, error) {
-	if len(buf) == 0 {
+	err := w.updateExtraInfo(crc32, t, flag, buf)
+	if err != nil {
+		// just return
 		return 0, nil
 	}
-	crc32.Reset()
-	wr = io.MultiWriter(crc32, wr)
+	return wr.Write(buf)
+}
 
-	var b [6]byte
-	b[0] = byte(t)
-	b[1] = flag
-
-	binary.BigEndian.PutUint32(b[2:], uint32(len(buf)))
-
-	n1, err := wr.Write(b[:])
+func (w *SegmentWAL) safeWriteTo(crc32 hash.Hash, t WALEntryType, flag uint8, buf []byte) error {
+	err := w.updateExtraInfo(crc32, t, flag, buf)
 	if err != nil {
-		return n1, err
+		// just return
+		return nil
 	}
-	n2, err := wr.Write(buf)
-	if err != nil {
-		return n1 + n2, err
-	}
-	n3, err := wr.Write(crc32.Sum(b[:0]))
-
-	return n1 + n2 + n3, err
+	return w.safeWrite(buf)
 }
 
 const (

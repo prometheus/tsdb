@@ -19,6 +19,7 @@ import (
 	"math/rand"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/go-kit/kit/log"
 	"github.com/prometheus/tsdb/fileutil"
@@ -33,15 +34,20 @@ func TestSegmentWAL_cut(t *testing.T) {
 	// This calls cut() implicitly the first time without a previous tail.
 	w, err := OpenSegmentWAL(tmpdir, nil, 0, nil)
 	require.NoError(t, err)
-
-	require.NoError(t, w.write(WALEntrySeries, 1, []byte("Hello World!!")))
+	buf := []byte{0, 0, 0, 0, 0, 0}
+	buf = append(buf, []byte("Hello World!!")...)
+	buf = append(buf, []byte{0, 0, 0, 0}...)
+	require.NoError(t, w.write(WALEntrySeries, 1, buf))
 
 	require.NoError(t, w.cut(), "cut failed")
 
 	// Cutting creates a new file.
 	require.Equal(t, 2, len(w.files))
 
-	require.NoError(t, w.write(WALEntrySeries, 1, []byte("Hello World!!")))
+	buf = []byte{0, 0, 0, 0, 0, 0}
+	buf = append(buf, []byte("Hello World!!")...)
+	buf = append(buf, []byte{0, 0, 0, 0}...)
+	require.NoError(t, w.write(WALEntrySeries, 1, buf))
 
 	require.NoError(t, w.Close())
 
@@ -368,6 +374,11 @@ func TestWALRestoreCorrupted(t *testing.T) {
 			require.NoError(t, w.LogSamples([]RefSample{{T: 2, V: 3}}))
 
 			require.NoError(t, w.cut())
+
+			//Sleep 2 seconds to avoid error where cut and test "cases" may write or truncate
+			//the file out of orders as "cases" are not synchronized with cut.
+			//Hopefully cut will complete by 2 seconds
+			time.Sleep(2 * time.Second)
 
 			require.NoError(t, w.LogSamples([]RefSample{{T: 3, V: 4}}))
 			require.NoError(t, w.LogSamples([]RefSample{{T: 5, V: 6}}))

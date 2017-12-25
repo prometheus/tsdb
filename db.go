@@ -187,6 +187,7 @@ func Open(dir string, l log.Logger, r prometheus.Registerer, opts *Options) (db 
 		compactionsEnabled: true,
 		chunkPool:          chunks.NewPool(),
 	}
+	errh.add(db)
 	db.metrics = newDBMetrics(db, r)
 
 	if !opts.NoLockfile {
@@ -224,6 +225,7 @@ func Open(dir string, l log.Logger, r prometheus.Registerer, opts *Options) (db 
 		return nil, errors.Wrap(err, "read WAL")
 	}
 
+	getErrorHandler().add(db)
 	go db.run()
 
 	return db, nil
@@ -583,6 +585,11 @@ func (db *DB) Close() error {
 	}
 	merr.Add(db.head.Close())
 	return merr.Err()
+}
+
+func (db *DB) handleError(err error) {
+	db.Close()
+	getErrorHandler().errorHandled()
 }
 
 // DisableCompactions disables compactions.
