@@ -15,52 +15,28 @@ func benchInMemQuery(b *testing.B, series []labels.Labels, selector labels.Selec
 	hb, err := createHB(series)
 	testutil.Ok(b, err)
 
-	b.ResetTimer()
-	b.ReportAllocs()
-
-	for i := 0; i < b.N; i++ {
-		q, err := NewBlockQuerier(hb, 0, 10)
-		testutil.Ok(b, err)
-
-		ss, err := q.Select(selector...)
-		testutil.Ok(b, err)
-		if expand {
-			for ss.Next() {
-				s := ss.At()
-				s.Labels()
-				s.Iterator()
-			}
-			testutil.Ok(b, ss.Err())
-		}
-
-		testutil.Ok(b, q.Close())
-	}
+	q, err := NewBlockQuerier(hb, 0, 10)
+	testutil.Ok(b, err)
+	benchQuery(b, q, selector, expand)
+	testutil.Ok(b, q.Close())
 }
 
 func benchPersistedQuery(b *testing.B, series []labels.Labels, selector labels.Selector, expand bool) {
-	hb, err := createHB(series)
+	block, deferFunc, err := createBlock(series)
 	testutil.Ok(b, err)
+	defer deferFunc()
 
-	compactor, err := NewLeveledCompactor(nil, nil, []int64{1000000}, nil)
+	q, err := NewBlockQuerier(block, 0, 10)
 	testutil.Ok(b, err)
+	benchQuery(b, q, selector, expand)
+	testutil.Ok(b, q.Close())
+}
 
-	tmpdir, err := ioutil.TempDir("", "test")
-	testutil.Ok(b, err)
-	defer os.RemoveAll(tmpdir)
-
-	ulid, err := compactor.Write(tmpdir, hb, hb.MinTime(), hb.MaxTime())
-	testutil.Ok(b, err)
-
-	block, err := OpenBlock(filepath.Join(tmpdir, ulid.String()), nil)
-	testutil.Ok(b, err)
-
+func benchQuery(b *testing.B, q Querier, selector labels.Selector, expand bool) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
-		q, err := NewBlockQuerier(block, 0, 10)
-		testutil.Ok(b, err)
-
 		ss, err := q.Select(selector...)
 		testutil.Ok(b, err)
 		if expand {
@@ -71,14 +47,10 @@ func benchPersistedQuery(b *testing.B, series []labels.Labels, selector labels.S
 			}
 			testutil.Ok(b, ss.Err())
 		}
-
-		testutil.Ok(b, q.Close())
 	}
 }
 
-func createHB(
-	series []labels.Labels,
-) (*Head, error) {
+func createHB(series []labels.Labels) (*Head, error) {
 	hb, err := NewHead(nil, nil, NopWAL(), 10*60*60*1000)
 	if err != nil {
 		return nil, err
@@ -96,6 +68,37 @@ func createHB(
 	}
 
 	return hb, nil
+}
+
+func createBlock(series []labels.Labels) (*Block, func(), error) {
+	f := func() {}
+
+	hb, err := createHB(series)
+	if err != nil {
+		return nil, f, err
+	}
+
+	compactor, err := NewLeveledCompactor(nil, nil, []int64{1000000}, nil)
+	if err != nil {
+		return nil, f, err
+	}
+
+	tmpdir, err := ioutil.TempDir("", "test")
+	if err != nil {
+		return nil, f, err
+	}
+
+	ulid, err := compactor.Write(tmpdir, hb, hb.MinTime(), hb.MaxTime())
+	if err != nil {
+		return nil, f, err
+	}
+
+	block, err := OpenBlock(filepath.Join(tmpdir, ulid.String()), nil)
+	if err != nil {
+		return nil, f, err
+	}
+
+	return block, func() { os.RemoveAll(tmpdir) }, nil
 }
 
 func BenchmarkInMemQueries_Series_1M_EQSelector_1_NoExpansion(b *testing.B) {
@@ -195,6 +198,450 @@ func BenchmarkPersistedQueries_Series_1M_EQSelector_3_Expansion(b *testing.B) {
 		labels.NewEqualMatcher("label-1", "value-5"),
 		labels.NewEqualMatcher("label-2", "value-4"),
 		labels.NewEqualMatcher("label-3", "value-4"),
+	}, true)
+}
+
+func BenchmarkInMemQueries_Series_1M_RESelector_1_NoExpansion(b *testing.B) {
+	series := genSeries(3, 100)
+
+	benchInMemQuery(b, series, labels.Selector{labels.NewMustRegexpMatcher("label-2", "value-.*0")}, false)
+}
+
+func BenchmarkInMemQueries_Series_1M_RESelector_1_Expansion(b *testing.B) {
+	series := genSeries(3, 100)
+
+	benchInMemQuery(b, series, labels.Selector{labels.NewMustRegexpMatcher("label-2", "value-.*0")}, true)
+}
+
+func BenchmarkInMemQueries_Series_1M_RESelector_2_NoExpansion(b *testing.B) {
+	series := genSeries(3, 100)
+
+	benchInMemQuery(b, series, labels.Selector{
+		labels.NewMustRegexpMatcher("label-1", "value-.*0"),
+		labels.NewMustRegexpMatcher("label-2", "value-4.*"),
+	}, false)
+}
+
+func BenchmarkInMemQueries_Series_1M_RESelector_2_Expansion(b *testing.B) {
+	series := genSeries(3, 100)
+
+	benchInMemQuery(b, series, labels.Selector{
+		labels.NewMustRegexpMatcher("label-1", "value-.*0"),
+		labels.NewMustRegexpMatcher("label-2", "value-4.*"),
+	}, true)
+}
+
+func BenchmarkInMemQueries_Series_1M_RESelector_3_NoExpansion(b *testing.B) {
+	series := genSeries(3, 100)
+
+	benchInMemQuery(b, series, labels.Selector{
+		labels.NewMustRegexpMatcher("label-0", "value-5.*"),
+		labels.NewMustRegexpMatcher("label-1", "value-.*4"),
+		labels.NewMustRegexpMatcher("label-2", "value-.*4"),
+	}, false)
+}
+
+func BenchmarkInMemQueries_Series_1M_RESelector_3_Expansion(b *testing.B) {
+	series := genSeries(3, 100)
+
+	benchInMemQuery(b, series, labels.Selector{
+		labels.NewMustRegexpMatcher("label-0", "value-5.*"),
+		labels.NewMustRegexpMatcher("label-1", "value-.*4"),
+		labels.NewMustRegexpMatcher("label-2", "value-.*4"),
+	}, true)
+}
+
+func BenchmarkPersistedQueries_Series_1M_RESelector_1_NoExpansion(b *testing.B) {
+	series := genSeries(3, 100)
+
+	benchPersistedQuery(b, series, labels.Selector{labels.NewMustRegexpMatcher("label-2", "value-.*0")}, false)
+}
+
+func BenchmarkPersistedQueries_Series_1M_RESelector_1_Expansion(b *testing.B) {
+	series := genSeries(3, 100)
+
+	benchPersistedQuery(b, series, labels.Selector{labels.NewMustRegexpMatcher("label-2", "value-.*0")}, true)
+}
+
+func BenchmarkPersistedQueries_Series_1M_RESelector_2_NoExpansion(b *testing.B) {
+	series := genSeries(3, 100)
+
+	benchPersistedQuery(b, series, labels.Selector{
+		labels.NewMustRegexpMatcher("label-1", "value-.*0"),
+		labels.NewMustRegexpMatcher("label-2", "value-4.*"),
+	}, false)
+}
+
+func BenchmarkPersistedQueries_Series_1M_RESelector_2_Expansion(b *testing.B) {
+	series := genSeries(3, 100)
+
+	benchPersistedQuery(b, series, labels.Selector{
+		labels.NewMustRegexpMatcher("label-1", "value-.*0"),
+		labels.NewMustRegexpMatcher("label-2", "value-4.*"),
+	}, true)
+}
+
+func BenchmarkPersistedQueries_Series_1M_RESelector_3_NoExpansion(b *testing.B) {
+	series := genSeries(3, 100)
+
+	benchPersistedQuery(b, series, labels.Selector{
+		labels.NewMustRegexpMatcher("label-0", "value-5.*"),
+		labels.NewMustRegexpMatcher("label-1", "value-.*4"),
+		labels.NewMustRegexpMatcher("label-2", "value-.*4"),
+	}, false)
+}
+
+func BenchmarkPersistedQueries_Series_1M_RESelector_3_Expansion(b *testing.B) {
+	series := genSeries(3, 100)
+
+	benchPersistedQuery(b, series, labels.Selector{
+		labels.NewMustRegexpMatcher("label-0", "value-5.*"),
+		labels.NewMustRegexpMatcher("label-1", "value-.*4"),
+		labels.NewMustRegexpMatcher("label-2", "value-.*4"),
+	}, true)
+}
+
+func BenchmarkPersistedQueries_3Blocks_Series_1M_EQSelector_1_NoExpansion(b *testing.B) {
+	series := genSeries(6, 10)
+
+	block1, deferFunc, err := createBlock(series)
+	testutil.Ok(b, err)
+	defer deferFunc()
+
+	block2, deferFunc, err := createBlock(series)
+	testutil.Ok(b, err)
+	defer deferFunc()
+
+	block3, deferFunc, err := createBlock(series)
+	testutil.Ok(b, err)
+	defer deferFunc()
+
+	q1, err := NewBlockQuerier(block1, 0, 20)
+	testutil.Ok(b, err)
+	q2, err := NewBlockQuerier(block2, 0, 20)
+	testutil.Ok(b, err)
+	q3, err := NewBlockQuerier(block3, 0, 20)
+	testutil.Ok(b, err)
+
+	q := &querier{blocks: []Querier{q1, q2, q3}}
+	benchQuery(b, q, labels.Selector{labels.NewEqualMatcher("label-1", "value-5")}, false)
+}
+
+func BenchmarkPersistedQueries_3Blocks_Series_1M_EQSelector_1_Expansion(b *testing.B) {
+	series := genSeries(6, 10)
+
+	block1, deferFunc, err := createBlock(series)
+	testutil.Ok(b, err)
+	defer deferFunc()
+
+	block2, deferFunc, err := createBlock(series)
+	testutil.Ok(b, err)
+	defer deferFunc()
+
+	block3, deferFunc, err := createBlock(series)
+	testutil.Ok(b, err)
+	defer deferFunc()
+
+	q1, err := NewBlockQuerier(block1, 0, 20)
+	testutil.Ok(b, err)
+	q2, err := NewBlockQuerier(block2, 0, 20)
+	testutil.Ok(b, err)
+	q3, err := NewBlockQuerier(block3, 0, 20)
+	testutil.Ok(b, err)
+
+	q := &querier{blocks: []Querier{q1, q2, q3}}
+	benchQuery(b, q, labels.Selector{labels.NewEqualMatcher("label-1", "value-5")}, true)
+}
+
+func BenchmarkPersistedQueries_3Blocks_Series_1M_EQSelector_2_NoExpansion(b *testing.B) {
+	series := genSeries(6, 10)
+
+	block1, deferFunc, err := createBlock(series)
+	testutil.Ok(b, err)
+	defer deferFunc()
+
+	block2, deferFunc, err := createBlock(series)
+	testutil.Ok(b, err)
+	defer deferFunc()
+
+	block3, deferFunc, err := createBlock(series)
+	testutil.Ok(b, err)
+	defer deferFunc()
+
+	q1, err := NewBlockQuerier(block1, 0, 20)
+	testutil.Ok(b, err)
+	q2, err := NewBlockQuerier(block2, 0, 20)
+	testutil.Ok(b, err)
+	q3, err := NewBlockQuerier(block3, 0, 20)
+	testutil.Ok(b, err)
+
+	q := &querier{blocks: []Querier{q1, q2, q3}}
+	benchQuery(b, q, labels.Selector{
+		labels.NewEqualMatcher("label-1", "value-5"),
+		labels.NewEqualMatcher("label-2", "value-4"),
+	}, false)
+}
+
+func BenchmarkPersistedQueries_3Blocks_Series_1M_EQSelector_2_Expansion(b *testing.B) {
+	series := genSeries(6, 10)
+
+	block1, deferFunc, err := createBlock(series)
+	testutil.Ok(b, err)
+	defer deferFunc()
+
+	block2, deferFunc, err := createBlock(series)
+	testutil.Ok(b, err)
+	defer deferFunc()
+
+	block3, deferFunc, err := createBlock(series)
+	testutil.Ok(b, err)
+	defer deferFunc()
+
+	q1, err := NewBlockQuerier(block1, 0, 20)
+	testutil.Ok(b, err)
+	q2, err := NewBlockQuerier(block2, 0, 20)
+	testutil.Ok(b, err)
+	q3, err := NewBlockQuerier(block3, 0, 20)
+	testutil.Ok(b, err)
+
+	q := &querier{blocks: []Querier{q1, q2, q3}}
+	benchQuery(b, q, labels.Selector{
+		labels.NewEqualMatcher("label-1", "value-5"),
+		labels.NewEqualMatcher("label-2", "value-4"),
+	}, true)
+}
+
+func BenchmarkPersistedQueries_3Blocks_Series_1M_EQSelector_3_NoExpansion(b *testing.B) {
+	series := genSeries(6, 10)
+
+	block1, deferFunc, err := createBlock(series)
+	testutil.Ok(b, err)
+	defer deferFunc()
+
+	block2, deferFunc, err := createBlock(series)
+	testutil.Ok(b, err)
+	defer deferFunc()
+
+	block3, deferFunc, err := createBlock(series)
+	testutil.Ok(b, err)
+	defer deferFunc()
+
+	q1, err := NewBlockQuerier(block1, 0, 20)
+	testutil.Ok(b, err)
+	q2, err := NewBlockQuerier(block2, 0, 20)
+	testutil.Ok(b, err)
+	q3, err := NewBlockQuerier(block3, 0, 20)
+	testutil.Ok(b, err)
+
+	q := &querier{blocks: []Querier{q1, q2, q3}}
+	benchQuery(b, q, labels.Selector{
+		labels.NewEqualMatcher("label-1", "value-5"),
+		labels.NewEqualMatcher("label-2", "value-4"),
+		labels.NewEqualMatcher("label-3", "value-4"),
+	}, false)
+}
+
+func BenchmarkPersistedQueries_3Blocks_Series_1M_EQSelector_3_Expansion(b *testing.B) {
+	series := genSeries(6, 10)
+
+	block1, deferFunc, err := createBlock(series)
+	testutil.Ok(b, err)
+	defer deferFunc()
+
+	block2, deferFunc, err := createBlock(series)
+	testutil.Ok(b, err)
+	defer deferFunc()
+
+	block3, deferFunc, err := createBlock(series)
+	testutil.Ok(b, err)
+	defer deferFunc()
+
+	q1, err := NewBlockQuerier(block1, 0, 20)
+	testutil.Ok(b, err)
+	q2, err := NewBlockQuerier(block2, 0, 20)
+	testutil.Ok(b, err)
+	q3, err := NewBlockQuerier(block3, 0, 20)
+	testutil.Ok(b, err)
+
+	q := &querier{blocks: []Querier{q1, q2, q3}}
+	benchQuery(b, q, labels.Selector{
+		labels.NewEqualMatcher("label-1", "value-5"),
+		labels.NewEqualMatcher("label-2", "value-4"),
+		labels.NewEqualMatcher("label-3", "value-4"),
+	}, true)
+}
+
+func BenchmarkPersistedQueries_3Blocks_Series_1M_RESelector_1_NoExpansion(b *testing.B) {
+	series := genSeries(3, 100)
+
+	block1, deferFunc, err := createBlock(series)
+	testutil.Ok(b, err)
+	defer deferFunc()
+
+	block2, deferFunc, err := createBlock(series)
+	testutil.Ok(b, err)
+	defer deferFunc()
+
+	block3, deferFunc, err := createBlock(series)
+	testutil.Ok(b, err)
+	defer deferFunc()
+
+	q1, err := NewBlockQuerier(block1, 0, 20)
+	testutil.Ok(b, err)
+	q2, err := NewBlockQuerier(block2, 0, 20)
+	testutil.Ok(b, err)
+	q3, err := NewBlockQuerier(block3, 0, 20)
+	testutil.Ok(b, err)
+
+	q := &querier{blocks: []Querier{q1, q2, q3}}
+	benchQuery(b, q, labels.Selector{labels.NewMustRegexpMatcher("label-2", "value-.*0")}, false)
+}
+
+func BenchmarkPersistedQueries_3Blocks_Series_1M_RESelector_1_Expansion(b *testing.B) {
+	series := genSeries(3, 100)
+
+	block1, deferFunc, err := createBlock(series)
+	testutil.Ok(b, err)
+	defer deferFunc()
+
+	block2, deferFunc, err := createBlock(series)
+	testutil.Ok(b, err)
+	defer deferFunc()
+
+	block3, deferFunc, err := createBlock(series)
+	testutil.Ok(b, err)
+	defer deferFunc()
+
+	q1, err := NewBlockQuerier(block1, 0, 20)
+	testutil.Ok(b, err)
+	q2, err := NewBlockQuerier(block2, 0, 20)
+	testutil.Ok(b, err)
+	q3, err := NewBlockQuerier(block3, 0, 20)
+	testutil.Ok(b, err)
+
+	q := &querier{blocks: []Querier{q1, q2, q3}}
+	benchQuery(b, q, labels.Selector{labels.NewMustRegexpMatcher("label-2", "value-.*0")}, true)
+}
+
+func BenchmarkPersistedQueries_3Blocks_Series_1M_RESelector_2_NoExpansion(b *testing.B) {
+	series := genSeries(3, 100)
+
+	block1, deferFunc, err := createBlock(series)
+	testutil.Ok(b, err)
+	defer deferFunc()
+
+	block2, deferFunc, err := createBlock(series)
+	testutil.Ok(b, err)
+	defer deferFunc()
+
+	block3, deferFunc, err := createBlock(series)
+	testutil.Ok(b, err)
+	defer deferFunc()
+
+	q1, err := NewBlockQuerier(block1, 0, 20)
+	testutil.Ok(b, err)
+	q2, err := NewBlockQuerier(block2, 0, 20)
+	testutil.Ok(b, err)
+	q3, err := NewBlockQuerier(block3, 0, 20)
+	testutil.Ok(b, err)
+
+	q := &querier{blocks: []Querier{q1, q2, q3}}
+
+	benchQuery(b, q, labels.Selector{
+		labels.NewMustRegexpMatcher("label-1", "value-.*0"),
+		labels.NewMustRegexpMatcher("label-2", "value-4.*"),
+	}, false)
+}
+
+func BenchmarkPersistedQueries_3Blocks_Series_1M_RESelector_2_Expansion(b *testing.B) {
+	series := genSeries(3, 100)
+
+	block1, deferFunc, err := createBlock(series)
+	testutil.Ok(b, err)
+	defer deferFunc()
+
+	block2, deferFunc, err := createBlock(series)
+	testutil.Ok(b, err)
+	defer deferFunc()
+
+	block3, deferFunc, err := createBlock(series)
+	testutil.Ok(b, err)
+	defer deferFunc()
+
+	q1, err := NewBlockQuerier(block1, 0, 20)
+	testutil.Ok(b, err)
+	q2, err := NewBlockQuerier(block2, 0, 20)
+	testutil.Ok(b, err)
+	q3, err := NewBlockQuerier(block3, 0, 20)
+	testutil.Ok(b, err)
+
+	q := &querier{blocks: []Querier{q1, q2, q3}}
+
+	benchQuery(b, q, labels.Selector{
+		labels.NewMustRegexpMatcher("label-1", "value-.*0"),
+		labels.NewMustRegexpMatcher("label-2", "value-4.*"),
+	}, true)
+}
+
+func BenchmarkPersistedQueries_3Blocks_Series_1M_RESelector_3_NoExpansion(b *testing.B) {
+	series := genSeries(3, 100)
+
+	block1, deferFunc, err := createBlock(series)
+	testutil.Ok(b, err)
+	defer deferFunc()
+
+	block2, deferFunc, err := createBlock(series)
+	testutil.Ok(b, err)
+	defer deferFunc()
+
+	block3, deferFunc, err := createBlock(series)
+	testutil.Ok(b, err)
+	defer deferFunc()
+
+	q1, err := NewBlockQuerier(block1, 0, 20)
+	testutil.Ok(b, err)
+	q2, err := NewBlockQuerier(block2, 0, 20)
+	testutil.Ok(b, err)
+	q3, err := NewBlockQuerier(block3, 0, 20)
+	testutil.Ok(b, err)
+
+	q := &querier{blocks: []Querier{q1, q2, q3}}
+
+	benchQuery(b, q, labels.Selector{
+		labels.NewMustRegexpMatcher("label-0", "value-5.*"),
+		labels.NewMustRegexpMatcher("label-1", "value-.*4"),
+		labels.NewMustRegexpMatcher("label-2", "value-.*4"),
+	}, false)
+}
+
+func BenchmarkPersistedQueries_3Blocks_Series_1M_RESelector_3_Expansion(b *testing.B) {
+	series := genSeries(3, 100)
+
+	block1, deferFunc, err := createBlock(series)
+	testutil.Ok(b, err)
+	defer deferFunc()
+
+	block2, deferFunc, err := createBlock(series)
+	testutil.Ok(b, err)
+	defer deferFunc()
+
+	block3, deferFunc, err := createBlock(series)
+	testutil.Ok(b, err)
+	defer deferFunc()
+
+	q1, err := NewBlockQuerier(block1, 0, 20)
+	testutil.Ok(b, err)
+	q2, err := NewBlockQuerier(block2, 0, 20)
+	testutil.Ok(b, err)
+	q3, err := NewBlockQuerier(block3, 0, 20)
+	testutil.Ok(b, err)
+
+	q := &querier{blocks: []Querier{q1, q2, q3}}
+
+	benchQuery(b, q, labels.Selector{
+		labels.NewMustRegexpMatcher("label-0", "value-5.*"),
+		labels.NewMustRegexpMatcher("label-1", "value-.*4"),
+		labels.NewMustRegexpMatcher("label-2", "value-.*4"),
 	}, true)
 }
 
