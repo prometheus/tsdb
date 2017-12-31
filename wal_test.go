@@ -19,6 +19,7 @@ import (
 	"math/rand"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/go-kit/kit/log"
 	"github.com/prometheus/tsdb/fileutil"
@@ -35,14 +36,20 @@ func TestSegmentWAL_cut(t *testing.T) {
 	w, err := OpenSegmentWAL(tmpdir, nil, 0, nil)
 	testutil.Ok(t, err)
 
-	testutil.Ok(t, w.write(WALEntrySeries, 1, []byte("Hello World!!")))
+	buf := []byte{0, 0, 0, 0, 0, 0}
+	buf = append(buf, []byte("Hello World!!")...)
+	buf = append(buf, []byte{0, 0, 0, 0}...)
+	testutil.Ok(t, w.write(WALEntrySeries, 1, buf))
 
 	testutil.Ok(t, w.cut())
 
 	// Cutting creates a new file.
 	testutil.Equals(t, 2, len(w.files))
 
-	testutil.Ok(t, w.write(WALEntrySeries, 1, []byte("Hello World!!")))
+	buf = []byte{0, 0, 0, 0, 0, 0}
+	buf = append(buf, []byte("Hello World!!")...)
+	buf = append(buf, []byte{0, 0, 0, 0}...)
+	testutil.Ok(t, w.write(WALEntrySeries, 1, buf))
 
 	testutil.Ok(t, w.Close())
 
@@ -369,6 +376,11 @@ func TestWALRestoreCorrupted(t *testing.T) {
 			testutil.Ok(t, w.LogSamples([]RefSample{{T: 2, V: 3}}))
 
 			testutil.Ok(t, w.cut())
+
+			//Sleep 2 seconds to avoid error where cut and test "cases" may write or truncate
+			//the file out of orders as "cases" are not synchronized with cut.
+			//Hopefully cut will complete by 2 seconds
+			time.Sleep(2 * time.Second)
 
 			testutil.Ok(t, w.LogSamples([]RefSample{{T: 3, V: 4}}))
 			testutil.Ok(t, w.LogSamples([]RefSample{{T: 5, V: 6}}))
