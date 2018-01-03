@@ -1,3 +1,5 @@
 testdata*
 tsdb
 benchout
+dist/*
+!dist/.gitkeep

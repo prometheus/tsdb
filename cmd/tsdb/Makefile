@@ -9,3 +9,12 @@ bench: build
 	@go tool pprof --alloc_space -svg ./tsdb benchout/mem.prof > benchout/memprof.alloc.svg
 	@go tool pprof -svg ./tsdb benchout/block.prof > benchout/blockprof.svg
 	@go tool pprof -svg ./tsdb benchout/mutex.prof > benchout/mutexprof.svg
+
+distribute:
+	docker run \
+		--rm \
+		-i \
+		-v ${PWD}:/go/src/prom.local/tsdb \
+		-w /go/src/prom.local/tsdb \
+		golang:1.9 \
+		./compile.sh
