@@ -35,14 +35,20 @@ func TestSegmentWAL_cut(t *testing.T) {
 	w, err := OpenSegmentWAL(tmpdir, nil, 0, nil)
 	testutil.Ok(t, err)
 
-	testutil.Ok(t, w.write(WALEntrySeries, 1, []byte("Hello World!!")))
+	buf := []byte{0, 0, 0, 0, 0, 0}
+	buf = append(buf, []byte("Hello World!!")...)
+	buf = append(buf, []byte{0, 0, 0, 0}...)
+	testutil.Ok(t, w.write(WALEntrySeries, 1, buf))
 
 	testutil.Ok(t, w.cut())
 
 	// Cutting creates a new file.
 	testutil.Equals(t, 2, len(w.files))
 
-	testutil.Ok(t, w.write(WALEntrySeries, 1, []byte("Hello World!!")))
+	buf = []byte{0, 0, 0, 0, 0, 0}
+	buf = append(buf, []byte("Hello World!!")...)
+	buf = append(buf, []byte{0, 0, 0, 0}...)
+	testutil.Ok(t, w.write(WALEntrySeries, 1, buf))
 
 	testutil.Ok(t, w.Close())
 

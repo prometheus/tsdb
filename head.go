@@ -441,7 +441,9 @@ func (h *Head) Appender() Appender {
 
 	// The head cache might not have a starting point yet. The init appender
 	// picks up the first appended timestamp as the base.
-	if h.MinTime() == math.MinInt64 {
+	h.symMtx.Lock()
+	defer h.symMtx.Unlock()
+	if h.minTime == math.MinInt64 {
 		return &initAppender{head: h}
 	}
 	return h.appender()
@@ -523,14 +525,7 @@ func (a *headAppender) AddFast(ref uint64, t int64, v float64) error {
 
 func (a *headAppender) Commit() error {
 	defer a.Rollback()
-
-	if err := a.head.wal.LogSeries(a.series); err != nil {
-		return err
-	}
-	if err := a.head.wal.LogSamples(a.samples); err != nil {
-		return errors.Wrap(err, "WAL log samples")
-	}
-
+	a.head.wal.LogSeriesAndSamples(a.series, a.samples)
 	total := len(a.samples)
 
 	for _, s := range a.samples {
@@ -565,7 +560,6 @@ func (a *headAppender) Commit() error {
 func (a *headAppender) Rollback() error {
 	a.head.metrics.activeAppenders.Dec()
 	a.head.putAppendBuffer(a.samples)
-
 	return nil
 }
 
