@@ -845,7 +845,7 @@ func (w *SegmentWAL) safeWrite(buf []byte) error {
 		}
 	}
 	if n != len(buf) {
-		if err != nil {
+		if err == nil {
 			err = errors.New("Partial write")
 		} else {
 			err = errors.Wrap(err, "Partial write")
