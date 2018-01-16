@@ -253,7 +253,7 @@ func OpenBlock(dir string, pool chunkenc.Pool) (*Block, error) {
 	if err != nil {
 		return nil, err
 	}
-	ir, err := index.NewFileReader(filepath.Join(dir, "index"), meta.Version)
+	ir, err := index.NewFileReader(filepath.Join(dir, "index"), meta.Version, meta.ULID)
 	if err != nil {
 		return nil, err
 	}

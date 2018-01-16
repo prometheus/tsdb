@@ -26,6 +26,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/oklog/ulid"
 	"github.com/pkg/errors"
 	"github.com/prometheus/tsdb/chunks"
 	"github.com/prometheus/tsdb/fileutil"
@@ -542,6 +543,7 @@ type Reader struct {
 	crc32 hash.Hash32
 
 	version int
+	ulid    ulid.ULID
 }
 
 var (
@@ -571,20 +573,24 @@ func (b realByteSlice) Sub(start, end int) ByteSlice {
 }
 
 // NewReader returns a new IndexReader on the given byte slice.
-func NewReader(b ByteSlice, version int) (*Reader, error) {
-	return newReader(b, nil, version)
+func NewReader(b ByteSlice, version int, ul ulid.ULID) (*Reader, error) {
+	return newReader(b, nil, version, ul)
 }
 
 // NewFileReader returns a new index reader against the given index file.
-func NewFileReader(path string, version int) (*Reader, error) {
+func NewFileReader(path string, version int, ul ulid.ULID) (*Reader, error) {
 	f, err := fileutil.OpenMmapFile(path)
 	if err != nil {
 		return nil, err
 	}
-	return newReader(realByteSlice(f.Bytes()), f, version)
+	return newReader(realByteSlice(f.Bytes()), f, version, ul)
 }
 
-func newReader(b ByteSlice, c io.Closer, version int) (*Reader, error) {
+func newReader(b ByteSlice, c io.Closer, version int, ul ulid.ULID) (*Reader, error) {
+	if version != 1 && version != 2 {
+		return nil, errors.Errorf("unexpected file version %d, block: %s", version, ul.String())
+	}
+
 	r := &Reader{
 		b:        b,
 		c:        c,
@@ -593,25 +599,22 @@ func newReader(b ByteSlice, c io.Closer, version int) (*Reader, error) {
 		postings: map[labels.Label]uint32{},
 		crc32:    newCRC32(),
 		version:  version,
+		ulid:     ul,
 	}
 
-	if version != 1 && version != 2 {
-		return nil, errors.Errorf("unexpected file version %d", version)
-
-	}
 	// Verify magic number.
 	if b.Len() < 4 {
-		return nil, errors.Wrap(errInvalidSize, "index header")
+		return nil, errors.Wrapf(errInvalidSize, "index header, block: %s", ul.String())
 	}
 	if m := binary.BigEndian.Uint32(r.b.Range(0, 4)); m != MagicIndex {
 		return nil, errors.Errorf("invalid magic number %x", m)
 	}
 
 	if err := r.readTOC(); err != nil {
-		return nil, errors.Wrap(err, "read TOC")
+		return nil, errors.Wrapf(err, "read TOC, block: %s", ul.String())
 	}
 	if err := r.readSymbols(int(r.toc.symbols)); err != nil {
-		return nil, errors.Wrap(err, "read symbols")
+		return nil, errors.Wrapf(err, "read symbols, block: %s", ul.String())
 	}
 	var err error
 
@@ -623,7 +626,7 @@ func newReader(b ByteSlice, c io.Closer, version int) (*Reader, error) {
 		return nil
 	})
 	if err != nil {
-		return nil, errors.Wrap(err, "read label index table")
+		return nil, errors.Wrapf(err, "read label index table, block: %s", ul.String())
 	}
 	err = r.readOffsetTable(r.toc.postingsTable, func(key []string, off uint32) error {
 		if len(key) != 2 {
@@ -633,7 +636,7 @@ func newReader(b ByteSlice, c io.Closer, version int) (*Reader, error) {
 		return nil
 	})
 	if err != nil {
-		return nil, errors.Wrap(err, "read postings table")
+		return nil, errors.Wrapf(err, "read postings table, block: %s", ul.String())
 	}
 
 	r.dec = &Decoder{symbols: r.symbols}
@@ -674,7 +677,7 @@ func (r *Reader) readTOC() error {
 	d := decbuf{b: b[:len(b)-4]}
 
 	if d.crc32() != expCRC {
-		return errInvalidChecksum
+		return errors.Wrapf(errInvalidChecksum, "read TOC, block: %s", r.ulid.String())
 	}
 
 	r.toc.symbols = d.be64()
@@ -763,7 +766,7 @@ func (r *Reader) readSymbols(off int) error {
 		nextPos = basePos + uint32(origLen-d.len())
 		cnt--
 	}
-	return d.err()
+	return errors.Wrapf(d.err(), "read symbols, block: %s", r.ulid.String())
 }
 
 // readOffsetTable reads an offset table at the given position calls f for each
@@ -839,7 +842,7 @@ func (r *Reader) LabelValues(names ...string) (StringTuples, error) {
 	d.be32() // consume unused value entry count.
 
 	if d.err() != nil {
-		return nil, errors.Wrap(d.err(), "read label value index")
+		return nil, errors.Wrapf(d.err(), "read label value index, block: %s", r.ulid.String())
 	}
 	st := &serializedStringTuples{
 		l:      nc,
@@ -876,7 +879,7 @@ func (r *Reader) Series(id uint64, lbls *labels.Labels, chks *[]chunks.Meta) err
 	if d.err() != nil {
 		return d.err()
 	}
-	return r.dec.Series(d.get(), lbls, chks)
+	return errors.Wrapf(r.dec.Series(d.get(), lbls, chks), "read series, block: %s", r.ulid.String())
 }
 
 // Postings returns a postings list for the given label pair.
@@ -890,11 +893,11 @@ func (r *Reader) Postings(name, value string) (Postings, error) {
 	}
 	d := r.decbufAt(int(off))
 	if d.err() != nil {
-		return nil, errors.Wrap(d.err(), "get postings entry")
+		return nil, errors.Wrapf(d.err(), "get postings entry, block: %s", r.ulid.String())
 	}
 	_, p, err := r.dec.Postings(d.get())
 	if err != nil {
-		return nil, errors.Wrap(err, "decode postings")
+		return nil, errors.Wrapf(err, "decode postings: %s", r.ulid.String())
 	}
 	return p, nil
 }
