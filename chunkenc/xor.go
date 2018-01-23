@@ -181,8 +181,12 @@ func (a *xorAppender) Append(t int64, v float64) {
 	a.tDelta = tDelta
 }
 
-func bitRange(x int64, nbits uint8) bool {
-	return -((1<<(nbits-1))-1) <= x && x <= 1<<(nbits-1)
+func bitRange(x int64, nbits int) bool {
+	if x < 0 {
+		return bits.Len64(uint64(-x)) < nbits
+	}
+
+	return bits.Len64(uint64(x-1)) < nbits
 }
 
 func (a *xorAppender) writeVDelta(v float64) {
