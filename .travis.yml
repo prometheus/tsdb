@@ -6,8 +6,9 @@ go:
 - 1.9.x
 
 go_import_path: github.com/prometheus/tsdb
+install: true
 
 script:
-- go test -timeout 5m ./...
-
-
+- go get github.com/golang/dep/cmd/dep
+- dep ensure -v -vendor-only
+- go test -timeout 5m github.com/prometheus/tsdb/...
