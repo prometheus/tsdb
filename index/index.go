@@ -743,6 +743,27 @@ func (r *Reader) decbufUvarintAt(off int) decbuf {
 	return dec
 }
 
+// getSectionSize returns the first 4 bytes in a section starting at offset off
+// to get the content length bytes
+func (r *Reader) getSectionSize(off int) int {
+	if off == 0 {
+		return nil
+	}
+	b := r.b.Range(off, off+4)
+	var l int
+	if l <= 0 {
+		l = -1
+	} else {
+		l  = int(binary.BigEndian.Uint32(b))
+	}
+	return l
+}
+
+// getSymbolTableSize returns the bytes taken by the symbol table of Reader object
+func (r *Reader) getSymbolTableSize(off int) int {
+	return r.getSectionLength(int(r.toc.symbols))
+}
+
 // readSymbols reads the symbol table fully into memory and allocates proper strings for them.
 // Strings backed by the mmap'd memory would cause memory faults if applications keep using them
 // after the reader is closed.
