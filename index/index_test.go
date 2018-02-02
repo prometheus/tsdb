@@ -14,6 +14,7 @@
 package index
 
 import (
+	"fmt"
 	"io/ioutil"
 	"math/rand"
 	"os"
@@ -379,4 +380,113 @@ func TestPersistence_index_e2e(t *testing.T) {
 	}
 
 	testutil.Ok(t, ir.Close())
+}
+
+func TestLargeIndexWorks(t *testing.T) {
+	// See: https://github.com/prometheus/prometheus/issues/3758
+	// We used to cast the offset into uint32 breaking large index files.
+
+	namePrefix := "name-%d"
+	valuePrefix := "value-%d"
+
+	numLabels := 10
+	numValues := 5
+	numChunks := 200
+
+	f, err := ioutil.TempFile("", "largeidx")
+	testutil.Ok(t, err)
+	testutil.Ok(t, f.Close())
+
+	defer os.RemoveAll(f.Name())
+
+	iw, err := NewWriter(f.Name())
+	testutil.Ok(t, err)
+
+	// Make symbol-table.
+	symbols := make(map[string]struct{})
+	for i := 0; i < numLabels; i++ {
+		symbols[fmt.Sprintf(namePrefix, i)] = struct{}{}
+	}
+
+	for i := 0; i < numValues; i++ {
+		symbols[fmt.Sprintf(valuePrefix, i)] = struct{}{}
+	}
+	iw.AddSymbols(symbols)
+
+	// Generate chunks.
+	chks := make([]chunks.Meta, 0, numChunks)
+	for i := 0; i < numChunks; i++ {
+		chks = append(chks, chunks.Meta{
+			Ref: 191293292,
+
+			MinTime: int64(20 * i),
+			MaxTime: int64(20*i + 10),
+		})
+	}
+
+	// Generate series.
+	series := genSeries(numLabels, numValues, namePrefix, valuePrefix)
+
+	// Add them created series.
+	for i, s := range series {
+		testutil.Ok(t, iw.AddSeries(uint64(i), s, chks...))
+	}
+
+	// Add label index.
+	vals := make([]string, 0, numValues)
+	for i := 0; i < numValues; i++ {
+		vals = append(vals, fmt.Sprintf(valuePrefix, i))
+	}
+
+	for i := 0; i < numLabels; i++ {
+		testutil.Ok(t, iw.WriteLabelIndex([]string{fmt.Sprintf(namePrefix, i)}, vals))
+	}
+
+	testutil.Ok(t, iw.Close())
+
+	//ir, err := NewFileReader("index", 2)
+	//testutil.Ok(t, err)
+	//defer ir.Close()
+
+	//st, err := ir.LabelValues("name-0")
+	//testutil.Ok(t, err)
+
+	//testutil.Equals(t, 5, st.Len())
+}
+
+func genSeries(numLabels, numVals int, namePrefix, valuePrefix string) []labels.Labels {
+	vals := make([]int, numLabels)
+	permuts := &([][]int{})
+
+	genSeriesRec(0, numLabels, numVals, vals, permuts)
+
+	series := make([]labels.Labels, 0)
+
+	for _, vals := range *permuts {
+		l := labels.Labels{}
+		for i, v := range vals {
+			l = append(l, labels.Label{
+				Name:  fmt.Sprintf(namePrefix, i),
+				Value: fmt.Sprintf(valuePrefix, v),
+			})
+		}
+
+		series = append(series, l)
+	}
+
+	return series
+}
+
+func genSeriesRec(idx, numLabels, numVals int, vals []int, series *[][]int) {
+	if idx == numLabels {
+		vals2 := make([]int, len(vals))
+		copy(vals2, vals)
+		*series = append(*series, vals2)
+		return
+	}
+
+	for i := 0; i < numVals; i++ {
+		vals[idx] = i
+		genSeriesRec(idx+1, numLabels, numVals, vals, series)
+	}
 }
