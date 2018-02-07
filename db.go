@@ -563,6 +563,17 @@ func (db *DB) Head() *Head {
 	return db.head
 }
 
+// MinTime returns the lowest time bound of the oldest block.
+func (db *DB) MinTime() int64 {
+	db.mtx.RLock();
+	defer db.mtx.RUnlock();
+	if len(db.blocks) > 0 {
+		return db.blocks[0].MinTime()
+	} else {
+		return db.head.MinTime()
+	}
+}
+
 // Close the partition.
 func (db *DB) Close() error {
 	close(db.stopc)

@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 
 	"github.com/oklog/ulid"
 	"github.com/pkg/errors"
@@ -336,6 +337,11 @@ func (pb *Block) Tombstones() (TombstoneReader, error) {
 		return nil, err
 	}
 	return blockTombstoneReader{TombstoneReader: pb.tombstones, b: pb}, nil
+}
+
+// MinTime returns the lowest time bound from the meta of the block.
+func (pb *Block) MinTime() int64 {
+	return atomic.LoadInt64(&pb.meta.MinTime)
 }
 
 func (pb *Block) setCompactionFailed() error {
