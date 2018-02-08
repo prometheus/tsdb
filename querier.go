@@ -214,7 +214,14 @@ func PostingsForMatchers(ix IndexReader, ms ...labels.Matcher) (index.Postings, 
 		}
 		its = append(its, it)
 	}
-	return ix.SortedPostings(index.Intersect(its...)), nil
+
+	// Expand postings.
+	ep, err := index.ExpandPostings(index.Intersect(its...))
+	if err != nil {
+		return nil, errors.Wrap(err, "expand postings")
+	}
+
+	return ix.SortedPostings(index.NewListPostings(ep)), nil
 }
 
 // tuplesByPrefix uses binary search to find prefix matches within ts.
