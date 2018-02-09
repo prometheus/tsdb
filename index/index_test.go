@@ -189,13 +189,13 @@ func TestIndexRW_Postings(t *testing.T) {
 		labels.FromStrings("a", "1", "b", "4"),
 	}
 
-	err = iw.AddSymbols(map[string]struct{}{
-		"a": {},
-		"b": {},
-		"1": {},
-		"2": {},
-		"3": {},
-		"4": {},
+	err = iw.AddSymbols(map[string]int{
+		"a": 1,
+		"b": 2,
+		"1": 1,
+		"2": 4,
+		"3": 5,
+		"4": 3,
 	})
 	testutil.Ok(t, err)
 
@@ -243,11 +243,11 @@ func TestPersistence_index_e2e(t *testing.T) {
 	// Sort labels as the index writer expects series in sorted order.
 	sort.Sort(labels.Slice(lbls))
 
-	symbols := map[string]struct{}{}
+	symbols := make(map[string]int)
 	for _, lset := range lbls {
 		for _, l := range lset {
-			symbols[l.Name] = struct{}{}
-			symbols[l.Value] = struct{}{}
+			symbols[l.Name] = 0
+			symbols[l.Value] = 0
 		}
 	}
 

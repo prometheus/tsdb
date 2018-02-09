@@ -67,7 +67,7 @@ type Head struct {
 	series *stripeSeries
 
 	symMtx  sync.RWMutex
-	symbols map[string]struct{}
+	symbols map[string]int
 	values  map[string]stringset // label names to possible values
 
 	postings *index.MemPostings // postings lists for terms
@@ -229,7 +229,7 @@ func NewHead(r prometheus.Registerer, l log.Logger, wal *wal.WAL, chunkRange int
 		maxTime:    math.MinInt64,
 		series:     newStripeSeries(),
 		values:     map[string]stringset{},
-		symbols:    map[string]struct{}{},
+		symbols:    make(map[string]int),
 		postings:   index.NewUnorderedMemPostings(),
 		tombstones: newMemTombstones(),
 	}
@@ -897,12 +897,12 @@ func (h *Head) gc() {
 	h.postings.Delete(deleted)
 
 	// Rebuild symbols and label value indices from what is left in the postings terms.
-	symbols := make(map[string]struct{})
+	symbols := make(map[string]int)
 	values := make(map[string]stringset, len(h.values))
 
 	if err := h.postings.Iter(func(t labels.Label, _ index.Postings) error {
-		symbols[t.Name] = struct{}{}
-		symbols[t.Value] = struct{}{}
+		symbols[t.Name]++
+		symbols[t.Value]++
 
 		ss, ok := values[t.Name]
 		if !ok {
@@ -1046,14 +1046,14 @@ func (h *headIndexReader) Close() error {
 	return nil
 }
 
-func (h *headIndexReader) Symbols() (map[string]struct{}, error) {
+func (h *headIndexReader) Symbols() (map[string]int, error) {
 	h.head.symMtx.RLock()
 	defer h.head.symMtx.RUnlock()
 
-	res := make(map[string]struct{}, len(h.head.symbols))
+	res := make(map[string]int, len(h.head.symbols))
 
-	for s := range h.head.symbols {
-		res[s] = struct{}{}
+	for s, num := range h.head.symbols {
+		res[s] = num
 	}
 	return res, nil
 }
@@ -1202,8 +1202,8 @@ func (h *Head) getOrCreateWithID(id, hash uint64, lset labels.Labels) (*memSerie
 		}
 		valset.set(l.Value)
 
-		h.symbols[l.Name] = struct{}{}
-		h.symbols[l.Value] = struct{}{}
+		h.symbols[l.Name]++
+		h.symbols[l.Value]++
 	}
 
 	return s, true

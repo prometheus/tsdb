@@ -211,12 +211,12 @@ func TestHead_Truncate(t *testing.T) {
 	testutil.Assert(t, postingsB2 == nil, "")
 	testutil.Assert(t, postingsC1 == nil, "")
 
-	testutil.Equals(t, map[string]struct{}{
-		"":  {}, // from 'all' postings list
-		"a": {},
-		"b": {},
-		"1": {},
-		"2": {},
+	testutil.Equals(t, map[string]int{
+		"":  2, // from 'all' postings list
+		"a": 2,
+		"b": 1,
+		"1": 2,
+		"2": 1,
 	}, h.symbols)
 
 	testutil.Equals(t, map[string]stringset{
