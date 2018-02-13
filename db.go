@@ -122,6 +122,8 @@ type dbMetrics struct {
 	reloads              prometheus.Counter
 	reloadsFailed        prometheus.Counter
 	compactionsTriggered prometheus.Counter
+	cutoffs              prometheus.Counter
+	cutoffsFailed        prometheus.Counter
 	tombCleanTimer       prometheus.Histogram
 	symbolTableSize      prometheus.GaugeFunc
 }
@@ -149,6 +151,14 @@ func newDBMetrics(db *DB, r prometheus.Registerer) *dbMetrics {
 		Name: "prometheus_tsdb_compactions_triggered_total",
 		Help: "Total number of triggered compactions for the partition.",
 	})
+	m.cutoffs = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "prometheus_tsdb_retention_cutoffs_total",
+		Help: "Number of times the database cut off block data from disk.",
+	})
+	m.cutoffsFailed = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "prometheus_tsdb_retention_cutoffs_failures_total",
+		Help: "Number of times the database failed to cut off block data from disk.",
+	})
 	m.tombCleanTimer = prometheus.NewHistogram(prometheus.HistogramOpts{
 		Name: "prometheus_tsdb_tombstone_cleanup_seconds",
 		Help: "The time taken to recompact blocks to remove tombstones.",
@@ -175,6 +185,8 @@ func newDBMetrics(db *DB, r prometheus.Registerer) *dbMetrics {
 			m.loadedBlocks,
 			m.reloads,
 			m.reloadsFailed,
+			m.cutoffs,
+			m.cutoffsFailed,
 			m.compactionsTriggered,
 			m.tombCleanTimer,
 			m.symbolTableSize,
@@ -193,6 +205,10 @@ func Open(dir string, l log.Logger, r prometheus.Registerer, opts *Options) (db 
 	}
 	if opts == nil {
 		opts = DefaultOptions
+	}
+	// Fixup bad format written by Prometheus 2.1.
+	if err := repairBadIndexVersion(l, dir); err != nil {
+		return nil, err
 	}
 
 	db = &DB{
@@ -295,7 +311,17 @@ func (db *DB) run() {
 	}
 }
 
-func (db *DB) retentionCutoff() (bool, error) {
+func (db *DB) retentionCutoff() (b bool, err error) {
+	defer func() {
+		if !b && err == nil {
+			// no data had to be cut off.
+			return
+		}
+		db.metrics.cutoffs.Inc()
+		if err != nil {
+			db.metrics.cutoffsFailed.Inc()
+		}
+	}()
 	if db.opts.RetentionDuration == 0 {
 		return false, nil
 	}
