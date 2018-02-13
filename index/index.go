@@ -744,23 +744,19 @@ func (r *Reader) decbufUvarintAt(off int) decbuf {
 }
 
 // getSectionSize returns the first 4 bytes in a section starting at offset off
-// to get the content length bytes
-func (r *Reader) getSectionSize(off int) int {
-	if off == 0 {
-		return 0
-	}
+// to get the content length bytes.
+func (r *Reader) getSectionSize(off int) uint32 {
 	b := r.b.Range(off, off+4)
-	var l int
+	l := uint32(binary.BigEndian.Uint32(b))
+
 	if l <= 0 {
-		l = -1
-	} else {
-		l  = int(binary.BigEndian.Uint32(b))
+		l = 0
 	}
 	return l
 }
 
-// getSymbolTableSize returns the bytes taken by the symbol table of Reader object
-func (r *Reader) getSymbolTableSize(off int) int {
+// getSymbolTableSize returns the bytes taken by the symbol table of Reader object.
+func (r *Reader) GetSymbolTableSize() uint32 {
 	return r.getSectionSize(int(r.toc.symbols))
 }
 

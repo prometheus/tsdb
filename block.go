@@ -84,6 +84,9 @@ type IndexReader interface {
 	// LabelIndices returns a list of string tuples for which a label value index exists.
 	LabelIndices() ([][]string, error)
 
+	// GetSymbolTableSize returns the size occupied by the symbol table of Reader object.
+	GetSymbolTableSize() uint32
+
 	// Close releases the underlying resources of the reader.
 	Close() error
 }
@@ -380,6 +383,11 @@ func (r blockIndexReader) LabelIndices() ([][]string, error) {
 	return ss, errors.Wrapf(err, "block: %s", r.b.Meta().ULID)
 }
 
+func (r blockIndexReader) GetSymbolTableSize() uint32 {
+	ss := r.ir.GetSymbolTableSize()
+	return ss
+}
+
 func (r blockIndexReader) Close() error {
 	r.b.pendingReaders.Done()
 	return nil
@@ -472,7 +480,7 @@ func (pb *Block) CleanTombstones(dest string, c Compactor) (bool, error) {
 	numStones := 0
 
 	pb.tombstones.Iter(func(id uint64, ivs Intervals) error {
-		for _ = range ivs {
+		for range ivs {
 			numStones++
 		}
 

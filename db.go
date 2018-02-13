@@ -123,6 +123,7 @@ type dbMetrics struct {
 	reloadsFailed        prometheus.Counter
 	compactionsTriggered prometheus.Counter
 	tombCleanTimer       prometheus.Histogram
+	symbolTableSize      prometheus.GaugeFunc
 }
 
 func newDBMetrics(db *DB, r prometheus.Registerer) *dbMetrics {
@@ -152,7 +153,23 @@ func newDBMetrics(db *DB, r prometheus.Registerer) *dbMetrics {
 		Name: "prometheus_tsdb_tombstone_cleanup_seconds",
 		Help: "The time taken to recompact blocks to remove tombstones.",
 	})
-
+	m.symbolTableSize = prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+		Name: "prometheus_tsdb_symbol_table_size",
+		Help: "Size occupied by symbol table",
+	}, func() float64 {
+		db.mtx.RLock()
+		defer db.mtx.RUnlock()
+		var size uint64
+		for _, block := range db.blocks {
+			ind, err := block.Index()
+			if err != nil {
+				size = 0
+				break
+			}
+			size += uint64(ind.GetSymbolTableSize())
+		}
+		return float64(size)
+	})
 	if r != nil {
 		r.MustRegister(
 			m.loadedBlocks,
@@ -160,6 +177,7 @@ func newDBMetrics(db *DB, r prometheus.Registerer) *dbMetrics {
 			m.reloadsFailed,
 			m.compactionsTriggered,
 			m.tombCleanTimer,
+			m.symbolTableSize,
 		)
 	}
 	return m
