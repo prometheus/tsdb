@@ -30,6 +30,10 @@ func repairBadIndexVersion(logger log.Logger, dir string) error {
 			continue
 		}
 		d = path.Join(dir, d)
+		// Skip dirs with missing meta. These will be deleted when reloading the db.
+		if _, err := os.Stat(filepath.Join(dir, metaFilename)); os.IsNotExist(err) {
+			continue
+		}
 
 		meta, err := readBogusMetaFile(d)
 		if err != nil {
