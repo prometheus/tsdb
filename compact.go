@@ -33,6 +33,8 @@ import (
 	"github.com/prometheus/tsdb/labels"
 )
 
+var errNoSample = errors.New("No samples for this block")
+
 // ExponentialBlockRanges returns the time ranges based on the stepSize
 func ExponentialBlockRanges(minSize int64, steps, stepSize int) []int64 {
 	ranges := make([]int64, 0, steps)
@@ -391,10 +393,19 @@ func (c *LeveledCompactor) write(dest string, meta *BlockMeta, blocks ...BlockRe
 
 	defer func(t time.Time) {
 		if err != nil {
-			c.metrics.failed.Inc()
+			if err == errNoSample {
+				// Not an error actually
+				err = nil
+			} else {
+				c.metrics.failed.Inc()
+			}
+			_, err2 := os.Stat(tmp)
+			if os.IsNotExist(err2) {
+				return
+			}
 			// TODO(gouthamve): Handle error how?
-			if err := os.RemoveAll(tmp); err != nil {
-				level.Error(c.logger).Log("msg", "removed tmp folder after failed compaction", "err", err.Error())
+			if err2 = os.RemoveAll(tmp); err2 != nil {
+				level.Error(c.logger).Log("msg", "removed tmp folder after failed compaction", "err", err2.Error())
 			}
 		}
 		c.metrics.ran.Inc()
@@ -445,6 +456,12 @@ func (c *LeveledCompactor) write(dest string, meta *BlockMeta, blocks ...BlockRe
 	}
 	if err = indexw.Close(); err != nil {
 		return errors.Wrap(err, "close index writer")
+	}
+
+	if meta.Stats.NumSamples == 0 {
+		// No need for this directory
+		err = errNoSample
+		return
 	}
 
 	// Create an empty tombstones file.
