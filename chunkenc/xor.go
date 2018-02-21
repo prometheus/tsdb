@@ -47,11 +47,13 @@ import (
 	"encoding/binary"
 	"math"
 	"math/bits"
+	"sync"
 )
 
 // XORChunk holds XOR encoded sample data.
 type XORChunk struct {
-	b *bstream
+	b     *bstream
+	mutex sync.Mutex
 }
 
 // NewXORChunk returns a new chunk with XOR encoding of the given size.
@@ -72,6 +74,8 @@ func (c *XORChunk) Bytes() []byte {
 
 // NumSamples returns the number of samples in the chunk.
 func (c *XORChunk) NumSamples() int {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
 	return int(binary.BigEndian.Uint16(c.Bytes()))
 }
 
@@ -95,6 +99,7 @@ func (c *XORChunk) Appender() (Appender, error) {
 		tDelta:   it.tDelta,
 		leading:  it.leading,
 		trailing: it.trailing,
+		mutex:    &c.mutex,
 	}
 	if binary.BigEndian.Uint16(a.b.bytes()) == 0 {
 		a.leading = 0xff
@@ -126,9 +131,13 @@ type xorAppender struct {
 
 	leading  uint8
 	trailing uint8
+	mutex    *sync.Mutex
 }
 
 func (a *xorAppender) Append(t int64, v float64) {
+	// a.b is passed as a reference so need to lock it to prevent race read/write from the parent.
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
 	var tDelta uint64
 	num := binary.BigEndian.Uint16(a.b.bytes())
 
