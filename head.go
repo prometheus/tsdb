@@ -762,10 +762,6 @@ func (c *safeChunk) Iterator() chunkenc.Iterator {
 	return it
 }
 
-// func (c *safeChunk) Appender() (chunks.Appender, error) { panic("illegal") }
-// func (c *safeChunk) Bytes() []byte                      { panic("illegal") }
-// func (c *safeChunk) Encoding() chunks.Encoding          { panic("illegal") }
-
 type headIndexReader struct {
 	head       *Head
 	mint, maxt int64
