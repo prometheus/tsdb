@@ -265,7 +265,7 @@ func (h *Head) ReadWAL() error {
 
 	// TODO(fabxc): series entries spread between samples can starve the sample workers.
 	// Even with bufferd channels, this can impact startup time with lots of series churn.
-	// We must not pralellize series creation itself but could make the indexing asynchronous.
+	// We must not paralellize series creation itself but could make the indexing asynchronous.
 	seriesFunc := func(series []RefSeries) {
 		for _, s := range series {
 			h.getOrCreateWithID(s.Ref, s.Labels.Hash(), s.Labels)
