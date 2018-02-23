@@ -18,6 +18,7 @@ import (
 	"math"
 	"math/rand"
 	"os"
+	"path/filepath"
 	"sort"
 	"testing"
 
@@ -806,6 +807,48 @@ func TestDB_Retention(t *testing.T) {
 	testutil.Assert(t, changes, "there should be changes")
 	testutil.Equals(t, 1, len(db.blocks))
 	testutil.Equals(t, int64(100), db.blocks[0].meta.MaxTime) // To verify its the right block.
+}
+
+// TestDBMissingMeta assures that the db can be opened even when a folder is missing the meta file.
+// Also ensures that the folder with the missing meta is deleted when reloading the db.
+func TestDBMissingMeta(t *testing.T) {
+	tmpdir, _ := ioutil.TempDir("", "test")
+	defer os.RemoveAll(tmpdir)
+
+	db, err := Open(tmpdir, nil, nil, nil)
+	testutil.Ok(t, err)
+
+	lbls := labels.Labels{labels.Label{Name: "labelname", Value: "labelvalue"}}
+
+	app := db.Appender()
+	_, err = app.Add(lbls, 0, 1)
+	testutil.Ok(t, err)
+	testutil.Ok(t, app.Commit())
+
+	// create snapshot to make it create a block.
+	snap, err := ioutil.TempDir("", "snap")
+	testutil.Ok(t, err)
+	testutil.Ok(t, db.Snapshot(snap))
+
+	testutil.Ok(t, db.Close())
+	defer os.RemoveAll(snap)
+
+	var deleteable string
+	testutil.Ok(t, filepath.Walk(snap, func(path string, f os.FileInfo, err error) error {
+		if f.Name() == metaFilename {
+			deleteable = filepath.Dir(path)
+			return nil
+		}
+		return nil
+	}))
+
+	// reopen DB from snapshot. This should succeed even though the meta file is missing.
+	db, err = Open(snap, nil, nil, nil)
+	testutil.Ok(t, err)
+
+	db.reload()
+	_, err = os.Stat(deleteable)
+	testutil.Assert(t, os.IsNotExist(err), "unexpected error when checking that the folder with the missing meta is deleted", err)
 }
 
 func TestNotMatcherSelectsLabelsUnsetSeries(t *testing.T) {
