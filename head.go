@@ -964,7 +964,8 @@ func (m seriesHashmap) del(hash uint64, lset labels.Labels) {
 type stripeSeries struct {
 	series [stripeSize]map[uint64]*memSeries
 	hashes [stripeSize]seriesHashmap
-	locks  [stripeSize]stripeLock
+	slocks [stripeSize]stripeLock
+	hlocks [stripeSize]stripeLock
 }
 
 const (
@@ -1000,7 +1001,7 @@ func (s *stripeSeries) gc(mint int64) (map[uint64]struct{}, int) {
 	// Run through all series and truncate old chunks. Mark those with no
 	// chunks left as deleted and store their ID.
 	for i := 0; i < stripeSize; i++ {
-		s.locks[i].Lock()
+		s.hlocks[i].Lock()
 
 		for hash, all := range s.hashes[i] {
 			for _, series := range all {
@@ -1012,30 +1013,23 @@ func (s *stripeSeries) gc(mint int64) (map[uint64]struct{}, int) {
 					continue
 				}
 
-				// The series is gone entirely. We need to keep the series lock
-				// and make sure we have acquired the stripe locks for hash and ID of the
-				// series alike.
+				// The series is gone entirely. We need to keep the series lock.
 				// If we don't hold them all, there's a very small chance that a series receives
 				// samples again while we are half-way into deleting it.
-				j := int(series.ref & stripeMask)
-
-				if i != j {
-					s.locks[j].Lock()
-				}
-
 				deleted[series.ref] = struct{}{}
 				s.hashes[i].del(hash, series.lset)
-				delete(s.series[j], series.ref)
 
-				if i != j {
-					s.locks[j].Unlock()
-				}
+				j := int(series.ref & stripeMask)
+
+				s.slocks[j].Lock()
+				delete(s.series[j], series.ref)
+				s.slocks[j].Unlock()
 
 				series.Unlock()
 			}
 		}
 
-		s.locks[i].Unlock()
+		s.hlocks[i].Unlock()
 	}
 
 	return deleted, rmChunks
@@ -1044,9 +1038,9 @@ func (s *stripeSeries) gc(mint int64) (map[uint64]struct{}, int) {
 func (s *stripeSeries) getByID(id uint64) *memSeries {
 	i := id & stripeMask
 
-	s.locks[i].RLock()
+	s.slocks[i].RLock()
 	series := s.series[i][id]
-	s.locks[i].RUnlock()
+	s.slocks[i].RUnlock()
 
 	return series
 }
@@ -1054,9 +1048,9 @@ func (s *stripeSeries) getByID(id uint64) *memSeries {
 func (s *stripeSeries) getByHash(hash uint64, lset labels.Labels) *memSeries {
 	i := hash & stripeMask
 
-	s.locks[i].RLock()
+	s.hlocks[i].RLock()
 	series := s.hashes[i].get(hash, lset)
-	s.locks[i].RUnlock()
+	s.hlocks[i].RUnlock()
 
 	return series
 }
@@ -1064,20 +1058,19 @@ func (s *stripeSeries) getByHash(hash uint64, lset labels.Labels) *memSeries {
 func (s *stripeSeries) getOrSet(hash uint64, series *memSeries) (*memSeries, bool) {
 	i := hash & stripeMask
 
-	s.locks[i].Lock()
+	s.hlocks[i].Lock()
+	defer s.hlocks[i].Unlock()
 
 	if prev := s.hashes[i].get(hash, series.lset); prev != nil {
-		s.locks[i].Unlock()
 		return prev, false
 	}
 	s.hashes[i].set(hash, series)
-	s.locks[i].Unlock()
 
-	i = series.ref & stripeMask
+	j := series.ref & stripeMask
 
-	s.locks[i].Lock()
-	s.series[i][series.ref] = series
-	s.locks[i].Unlock()
+	s.slocks[j].Lock()
+	s.series[j][series.ref] = series
+	s.slocks[j].Unlock()
 
 	return series, true
 }
