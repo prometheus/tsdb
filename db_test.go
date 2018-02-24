@@ -812,16 +812,13 @@ func TestDB_Retention(t *testing.T) {
 // TestDBMissingMeta assures that the db can be opened even when a folder is missing the meta file.
 // Also ensures that the folder with the missing meta is deleted when reloading the db.
 func TestDBMissingMeta(t *testing.T) {
-	tmpdir, _ := ioutil.TempDir("", "test")
-	defer os.RemoveAll(tmpdir)
-
-	db, err := Open(tmpdir, nil, nil, nil)
-	testutil.Ok(t, err)
+	db, close := openTestDB(t, nil)
+	defer close()
 
 	lbls := labels.Labels{labels.Label{Name: "labelname", Value: "labelvalue"}}
 
 	app := db.Appender()
-	_, err = app.Add(lbls, 0, 1)
+	_, err := app.Add(lbls, 0, 1)
 	testutil.Ok(t, err)
 	testutil.Ok(t, app.Commit())
 
@@ -837,7 +834,7 @@ func TestDBMissingMeta(t *testing.T) {
 	testutil.Ok(t, filepath.Walk(snap, func(path string, f os.FileInfo, err error) error {
 		if f.Name() == metaFilename {
 			deleteable = filepath.Dir(path)
-			return nil
+			return os.Remove(path)
 		}
 		return nil
 	}))
