@@ -505,8 +505,15 @@ func (db *DB) reload(deleteable ...string) (err error) {
 	for _, dir := range dirs {
 		meta, err := readMetaFile(dir)
 		if err != nil {
-			deleteable = append(deleteable, dir)
-			level.Error(db.logger).Log("msg", "dir set for deletion due to error in the meta file", "dir", dir, "err", err.Error())
+			if os.IsNotExist(err) {
+				deleteable = append(deleteable, dir)
+				level.Error(db.logger).Log("msg", "dir set for deletion due to error in the meta file", "dir", dir, "err", err.Error())
+				continue
+			}
+			return errors.Wrapf(err, "read meta information %s", dir)
+		}
+
+		if stringsContain(deleteable, dir) {
 			continue
 		}
 
