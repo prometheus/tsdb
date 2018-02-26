@@ -450,7 +450,9 @@ func retentionCutoffDirs(l log.Logger, dir string, mint int64) ([]string, error)
 	for _, dir := range dirs {
 		meta, err := readMetaFile(dir)
 		if err != nil {
-			delDirs = append(delDirs, dir)
+			level.Debug(l).Log("msg", "couldn't read a block meta file at retention", "err", err)
+			// We continue with the rest of the blocks.
+			// This one will be deleted when reloading the db.
 			continue
 		}
 		// The first block we encounter marks that we crossed the boundary
@@ -458,7 +460,6 @@ func retentionCutoffDirs(l log.Logger, dir string, mint int64) ([]string, error)
 		if meta.MaxTime >= mint {
 			break
 		}
-
 		delDirs = append(delDirs, dir)
 	}
 
@@ -505,14 +506,11 @@ func (db *DB) reload(deleteable ...string) (err error) {
 	for _, dir := range dirs {
 		meta, err := readMetaFile(dir)
 		if err != nil {
-			if os.IsNotExist(err) {
-				deleteable = append(deleteable, dir)
-				level.Error(db.logger).Log("msg", "dir set for deletion due to error in the meta file", "dir", dir, "err", err.Error())
-				continue
-			}
-			return errors.Wrapf(err, "read meta information %s", dir)
+			deleteable = append(deleteable, dir)
+			level.Error(db.logger).Log("msg", "block set for deletion due to error in the meta file", "dir", dir, "err", err.Error())
+			continue
 		}
-
+		// If the block is pending for deletion, don't add it to the new block set.
 		if stringsContain(deleteable, dir) {
 			continue
 		}

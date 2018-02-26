@@ -157,7 +157,9 @@ func (c *LeveledCompactor) Plan(dir string) ([]string, error) {
 	for _, dir := range dirs {
 		meta, err := readMetaFile(dir)
 		if err != nil {
-			// No need to return an error as this will be deleted when reloading the db.
+			level.Debug(c.logger).Log("msg", "couldn't read a block meta file at planning", "err", err)
+			// We continue with the rest of the blocks.
+			// This one will be deleted when reloading the db.
 			continue
 		}
 		dms = append(dms, dirMeta{dir, meta})
