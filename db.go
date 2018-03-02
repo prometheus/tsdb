@@ -52,6 +52,9 @@ var DefaultOptions = &Options{
 
 // Options of the DB storage.
 type Options struct {
+	// WAL is an implementation of the WAL interface to provide a write-ahead log.
+	WAL WAL
+
 	// The interval at which the write ahead log is flushed to disk.
 	WALFlushInterval time.Duration
 
@@ -225,10 +228,16 @@ func Open(dir string, l log.Logger, r prometheus.Registerer, opts *Options) (db 
 		return nil, errors.Wrap(err, "create leveled compactor")
 	}
 
-	wal, err := OpenSegmentWAL(filepath.Join(dir, "wal"), l, opts.WALFlushInterval, r)
-	if err != nil {
-		return nil, err
+	var wal WAL
+	if opts.WAL == nil {
+		wal, err = OpenSegmentWAL(filepath.Join(dir, "wal"), l, opts.WALFlushInterval, r)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		wal = opts.WAL
 	}
+
 	db.head, err = NewHead(r, l, wal, opts.BlockRanges[0])
 	if err != nil {
 		return nil, err
