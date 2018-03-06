@@ -719,11 +719,6 @@ type compactionMerger struct {
 	intervals Intervals
 }
 
-type compactionSeries struct {
-	labels labels.Labels
-	chunks []*chunks.Meta
-}
-
 func newCompactionMerger(a, b ChunkSeriesSet) (*compactionMerger, error) {
 	c := &compactionMerger{
 		a: a,
