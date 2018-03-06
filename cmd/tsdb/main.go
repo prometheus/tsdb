@@ -29,6 +29,8 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/prometheus/tsdb/mutex"
+
 	"github.com/go-kit/kit/log"
 	"github.com/pkg/errors"
 	"github.com/prometheus/tsdb"
@@ -150,7 +152,7 @@ func (b *writeBenchmark) run() {
 const timeDelta = 30000
 
 func (b *writeBenchmark) ingestScrapes(lbls []labels.Labels, scrapeCount int) (uint64, error) {
-	var mu sync.Mutex
+	var mu mutex.Atomic
 	var total uint64
 
 	for i := 0; i < scrapeCount; i += 100 {
