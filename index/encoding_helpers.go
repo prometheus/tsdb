@@ -97,6 +97,24 @@ func (d *decbuf) uvarintStr() string {
 	return s
 }
 
+func (d *decbuf) uvarintBytes() []byte {
+	l := d.uvarint64()
+	if d.e != nil {
+		b := make([]byte, 0)
+		return b
+	}
+	if len(d.b) < int(l) {
+		d.e = errInvalidSize
+		b := make([]byte, 0)
+		return b
+	}
+	s := make([]byte, 0, len(d.b[:l]))
+	//copy(s, d.b[:l])
+	s = append(s, d.b[:l]...)
+	d.b = d.b[l:]
+	return s
+}
+
 func (d *decbuf) varint64() int64 {
 	if d.e != nil {
 		return 0

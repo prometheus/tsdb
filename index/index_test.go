@@ -174,6 +174,34 @@ func TestIndexRW_Create_Open(t *testing.T) {
 	testutil.NotOk(t, err)
 }
 
+func BenchmarkIndexRW_Create_Open(t *testing.B) {
+	for n := 0; n < t.N; n++ {
+		dir, err := ioutil.TempDir("", "test_index_create")
+		testutil.Ok(t, err)
+		defer os.RemoveAll(dir)
+
+		fn := filepath.Join(dir, "index")
+
+		// An empty index must still result in a readable file.
+		iw, err := NewWriter(fn)
+		testutil.Ok(t, err)
+		testutil.Ok(t, iw.Close())
+
+		ir, err := NewFileReader(fn)
+		testutil.Ok(t, err)
+		testutil.Ok(t, ir.Close())
+
+		// Modify magic header must cause open to fail.
+		f, err := os.OpenFile(fn, os.O_WRONLY, 0666)
+		testutil.Ok(t, err)
+		_, err = f.WriteAt([]byte{0, 0}, 0)
+		testutil.Ok(t, err)
+
+		_, err = NewFileReader(dir)
+		testutil.NotOk(t, err)
+	}
+}
+
 func TestIndexRW_Postings(t *testing.T) {
 	dir, err := ioutil.TempDir("", "test_index_postings")
 	testutil.Ok(t, err)
