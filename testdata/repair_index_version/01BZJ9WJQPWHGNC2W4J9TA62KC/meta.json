@@ -1,5 +1,4 @@
 {
-	"version": 2,
 	"ulid": "01BZJ9WJR6Z192734YNMD62F6M",
 	"minTime": 1511366400000,
 	"maxTime": 1511368200000,
@@ -13,5 +12,6 @@
 		"sources": [
 			"01BZJ9WJR6Z192734YNMD62F6M"
 		]
-	}
+	},
+	"version": 1
 }
