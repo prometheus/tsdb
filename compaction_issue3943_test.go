@@ -138,19 +138,16 @@ func TestCompactionPlan_Issue3943(t *testing.T) {
 			// There 3 compactions:
 			// - the three 2h blocks into 6h - state after: []time.Duration{36* time.Hour, 6 * time.Hour, 6 * time.Hour, 2 * time.Hour, 6 * time.Hour}
 			// - the two 6h blocks into 12h - state after: []time.Duration{36* time.Hour, 2 * time.Hour, 6 * time.Hour, 12 * time.Hour}
-			// - 36h + 6h + 12h???
+			// - 36h & 6h got compacted into... 54h????
 			expectedBlockIndexesInPlan: [][]int{{2, 4, 5}, {1, 2}, {0, 2}},
 			expectedBlockRanges:        []time.Duration{2* time.Hour, 12 * time.Hour, 54 * time.Hour},
 			// Why we ended up in this state?
-			// Why 36h + 12h + 6h merged together 12h was the last one which should be ignored!
-			// Why the used 12h is not deleted?
+			// Why 36h + 6h merged together into 54h with 12h gap?!
 		},
 	} {
 		if !t.Run(tcase.runMsg, func(t *testing.T) {
 			defer func() {
 				metas := getMmetas(t, dir)
-				fmt.Printf("---After compaction at %v ----\n", currT)
-				printBlocks(metas)
 				var ranges []int64
 				for _, m := range metas {
 					ranges = append(ranges, m.MaxTime-m.MinTime)
@@ -193,11 +190,15 @@ func TestCompactionPlan_Issue3943(t *testing.T) {
 				// Fake compaction - in same way compactor does it.
 				createDummyBlock(t, dir, plannedMetas...)
 
-				// We can kill getMmetas now.
+				// We can kill planned dirs now.
 				for _, d := range dirs {
 					fmt.Println("Removing " + d)
 					testutil.Ok(t, os.RemoveAll(d))
 				}
+
+				metas = getMmetas(t, dir)
+				fmt.Printf("---After one compaction at %v ----\n", currT)
+				printBlocks(metas)
 
 				i++
 			}
