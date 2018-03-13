@@ -77,54 +77,69 @@ func TestCompactionPlan_Issue3943(t *testing.T) {
 	// Arbitrary start time.
 	currT := int64(1520532000000)
 
+	// Trying to deduct initial state (4 blocks) before upgrade.
+	createDummyBlock(t, dir, &BlockMeta{
+		MinTime: currT - int64(time.Duration(36* time.Hour).Seconds()*1000),
+		MaxTime: currT,
+	})
+
 	for _, tcase := range []struct {
 		runMsg                     string
 		expectedBlockIndexesInPlan [][]int
 		expectedBlockRanges        []time.Duration
 	}{
-		{runMsg: "0 no blocks"},
+		{
+			runMsg:              "0",
+			expectedBlockRanges: []time.Duration{36 * time.Hour},
+		},
 		{
 			runMsg:              "1",
-			expectedBlockRanges: []time.Duration{2 * time.Hour},
+			expectedBlockRanges: []time.Duration{36* time.Hour, 2 * time.Hour},
 		},
 		{
 			runMsg:              "2",
-			expectedBlockRanges: []time.Duration{2 * time.Hour, 2 * time.Hour},
+			expectedBlockRanges: []time.Duration{36* time.Hour, 2 * time.Hour, 2 * time.Hour},
 		},
 		{
 			runMsg:              "3",
-			expectedBlockRanges: []time.Duration{2 * time.Hour, 2 * time.Hour, 2 * time.Hour},
+			expectedBlockRanges: []time.Duration{36* time.Hour,2 * time.Hour, 2 * time.Hour, 2 * time.Hour},
 		},
 		{
 			runMsg: "4",
-			expectedBlockIndexesInPlan: [][]int{{0, 1, 2}},
-			expectedBlockRanges:        []time.Duration{2 * time.Hour, 6 * time.Hour},
+			expectedBlockIndexesInPlan: [][]int{{1, 2, 3}},
+			expectedBlockRanges:        []time.Duration{36* time.Hour, 2 * time.Hour, 6 * time.Hour},
 		},
 		{
 			runMsg:              "5",
-			expectedBlockRanges: []time.Duration{2 * time.Hour, 6 * time.Hour, 2 * time.Hour},
+			expectedBlockRanges: []time.Duration{36* time.Hour, 2 * time.Hour, 6 * time.Hour, 2 * time.Hour},
 		},
 		{
 			runMsg:              "6",
-			expectedBlockRanges: []time.Duration{2 * time.Hour, 6 * time.Hour, 2 * time.Hour, 2 * time.Hour},
+			expectedBlockRanges: []time.Duration{36* time.Hour, 2 * time.Hour, 6 * time.Hour, 2 * time.Hour, 2 * time.Hour},
 		},
 		{
 			runMsg: "7",
-			expectedBlockIndexesInPlan: [][]int{{0, 2, 3}},
-			expectedBlockRanges:        []time.Duration{6 * time.Hour, 2 * time.Hour, 6 * time.Hour},
+			expectedBlockIndexesInPlan: [][]int{{1, 3, 4}},
+			expectedBlockRanges:        []time.Duration{36* time.Hour, 6 * time.Hour, 2 * time.Hour, 6 * time.Hour},
 		},
 		{
 			runMsg:              "8",
-			expectedBlockRanges: []time.Duration{6 * time.Hour, 2 * time.Hour, 6 * time.Hour, 2 * time.Hour},
+			expectedBlockRanges: []time.Duration{36* time.Hour, 6 * time.Hour, 2 * time.Hour, 6 * time.Hour, 2 * time.Hour},
 		},
 		{
 			runMsg:              "9",
-			expectedBlockRanges: []time.Duration{6 * time.Hour, 2 * time.Hour, 6 * time.Hour, 2 * time.Hour, 2 * time.Hour},
+			expectedBlockRanges: []time.Duration{36* time.Hour, 6 * time.Hour, 2 * time.Hour, 6 * time.Hour, 2 * time.Hour, 2 * time.Hour},
 		},
 		{
+			// This is tricky. There was some blocks already, because from logs we can see that
+			// "level=info ts=2018-03-09T15:05:31.944625635Z caller=compact.go:394 component=tsdb msg="compact blocks" count=3 mint=1520402400000 maxt=1520596800000"
+			// 54h block was created. So I deducted that 36h block was there.
 			runMsg: "10",
-			expectedBlockIndexesInPlan: [][]int{{1, 3, 4}, {0, 1}},
-			expectedBlockRanges:        []time.Duration{2 * time.Hour, 6 * time.Hour, 12 * time.Hour}, // 12h because only two 6h blocks were available.
+			expectedBlockIndexesInPlan: [][]int{{2, 4, 5}, {1, 2}, {0, 2}},
+			expectedBlockRanges:        []time.Duration{2* time.Hour, 12 * time.Hour, 54 * time.Hour},
+			// Why we ended up in this state?
+			// Why 36h + 12h + 6h merged together (it might be expected)
+			// Why the used 12h is not deleted?
 		},
 	} {
 		if !t.Run(tcase.runMsg, func(t *testing.T) {
@@ -185,6 +200,7 @@ func TestCompactionPlan_Issue3943(t *testing.T) {
 		}) {
 			return
 		}
+		
 		// Create another 2h block.
 		nextT := currT + int64(time.Duration(testMinBlockSize).Seconds()*1000)
 		createDummyBlock(t, dir, &BlockMeta{
