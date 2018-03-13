@@ -135,10 +135,14 @@ func TestCompactionPlan_Issue3943(t *testing.T) {
 			// "level=info ts=2018-03-09T15:05:31.944625635Z caller=compact.go:394 component=tsdb msg="compact blocks" count=3 mint=1520402400000 maxt=1520596800000"
 			// 54h block was created. So I deducted that 36h block was there.
 			runMsg: "10",
+			// There 3 compactions:
+			// - the three 2h blocks into 6h - state after: []time.Duration{36* time.Hour, 6 * time.Hour, 6 * time.Hour, 2 * time.Hour, 6 * time.Hour}
+			// - the two 6h blocks into 12h - state after: []time.Duration{36* time.Hour, 2 * time.Hour, 6 * time.Hour, 12 * time.Hour}
+			// - 36h + 6h + 12h???
 			expectedBlockIndexesInPlan: [][]int{{2, 4, 5}, {1, 2}, {0, 2}},
 			expectedBlockRanges:        []time.Duration{2* time.Hour, 12 * time.Hour, 54 * time.Hour},
 			// Why we ended up in this state?
-			// Why 36h + 12h + 6h merged together (it might be expected)
+			// Why 36h + 12h + 6h merged together 12h was the last one which should be ignored!
 			// Why the used 12h is not deleted?
 		},
 	} {
@@ -200,7 +204,7 @@ func TestCompactionPlan_Issue3943(t *testing.T) {
 		}) {
 			return
 		}
-		
+
 		// Create another 2h block.
 		nextT := currT + int64(time.Duration(testMinBlockSize).Seconds()*1000)
 		createDummyBlock(t, dir, &BlockMeta{
