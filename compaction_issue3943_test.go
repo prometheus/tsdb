@@ -121,17 +121,10 @@ func TestCompactionPlan_Issue3943(t *testing.T) {
 			runMsg:              "9",
 			expectedBlockRanges: []time.Duration{6 * time.Hour, 2 * time.Hour, 6 * time.Hour, 2 * time.Hour, 2 * time.Hour},
 		},
-		//{ THIS SHOULD HAPPEN
-		//
-		//	runMsg: "10",
-		//	expectedBlockIndexesInPlan: [][]int{{1, 3, 4}},
-		//	expectedBlockRanges: []time.Duration{6* time.Hour, 6 * time.Hour, 2 * time.Hour, 6 * time.Hour},
-		//},
 		{
-			// This Happens.
 			runMsg: "10",
 			expectedBlockIndexesInPlan: [][]int{{1, 3, 4}, {0, 1}},
-			expectedBlockRanges:        []time.Duration{2 * time.Hour, 6 * time.Hour, 12 * time.Hour}, // 12h???!
+			expectedBlockRanges:        []time.Duration{2 * time.Hour, 6 * time.Hour, 12 * time.Hour}, // 12h because only two 6h blocks were available.
 		},
 	} {
 		if !t.Run(tcase.runMsg, func(t *testing.T) {
