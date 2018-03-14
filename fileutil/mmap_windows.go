@@ -35,7 +35,17 @@ func mmap(f *os.File, sz int) ([]byte, error) {
 		return nil, os.NewSyscallError("CloseHandle", err)
 	}
 
-	return (*[1 << 30]byte)(unsafe.Pointer(addr))[:sz], nil
+	if sz < 1<<30 {
+		return (*[1 << 30]byte)(unsafe.Pointer(addr))[:sz], nil
+	}
+
+	if sz < 1<<32 {
+		return (*[1 << 32]byte)(unsafe.Pointer(addr))[:sz], nil
+	}
+
+	if sz <= 1<<34 {
+		return (*[1 << 34]byte)(unsafe.Pointer(addr))[:sz], nil
+	}
 }
 
 func munmap(b []byte) error {
