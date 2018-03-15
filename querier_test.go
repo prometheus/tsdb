@@ -250,7 +250,7 @@ func createIdxChkReaders(tc []struct {
 			})
 
 			chunk := chunkenc.NewXORChunk()
-			app, _ := chunk.Appender()
+			app, _ := chunk.Appender(nil)
 			for _, smpl := range chk {
 				app.Append(smpl.t, smpl.v)
 			}
@@ -774,7 +774,7 @@ func chunkFromSamples(s []sample) chunks.Meta {
 	}
 
 	c := chunkenc.NewXORChunk()
-	ca, _ := c.Appender()
+	ca, _ := c.Appender(nil)
 
 	for _, s := range s {
 		ca.Append(s.t, s.v)
@@ -1300,7 +1300,7 @@ func (cr mockChunkReader) Close() error {
 
 func TestDeletedIterator(t *testing.T) {
 	chk := chunkenc.NewXORChunk()
-	app, err := chk.Appender()
+	app, err := chk.Appender(nil)
 	testutil.Ok(t, err)
 	// Insert random stuff from (0, 1000).
 	act := make([]sample, 1000)
