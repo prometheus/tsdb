@@ -133,18 +133,18 @@ func TestHead_Truncate(t *testing.T) {
 	s4, _ := h.getOrCreate(4, labels.FromStrings("a", "2", "b", "2", "c", "1"))
 
 	s1.chunks = []*memChunk{
-		{minTime: 0, maxTime: 999},
-		{minTime: 1000, maxTime: 1999},
-		{minTime: 2000, maxTime: 2999},
+		{minTime: 0, maxTime: 999, chunk: chunkenc.NewXORChunk()},
+		{minTime: 1000, maxTime: 1999, chunk: chunkenc.NewXORChunk()},
+		{minTime: 2000, maxTime: 2999, chunk: chunkenc.NewXORChunk()},
 	}
 	s2.chunks = []*memChunk{
-		{minTime: 1000, maxTime: 1999},
-		{minTime: 2000, maxTime: 2999},
-		{minTime: 3000, maxTime: 3999},
+		{minTime: 1000, maxTime: 1999, chunk: chunkenc.NewXORChunk()},
+		{minTime: 2000, maxTime: 2999, chunk: chunkenc.NewXORChunk()},
+		{minTime: 3000, maxTime: 3999, chunk: chunkenc.NewXORChunk()},
 	}
 	s3.chunks = []*memChunk{
-		{minTime: 0, maxTime: 999},
-		{minTime: 1000, maxTime: 1999},
+		{minTime: 0, maxTime: 999, chunk: chunkenc.NewXORChunk()},
+		{minTime: 1000, maxTime: 1999, chunk: chunkenc.NewXORChunk()},
 	}
 	s4.chunks = []*memChunk{}
 
@@ -154,12 +154,12 @@ func TestHead_Truncate(t *testing.T) {
 	testutil.Ok(t, h.Truncate(2000))
 
 	testutil.Equals(t, []*memChunk{
-		{minTime: 2000, maxTime: 2999},
+		{minTime: 2000, maxTime: 2999, chunk: chunkenc.NewXORChunk()},
 	}, h.series.getByID(s1.ref).chunks)
 
 	testutil.Equals(t, []*memChunk{
-		{minTime: 2000, maxTime: 2999},
-		{minTime: 3000, maxTime: 3999},
+		{minTime: 2000, maxTime: 2999, chunk: chunkenc.NewXORChunk()},
+		{minTime: 3000, maxTime: 3999, chunk: chunkenc.NewXORChunk()},
 	}, h.series.getByID(s2.ref).chunks)
 
 	testutil.Assert(t, h.series.getByID(s3.ref) == nil, "")
@@ -674,8 +674,8 @@ func TestGCChunkAccess(t *testing.T) {
 
 	s, _ := h.getOrCreate(1, labels.FromStrings("a", "1"))
 	s.chunks = []*memChunk{
-		{minTime: 0, maxTime: 999},
-		{minTime: 1000, maxTime: 1999},
+		{minTime: 0, maxTime: 999, chunk: chunkenc.NewXORChunk()},
+		{minTime: 1000, maxTime: 1999, chunk: chunkenc.NewXORChunk()},
 	}
 
 	idx := h.indexRange(0, 1500)
@@ -714,8 +714,8 @@ func TestGCSeriesAccess(t *testing.T) {
 
 	s, _ := h.getOrCreate(1, labels.FromStrings("a", "1"))
 	s.chunks = []*memChunk{
-		{minTime: 0, maxTime: 999},
-		{minTime: 1000, maxTime: 1999},
+		{minTime: 0, maxTime: 999, chunk: chunkenc.NewXORChunk()},
+		{minTime: 1000, maxTime: 1999, chunk: chunkenc.NewXORChunk()},
 	}
 
 	idx := h.indexRange(0, 2000)
@@ -815,4 +815,36 @@ func TestMemSeriesIsolation(t *testing.T) {
 	require.Equal(t, 1001, lastValue(1001))
 	require.Equal(t, 1002, lastValue(1002))
 	require.Equal(t, 1002, lastValue(1003))
+}
+
+func TestHead_Truncate_WriteIDs(t *testing.T) {
+	h, err := NewHead(nil, nil, nil, 1000)
+	testutil.Ok(t, err)
+	defer h.Close()
+
+	h.initTime(0)
+
+	s1, _ := h.getOrCreate(1, labels.FromStrings("a", "1", "b", "1"))
+
+	chk := chunkenc.NewXORChunk()
+	app, err := chk.Appender()
+	testutil.Ok(t, err)
+
+	app.Append(1, 0)
+	app.Append(2, 0)
+	app.Append(3, 0)
+
+	s1.chunks = []*memChunk{
+		{minTime: 0, maxTime: 999, chunk: chk},
+		{minTime: 1000, maxTime: 1999, chunk: chk},
+	}
+
+	s1.writeIds = []uint64{2, 3, 4, 5, 0, 0, 0, 1}
+	s1.writeIdFirst = 7
+	s1.writeIdCount = 5
+
+	testutil.Ok(t, h.Truncate(1000))
+	testutil.Equals(t, []uint64{3, 4, 5, 0}, s1.writeIds)
+	testutil.Equals(t, 0, s1.writeIdFirst)
+	testutil.Equals(t, 3, s1.writeIdCount)
 }

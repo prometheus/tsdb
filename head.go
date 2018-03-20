@@ -1021,6 +1021,7 @@ func (s *stripeSeries) gc(mint int64) (map[uint64]struct{}, int) {
 			for _, series := range all {
 				series.Lock()
 				rmChunks += series.truncateChunksBefore(mint)
+				series.cleanupExtraWriteIds()
 
 				if len(series.chunks) > 0 {
 					series.Unlock()
@@ -1253,10 +1254,10 @@ func (s *memSeries) append(t int64, v float64, writeId uint64) (success, chunkCr
 	if s.writeIdCount == len(s.writeIds) {
 		// Ring buffer is full, expand by doubling.
 		newRing := make([]uint64, s.writeIdCount*2)
-		copy(newRing[s.writeIdCount+s.writeIdFirst:], s.writeIds[s.writeIdFirst:])
-		copy(newRing, s.writeIds[:s.writeIdFirst])
+		idx := copy(newRing[:], s.writeIds[s.writeIdFirst%len(s.writeIds):])
+		copy(newRing[idx:], s.writeIds[:s.writeIdFirst%len(s.writeIds)])
 		s.writeIds = newRing
-		s.writeIdFirst += s.writeIdCount
+		s.writeIdFirst = 0
 	}
 	s.writeIds[(s.writeIdFirst+s.writeIdCount)%len(s.writeIds)] = writeId
 	s.writeIdCount++
@@ -1284,6 +1285,36 @@ func (s *memSeries) cleanupWriteIdsBelow(bound uint64) {
 	if s.writeIdFirst >= len(s.writeIds) {
 		s.writeIdFirst -= len(s.writeIds)
 	}
+}
+
+func (s *memSeries) cleanupExtraWriteIds() {
+	totalSamples := 0
+	for _, c := range s.chunks {
+		totalSamples += c.chunk.NumSamples()
+	}
+
+	if s.writeIdCount <= totalSamples {
+		return
+	}
+
+	s.writeIdFirst += (s.writeIdCount - totalSamples)
+	s.writeIdCount = totalSamples
+
+	newBufSize := len(s.writeIds)
+	for totalSamples < newBufSize/2 {
+		newBufSize = newBufSize / 2
+	}
+
+	if newBufSize == len(s.writeIds) {
+		return
+	}
+
+	newRing := make([]uint64, newBufSize)
+	idx := copy(newRing[:], s.writeIds[s.writeIdFirst%len(s.writeIds):])
+	copy(newRing[idx:], s.writeIds[:s.writeIdFirst%len(s.writeIds)])
+
+	s.writeIds = newRing
+	s.writeIdFirst = 0
 }
 
 // computeChunkEndTime estimates the end timestamp based the beginning of a chunk,
