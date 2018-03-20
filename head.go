@@ -402,6 +402,9 @@ func (h *rangeHead) Tombstones() (TombstoneReader, error) {
 type initAppender struct {
 	app  Appender
 	head *Head
+
+	writeId              uint64
+	cleanupWriteIdsBelow uint64
 }
 
 func (a *initAppender) Add(lset labels.Labels, t int64, v float64) (uint64, error) {
@@ -409,7 +412,7 @@ func (a *initAppender) Add(lset labels.Labels, t int64, v float64) (uint64, erro
 		return a.app.Add(lset, t, v)
 	}
 	a.head.initTime(t)
-	a.app = a.head.appender(0, 0)
+	a.app = a.head.appender(a.writeId, a.cleanupWriteIdsBelow)
 
 	return a.app.Add(lset, t, v)
 }
@@ -442,7 +445,7 @@ func (h *Head) Appender(writeId, cleanupWriteIdsBelow uint64) Appender {
 	// The head cache might not have a starting point yet. The init appender
 	// picks up the first appended timestamp as the base.
 	if h.MinTime() == math.MinInt64 {
-		return &initAppender{head: h}
+		return &initAppender{head: h, writeId: writeId, cleanupWriteIdsBelow: cleanupWriteIdsBelow}
 	}
 	return h.appender(writeId, cleanupWriteIdsBelow)
 }
@@ -1296,12 +1299,15 @@ func computeChunkEndTime(start, cur, max int64) int64 {
 
 func (s *memSeries) iterator(id int, isolation *IsolationState) chunkenc.Iterator {
 	c := s.chunk(id)
+
 	// TODO(fabxc): Work around! A querier may have retrieved a pointer to a series' chunk,
 	// which got then garbage collected before it got accessed.
 	// We must ensure to not garbage collect as long as any readers still hold a reference.
 	if c == nil {
 		return chunkenc.NewNopIterator()
 	}
+
+	ix := id - s.firstChunkID
 
 	numSamples := c.chunk.NumSamples()
 	stopAfter := numSamples
@@ -1311,7 +1317,7 @@ func (s *memSeries) iterator(id int, isolation *IsolationState) chunkenc.Iterato
 		previousSamples := 0 // Samples before this chunk.
 		for j, d := range s.chunks {
 			totalSamples += d.chunk.NumSamples()
-			if j < id {
+			if j < ix {
 				previousSamples += d.chunk.NumSamples()
 			}
 		}

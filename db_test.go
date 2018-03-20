@@ -1012,6 +1012,9 @@ func readSeriesSet(t *testing.T, ss SeriesSet) map[string][]sample {
 			t, v := it.At()
 			samples = append(samples, sample{t: t, v: v})
 		}
+		if len(samples) == 0 {
+			continue
+		}
 
 		name := series.Labels().String()
 		seriesSet[name] = samples

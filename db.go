@@ -371,8 +371,8 @@ func (db *DB) retentionCutoff() (b bool, err error) {
 // Appender opens a new appender against the database.
 func (db *DB) Appender() Appender {
 	db.writeMtx.Lock()
-	id := db.writeLastId
 	db.writeLastId++
+	id := db.writeLastId
 	db.writesOpen[id] = struct{}{}
 	db.writeMtx.Unlock()
 
