@@ -27,6 +27,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/prometheus/tsdb/mutex"
+
 	"github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/log/level"
 	"github.com/pkg/errors"
@@ -174,7 +176,7 @@ func newCRC32() hash.Hash32 {
 
 // SegmentWAL is a write ahead log for series data.
 type SegmentWAL struct {
-	mtx     sync.Mutex
+	mtx     mutex.Atomic
 	metrics *walMetrics
 
 	dirFile *os.File

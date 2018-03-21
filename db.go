@@ -39,6 +39,7 @@ import (
 	"github.com/prometheus/tsdb/chunkenc"
 	"github.com/prometheus/tsdb/fileutil"
 	"github.com/prometheus/tsdb/labels"
+	"github.com/prometheus/tsdb/mutex"
 )
 
 // DefaultOptions used for the DB. They are sane for setups using
@@ -112,8 +113,8 @@ type DB struct {
 	donec    chan struct{}
 	stopc    chan struct{}
 
-	// cmtx is used to control compactions and deletions.
-	cmtx               sync.Mutex
+	// mutex is used to control compactions and deletions.
+	mutex.Atomic
 	compactionsEnabled bool
 }
 
@@ -359,8 +360,8 @@ func (a dbAppender) Commit() error {
 }
 
 func (db *DB) compact() (changes bool, err error) {
-	db.cmtx.Lock()
-	defer db.cmtx.Unlock()
+	db.Lock()
+	defer db.Unlock()
 
 	if !db.compactionsEnabled {
 		return false, nil
@@ -617,8 +618,8 @@ func (db *DB) Close() error {
 
 // DisableCompactions disables compactions.
 func (db *DB) DisableCompactions() {
-	db.cmtx.Lock()
-	defer db.cmtx.Unlock()
+	db.Lock()
+	defer db.Unlock()
 
 	db.compactionsEnabled = false
 	level.Info(db.logger).Log("msg", "compactions disabled")
@@ -626,8 +627,8 @@ func (db *DB) DisableCompactions() {
 
 // EnableCompactions enables compactions.
 func (db *DB) EnableCompactions() {
-	db.cmtx.Lock()
-	defer db.cmtx.Unlock()
+	db.Lock()
+	defer db.Unlock()
 
 	db.compactionsEnabled = true
 	level.Info(db.logger).Log("msg", "compactions enabled")
@@ -643,8 +644,8 @@ func (db *DB) Snapshot(dir string, withHead bool) error {
 		return errors.Errorf("dir must not be a valid ULID")
 	}
 
-	db.cmtx.Lock()
-	defer db.cmtx.Unlock()
+	db.Lock()
+	defer db.Unlock()
 
 	db.mtx.RLock()
 	defer db.mtx.RUnlock()
@@ -706,8 +707,8 @@ func rangeForTimestamp(t int64, width int64) (mint, maxt int64) {
 
 // Delete implements deletion of metrics. It only has atomicity guarantees on a per-block basis.
 func (db *DB) Delete(mint, maxt int64, ms ...labels.Matcher) error {
-	db.cmtx.Lock()
-	defer db.cmtx.Unlock()
+	db.Lock()
+	defer db.Unlock()
 
 	var g errgroup.Group
 
@@ -733,8 +734,8 @@ func (db *DB) Delete(mint, maxt int64, ms ...labels.Matcher) error {
 
 // CleanTombstones re-writes any blocks with tombstones.
 func (db *DB) CleanTombstones() error {
-	db.cmtx.Lock()
-	defer db.cmtx.Unlock()
+	db.Lock()
+	defer db.Unlock()
 
 	start := time.Now()
 	defer db.metrics.tombCleanTimer.Observe(float64(time.Since(start).Seconds()))

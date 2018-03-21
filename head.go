@@ -30,6 +30,7 @@ import (
 	"github.com/prometheus/tsdb/chunks"
 	"github.com/prometheus/tsdb/index"
 	"github.com/prometheus/tsdb/labels"
+	"github.com/prometheus/tsdb/mutex"
 )
 
 var (
@@ -1090,8 +1091,7 @@ type sample struct {
 // memSeries is the in-memory representation of a series. None of its methods
 // are goroutine safe and it is the caller's responsibility to lock it.
 type memSeries struct {
-	sync.Mutex
-
+	mutex.Atomic
 	ref          uint64
 	lset         labels.Labels
 	chunks       []*memChunk
