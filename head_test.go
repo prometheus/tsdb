@@ -14,6 +14,7 @@
 package tsdb
 
 import (
+	"math"
 	"math/rand"
 	"testing"
 
@@ -239,7 +240,7 @@ func TestHeadDeleteSimple(t *testing.T) {
 	testutil.Ok(t, err)
 	defer head.Close()
 
-	app := head.Appender(0, 0)
+	app := head.Appender()
 	smpls := make([]float64, numSamples)
 	for i := int64(0); i < numSamples; i++ {
 		smpls[i] = rand.Float64()
@@ -284,7 +285,7 @@ Outer:
 		}
 
 		// Compare the result.
-		q, err := NewBlockQuerier(head, head.MinTime(), head.MaxTime(), nil)
+		q, err := NewBlockQuerier(head, head.MinTime(), head.MaxTime())
 		testutil.Ok(t, err)
 		res, err := q.Select(labels.NewEqualMatcher("a", "b"))
 		testutil.Ok(t, err)
@@ -753,7 +754,20 @@ func TestMemSeriesIsolation(t *testing.T) {
 	defer hb.Close()
 
 	lastValue := func(maxWriteId uint64) int {
-		querier, err := NewBlockQuerier(hb, 0, 10000, &IsolationState{maxWriteId: maxWriteId})
+		idx, err := hb.Index()
+		testutil.Ok(t, err)
+
+		iso := hb.IsolationState()
+		iso.maxWriteID = maxWriteId
+
+		querier := &blockQuerier{
+			mint:       0,
+			maxt:       10000,
+			index:      idx,
+			chunks:     hb.chunksRange(math.MinInt64, math.MaxInt64, iso),
+			tombstones: emptyTombstoneReader,
+		}
+
 		testutil.Ok(t, err)
 		defer querier.Close()
 
@@ -769,7 +783,14 @@ func TestMemSeriesIsolation(t *testing.T) {
 
 	i := 0
 	for ; i <= 1000; i++ {
-		app := hb.Appender(uint64(i), 0)
+		var app Appender
+		// To initialise bounds.
+		if hb.MinTime() == math.MinInt64 {
+			app = &initAppender{head: hb, writeID: uint64(i), cleanupWriteIDsBelow: 0}
+		} else {
+			app = hb.appender(uint64(i), 0)
+		}
+
 		_, err := app.Add(labels.FromStrings("foo", "bar"), int64(i), float64(i))
 		require.NoError(t, err, "Failed to add sample")
 		require.NoError(t, app.Commit(), "Unexpected error committing appender")
@@ -786,7 +807,7 @@ func TestMemSeriesIsolation(t *testing.T) {
 	require.Equal(t, 999, lastValue(999))
 
 	// Cleanup writeIds below 500.
-	app := hb.Appender(uint64(i), 500)
+	app := hb.appender(uint64(i), 500)
 	_, err = app.Add(labels.FromStrings("foo", "bar"), int64(i), float64(i))
 	require.NoError(t, err, "Failed to add sample")
 	require.NoError(t, app.Commit(), "Unexpected error committing appender")
@@ -804,7 +825,7 @@ func TestMemSeriesIsolation(t *testing.T) {
 
 	// Cleanup writeIds below 1000, which means the sample buffer is
 	// the only thing with writeIds.
-	app = hb.Appender(uint64(i), 1000)
+	app = hb.appender(uint64(i), 1000)
 	_, err = app.Add(labels.FromStrings("foo", "bar"), int64(i), float64(i))
 	require.NoError(t, err, "Failed to add sample")
 	require.NoError(t, app.Commit(), "Unexpected error committing appender")
@@ -839,12 +860,12 @@ func TestHead_Truncate_WriteIDs(t *testing.T) {
 		{minTime: 1000, maxTime: 1999, chunk: chk},
 	}
 
-	s1.writeIds = []uint64{2, 3, 4, 5, 0, 0, 0, 1}
-	s1.writeIdFirst = 7
-	s1.writeIdCount = 5
+	s1.writeIDs = []uint64{2, 3, 4, 5, 0, 0, 0, 1}
+	s1.writeIDFirst = 7
+	s1.writeIDCount = 5
 
 	testutil.Ok(t, h.Truncate(1000))
-	testutil.Equals(t, []uint64{3, 4, 5, 0}, s1.writeIds)
-	testutil.Equals(t, 0, s1.writeIdFirst)
-	testutil.Equals(t, 3, s1.writeIdCount)
+	testutil.Equals(t, []uint64{3, 4, 5, 0}, s1.writeIDs)
+	testutil.Equals(t, 0, s1.writeIDFirst)
+	testutil.Equals(t, 3, s1.writeIDCount)
 }

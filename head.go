@@ -70,6 +70,18 @@ type Head struct {
 	postings *index.MemPostings // postings lists for terms
 
 	tombstones memTombstones
+
+	// Mutex for accessing writeLastId and writesOpen.
+	writeMtx sync.Mutex
+	// Each write is given an internal id.
+	lastWriteID uint64
+	// Which writes are currently in progress.
+	writesOpen map[uint64]struct{}
+	// Mutex for accessing readLastId.
+	// If taking both writeMtx and readMtx, take writeMtx first.
+	readMtx sync.Mutex
+	// All current in use isolationStates. This is a doubly-linked list.
+	readsOpen *IsolationState
 }
 
 type headMetrics struct {
@@ -86,6 +98,9 @@ type headMetrics struct {
 	maxTime             prometheus.GaugeFunc
 	samplesAppended     prometheus.Counter
 	walTruncateDuration prometheus.Summary
+
+	lowWatermark  prometheus.GaugeFunc
+	highWatermark prometheus.GaugeFunc
 }
 
 func newHeadMetrics(h *Head, r prometheus.Registerer) *headMetrics {
@@ -147,6 +162,20 @@ func newHeadMetrics(h *Head, r prometheus.Registerer) *headMetrics {
 		Name: "prometheus_tsdb_head_samples_appended_total",
 		Help: "Total number of appended samples.",
 	})
+	m.lowWatermark = prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+		Name: "tsdb_isolation_low_watermark",
+		Help: "The lowest write id that is still referenced.",
+	}, func() float64 {
+		return float64(h.readLowWatermark())
+	})
+	m.highWatermark = prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+		Name: "tsdb_isolation_high_watermark",
+		Help: "The highest write id that has been given out.",
+	}, func() float64 {
+		h.writeMtx.Lock()
+		defer h.writeMtx.Unlock()
+		return float64(h.lastWriteID)
+	})
 
 	if r != nil {
 		r.MustRegister(
@@ -163,6 +192,8 @@ func newHeadMetrics(h *Head, r prometheus.Registerer) *headMetrics {
 			m.gcDuration,
 			m.walTruncateDuration,
 			m.samplesAppended,
+			m.lowWatermark,
+			m.highWatermark,
 		)
 	}
 	return m
@@ -179,6 +210,10 @@ func NewHead(r prometheus.Registerer, l log.Logger, wal WAL, chunkRange int64) (
 	if chunkRange < 1 {
 		return nil, errors.Errorf("invalid chunk range %d", chunkRange)
 	}
+	headIso := &IsolationState{}
+	headIso.next = headIso
+	headIso.prev = headIso
+
 	h := &Head{
 		wal:        wal,
 		logger:     l,
@@ -190,6 +225,9 @@ func NewHead(r prometheus.Registerer, l log.Logger, wal WAL, chunkRange int64) (
 		symbols:    map[string]struct{}{},
 		postings:   index.NewUnorderedMemPostings(),
 		tombstones: memTombstones{},
+
+		writesOpen: map[uint64]struct{}{},
+		readsOpen:  headIso,
 	}
 	h.metrics = newHeadMetrics(h, r)
 
@@ -389,8 +427,8 @@ func (h *rangeHead) Index() (IndexReader, error) {
 	return h.head.indexRange(h.mint, h.maxt), nil
 }
 
-func (h *rangeHead) Chunks(isolation *IsolationState) (ChunkReader, error) {
-	return h.head.chunksRange(h.mint, h.maxt, isolation), nil
+func (h *rangeHead) Chunks() (ChunkReader, error) {
+	return h.head.chunksRange(h.mint, h.maxt, h.head.IsolationState()), nil
 }
 
 func (h *rangeHead) Tombstones() (TombstoneReader, error) {
@@ -403,8 +441,8 @@ type initAppender struct {
 	app  Appender
 	head *Head
 
-	writeId              uint64
-	cleanupWriteIdsBelow uint64
+	writeID              uint64
+	cleanupWriteIDsBelow uint64
 }
 
 func (a *initAppender) Add(lset labels.Labels, t int64, v float64) (uint64, error) {
@@ -412,7 +450,7 @@ func (a *initAppender) Add(lset labels.Labels, t int64, v float64) (uint64, erro
 		return a.app.Add(lset, t, v)
 	}
 	a.head.initTime(t)
-	a.app = a.head.appender(a.writeId, a.cleanupWriteIdsBelow)
+	a.app = a.head.appender(a.writeID, a.cleanupWriteIDsBelow)
 
 	return a.app.Add(lset, t, v)
 }
@@ -439,25 +477,33 @@ func (a *initAppender) Rollback() error {
 }
 
 // Appender returns a new Appender on the database.
-func (h *Head) Appender(writeId, cleanupWriteIdsBelow uint64) Appender {
+func (h *Head) Appender() Appender {
 	h.metrics.activeAppenders.Inc()
+
+	h.writeMtx.Lock()
+	h.lastWriteID++
+	writeID := h.lastWriteID
+	h.writesOpen[writeID] = struct{}{}
+	h.writeMtx.Unlock()
+
+	cleanupWriteIDsBelow := h.readLowWatermark()
 
 	// The head cache might not have a starting point yet. The init appender
 	// picks up the first appended timestamp as the base.
 	if h.MinTime() == math.MinInt64 {
-		return &initAppender{head: h, writeId: writeId, cleanupWriteIdsBelow: cleanupWriteIdsBelow}
+		return &initAppender{head: h, writeID: writeID, cleanupWriteIDsBelow: cleanupWriteIDsBelow}
 	}
-	return h.appender(writeId, cleanupWriteIdsBelow)
+	return h.appender(writeID, cleanupWriteIDsBelow)
 }
 
-func (h *Head) appender(writeId, cleanupWriteIdsBelow uint64) *headAppender {
+func (h *Head) appender(writeID, cleanupWriteIDsBelow uint64) *headAppender {
 	return &headAppender{
 		head:                 h,
 		mint:                 h.MaxTime() - h.chunkRange/2,
 		samples:              h.getAppendBuffer(),
 		highTimestamp:        math.MinInt64,
-		writeId:              writeId,
-		cleanupWriteIdsBelow: cleanupWriteIdsBelow,
+		writeID:              writeID,
+		cleanupWriteIDsBelow: cleanupWriteIDsBelow,
 	}
 }
 
@@ -481,8 +527,8 @@ type headAppender struct {
 	samples       []RefSample
 	highTimestamp int64
 
-	writeId              uint64
-	cleanupWriteIdsBelow uint64
+	writeID              uint64
+	cleanupWriteIDsBelow uint64
 }
 
 func (a *headAppender) Add(lset labels.Labels, t int64, v float64) (uint64, error) {
@@ -543,8 +589,8 @@ func (a *headAppender) Commit() error {
 
 	for _, s := range a.samples {
 		s.series.Lock()
-		ok, chunkCreated := s.series.append(s.T, s.V, a.writeId)
-		s.series.cleanupWriteIdsBelow(a.cleanupWriteIdsBelow)
+		ok, chunkCreated := s.series.append(s.T, s.V, a.writeID)
+		s.series.cleanupWriteIDsBelow(a.cleanupWriteIDsBelow)
 		s.series.Unlock()
 
 		if !ok {
@@ -567,6 +613,10 @@ func (a *headAppender) Commit() error {
 			break
 		}
 	}
+
+	a.head.writeMtx.Lock()
+	delete(a.head.writesOpen, a.writeID)
+	a.head.writeMtx.Unlock()
 
 	return nil
 }
@@ -674,8 +724,8 @@ func (h *Head) indexRange(mint, maxt int64) *headIndexReader {
 }
 
 // Chunks returns a ChunkReader against the block.
-func (h *Head) Chunks(isolation *IsolationState) (ChunkReader, error) {
-	return h.chunksRange(math.MinInt64, math.MaxInt64, isolation), nil
+func (h *Head) Chunks() (ChunkReader, error) {
+	return h.chunksRange(math.MinInt64, math.MaxInt64, h.IsolationState()), nil
 }
 
 func (h *Head) chunksRange(mint, maxt int64, isolation *IsolationState) *headChunkReader {
@@ -708,6 +758,7 @@ type headChunkReader struct {
 }
 
 func (h *headChunkReader) Close() error {
+	h.isolation.Close()
 	return nil
 }
 
@@ -932,6 +983,20 @@ func (h *Head) getOrCreateWithID(id, hash uint64, lset labels.Labels) (*memSerie
 	return s, true
 }
 
+// readLowWatermark returns the writeId below which
+// we no longer need to track which writes were from
+// which writeId.
+func (h *Head) readLowWatermark() uint64 {
+	h.writeMtx.Lock() // Take writeMtx first.
+	defer h.writeMtx.Unlock()
+	h.readMtx.Lock()
+	defer h.readMtx.Unlock()
+	if h.readsOpen.prev == h.readsOpen {
+		return h.lastWriteID
+	}
+	return h.readsOpen.prev.lowWaterMark
+}
+
 // seriesHashmap is a simple hashmap for memSeries by their label set. It is built
 // on top of a regular hashmap and holds a slice of series to resolve hash collisions.
 // Its methods require the hash to be submitted with it to avoid re-computations throughout
@@ -1121,9 +1186,9 @@ type memSeries struct {
 	app chunkenc.Appender // Current appender for the chunk.
 
 	// Write ids of most recent samples. This is a ring buffer.
-	writeIds     []uint64
-	writeIdFirst int // Position of first id in the ring.
-	writeIdCount int // How many ids in the ring.
+	writeIDs     []uint64
+	writeIDFirst int // Position of first id in the ring.
+	writeIDCount int // How many ids in the ring.
 }
 
 func (s *memSeries) minTime() int64 {
@@ -1160,7 +1225,7 @@ func newMemSeries(lset labels.Labels, id uint64, chunkRange int64) *memSeries {
 		ref:        id,
 		chunkRange: chunkRange,
 		nextAt:     math.MinInt64,
-		writeIds:   make([]uint64, 4),
+		writeIDs:   make([]uint64, 4),
 	}
 	return s
 }
@@ -1215,7 +1280,7 @@ func (s *memSeries) truncateChunksBefore(mint int64) (removed int) {
 }
 
 // append adds the sample (t, v) to the series.
-func (s *memSeries) append(t int64, v float64, writeId uint64) (success, chunkCreated bool) {
+func (s *memSeries) append(t int64, v float64, writeID uint64) (success, chunkCreated bool) {
 	const samplesPerChunk = 120
 
 	c := s.head()
@@ -1251,39 +1316,39 @@ func (s *memSeries) append(t int64, v float64, writeId uint64) (success, chunkCr
 	s.sampleBuf[2] = s.sampleBuf[3]
 	s.sampleBuf[3] = sample{t: t, v: v}
 
-	if s.writeIdCount == len(s.writeIds) {
+	if s.writeIDCount == len(s.writeIDs) {
 		// Ring buffer is full, expand by doubling.
-		newRing := make([]uint64, s.writeIdCount*2)
-		idx := copy(newRing[:], s.writeIds[s.writeIdFirst%len(s.writeIds):])
-		copy(newRing[idx:], s.writeIds[:s.writeIdFirst%len(s.writeIds)])
-		s.writeIds = newRing
-		s.writeIdFirst = 0
+		newRing := make([]uint64, s.writeIDCount*2)
+		idx := copy(newRing[:], s.writeIDs[s.writeIDFirst%len(s.writeIDs):])
+		copy(newRing[idx:], s.writeIDs[:s.writeIDFirst%len(s.writeIDs)])
+		s.writeIDs = newRing
+		s.writeIDFirst = 0
 	}
-	s.writeIds[(s.writeIdFirst+s.writeIdCount)%len(s.writeIds)] = writeId
-	s.writeIdCount++
+	s.writeIDs[(s.writeIDFirst+s.writeIDCount)%len(s.writeIDs)] = writeID
+	s.writeIDCount++
 
 	return true, chunkCreated
 }
 
-// cleanupWriteIdsBelow cleans up older writeIds. Has to be called after acquiring
+// cleanupWriteIDsBelow cleans up older writeIds. Has to be called after acquiring
 // lock.
-func (s *memSeries) cleanupWriteIdsBelow(bound uint64) {
-	pos := s.writeIdFirst
+func (s *memSeries) cleanupWriteIDsBelow(bound uint64) {
+	pos := s.writeIDFirst
 
-	for s.writeIdCount > 0 {
-		if s.writeIds[pos] < bound {
-			s.writeIdFirst++
-			s.writeIdCount--
+	for s.writeIDCount > 0 {
+		if s.writeIDs[pos] < bound {
+			s.writeIDFirst++
+			s.writeIDCount--
 		} else {
 			break
 		}
 		pos++
-		if pos == len(s.writeIds) {
+		if pos == len(s.writeIDs) {
 			pos = 0
 		}
 	}
-	if s.writeIdFirst >= len(s.writeIds) {
-		s.writeIdFirst -= len(s.writeIds)
+	if s.writeIDFirst >= len(s.writeIDs) {
+		s.writeIDFirst -= len(s.writeIDs)
 	}
 }
 
@@ -1293,28 +1358,28 @@ func (s *memSeries) cleanupExtraWriteIds() {
 		totalSamples += c.chunk.NumSamples()
 	}
 
-	if s.writeIdCount <= totalSamples {
+	if s.writeIDCount <= totalSamples {
 		return
 	}
 
-	s.writeIdFirst += (s.writeIdCount - totalSamples)
-	s.writeIdCount = totalSamples
+	s.writeIDFirst += (s.writeIDCount - totalSamples)
+	s.writeIDCount = totalSamples
 
-	newBufSize := len(s.writeIds)
+	newBufSize := len(s.writeIDs)
 	for totalSamples < newBufSize/2 {
 		newBufSize = newBufSize / 2
 	}
 
-	if newBufSize == len(s.writeIds) {
+	if newBufSize == len(s.writeIDs) {
 		return
 	}
 
 	newRing := make([]uint64, newBufSize)
-	idx := copy(newRing[:], s.writeIds[s.writeIdFirst%len(s.writeIds):])
-	copy(newRing[idx:], s.writeIds[:s.writeIdFirst%len(s.writeIds)])
+	idx := copy(newRing[:], s.writeIDs[s.writeIDFirst%len(s.writeIDs):])
+	copy(newRing[idx:], s.writeIDs[:s.writeIDFirst%len(s.writeIDs)])
 
-	s.writeIds = newRing
-	s.writeIdFirst = 0
+	s.writeIDs = newRing
+	s.writeIDFirst = 0
 }
 
 // computeChunkEndTime estimates the end timestamp based the beginning of a chunk,
@@ -1352,13 +1417,13 @@ func (s *memSeries) iterator(id int, isolation *IsolationState) chunkenc.Iterato
 				previousSamples += d.chunk.NumSamples()
 			}
 		}
-		writeIdsToConsider := (previousSamples + c.chunk.NumSamples()) - (totalSamples - s.writeIdCount)
+		writeIdsToConsider := (previousSamples + c.chunk.NumSamples()) - (totalSamples - s.writeIDCount)
 		// Iterate over the ring, find the first one that the isolation state says not
 		// to return.
-		pos := s.writeIdFirst
+		pos := s.writeIDFirst
 		for index := 0; index < writeIdsToConsider; index++ {
-			writeId := s.writeIds[pos]
-			if _, ok := isolation.incompleteWrites[writeId]; ok || writeId > isolation.maxWriteId {
+			writeID := s.writeIDs[pos]
+			if _, ok := isolation.incompleteWrites[writeID]; ok || writeID > isolation.maxWriteID {
 				stopAfter = index - (writeIdsToConsider - c.chunk.NumSamples())
 				if stopAfter < 0 {
 					stopAfter = 0 // Stopped in a previous chunk.
@@ -1366,7 +1431,7 @@ func (s *memSeries) iterator(id int, isolation *IsolationState) chunkenc.Iterato
 				break
 			}
 			pos++
-			if pos == len(s.writeIds) {
+			if pos == len(s.writeIDs) {
 				pos = 0
 			}
 		}

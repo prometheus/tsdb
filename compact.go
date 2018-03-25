@@ -521,7 +521,7 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 		}
 		closers = append(closers, indexr)
 
-		chunkr, err := b.Chunks(nil)
+		chunkr, err := b.Chunks()
 		if err != nil {
 			return errors.Wrapf(err, "open chunk reader for block %s", b)
 		}

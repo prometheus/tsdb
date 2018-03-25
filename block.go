@@ -124,24 +124,19 @@ type BlockReader interface {
 	Index() (IndexReader, error)
 
 	// Chunks returns a ChunkReader over the block's data.
-	Chunks(*IsolationState) (ChunkReader, error)
+	Chunks() (ChunkReader, error)
 
 	// Tombstones returns a TombstoneReader over the block's deleted data.
 	Tombstones() (TombstoneReader, error)
 }
 
-// Appendable defines an entity to which data can be appended.
-type Appendable interface {
-	// Appender returns a new Appender against an underlying store.
-	Appender(writeId, cleanupWriteIdsBelow uint64) Appender
-}
-
+// IsolationState holds the isolation information.
 type IsolationState struct {
 	// We will ignore all writes above the max, or that are incomplete.
-	maxWriteId       uint64
+	maxWriteID       uint64
 	incompleteWrites map[uint64]struct{}
 	lowWaterMark     uint64 // Lowest of incompleteWrites/maxWriteId.
-	db               *DB
+	head             *Head
 
 	// Doubly linked list of active reads.
 	next *IsolationState
@@ -337,7 +332,7 @@ func (pb *Block) Index() (IndexReader, error) {
 }
 
 // Chunks returns a new ChunkReader against the block data.
-func (pb *Block) Chunks(_ *IsolationState) (ChunkReader, error) {
+func (pb *Block) Chunks() (ChunkReader, error) {
 	if err := pb.startRead(); err != nil {
 		return nil, err
 	}

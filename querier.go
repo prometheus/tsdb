@@ -53,43 +53,42 @@ type Series interface {
 // querier aggregates querying results from time blocks within
 // a single partition.
 type querier struct {
-	db        *DB
-	isolation *IsolationState
-	blocks    []Querier
+	db     *DB
+	blocks []Querier
 }
 
-// IsolationState returns an objet used to control isolation
+// IsolationState returns an object used to control isolation
 // between a query and writes. Must be closed when complete.
-func (s *DB) IsolationState() *IsolationState {
-	s.writeMtx.Lock() // Take write mutex before read mutex.
-	defer s.writeMtx.Unlock()
+func (h *Head) IsolationState() *IsolationState {
+	h.writeMtx.Lock() // Take write mutex before read mutex.
+	defer h.writeMtx.Unlock()
 	isolation := &IsolationState{
-		maxWriteId:       s.writeLastId,
-		lowWaterMark:     s.writeLastId,
-		incompleteWrites: make(map[uint64]struct{}, len(s.writesOpen)),
-		db:               s,
+		maxWriteID:       h.lastWriteID,
+		lowWaterMark:     h.lastWriteID,
+		incompleteWrites: make(map[uint64]struct{}, len(h.writesOpen)),
+		head:             h,
 	}
-	for k, _ := range s.writesOpen {
+	for k := range h.writesOpen {
 		isolation.incompleteWrites[k] = struct{}{}
 		if k < isolation.lowWaterMark {
 			isolation.lowWaterMark = k
 		}
 	}
 
-	s.readMtx.Lock()
-	defer s.readMtx.Unlock()
-	isolation.prev = s.readsOpen
-	isolation.next = s.readsOpen.next
-	s.readsOpen.next.prev = isolation
-	s.readsOpen.next = isolation
+	h.readMtx.Lock()
+	defer h.readMtx.Unlock()
+	isolation.prev = h.readsOpen
+	isolation.next = h.readsOpen.next
+	h.readsOpen.next.prev = isolation
+	h.readsOpen.next = isolation
 	return isolation
 }
 
 func (i *IsolationState) Close() {
-	i.db.readMtx.Lock()
+	i.head.readMtx.Lock()
 	i.next.prev = i.prev
 	i.prev.next = i.next
-	i.db.readMtx.Unlock()
+	i.head.readMtx.Unlock()
 }
 
 func (q *querier) LabelValues(n string) ([]string, error) {
@@ -151,18 +150,16 @@ func (q *querier) Close() error {
 		merr.Add(bq.Close())
 	}
 
-	q.isolation.Close()
-
 	return merr.Err()
 }
 
 // NewBlockQuerier returns a queries against the readers.
-func NewBlockQuerier(b BlockReader, mint, maxt int64, isolation *IsolationState) (Querier, error) {
+func NewBlockQuerier(b BlockReader, mint, maxt int64) (Querier, error) {
 	indexr, err := b.Index()
 	if err != nil {
 		return nil, errors.Wrapf(err, "open index reader")
 	}
-	chunkr, err := b.Chunks(isolation)
+	chunkr, err := b.Chunks()
 	if err != nil {
 		indexr.Close()
 		return nil, errors.Wrapf(err, "open chunk reader")

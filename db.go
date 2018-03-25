@@ -115,24 +115,10 @@ type DB struct {
 	// cmtx is used to control compactions and deletions.
 	cmtx               sync.Mutex
 	compactionsEnabled bool
-
-	// Mutex for accessing writeLastId and writesOpen.
-	writeMtx sync.Mutex
-	// Each write is given an internal id.
-	writeLastId uint64
-	// Which writes are currently in progress.
-	writesOpen map[uint64]struct{}
-	// Mutex for accessing readLastId.
-	// If taking both writeMtx and readMtx, take writeMtx first.
-	readMtx sync.Mutex
-	// All current in use isolationStates. This is a doubly-linked list.
-	readsOpen *IsolationState
 }
 
 type dbMetrics struct {
 	loadedBlocks         prometheus.GaugeFunc
-	lowWatermark         prometheus.GaugeFunc
-	highWatermark        prometheus.GaugeFunc
 	reloads              prometheus.Counter
 	reloadsFailed        prometheus.Counter
 	compactionsTriggered prometheus.Counter
@@ -151,20 +137,6 @@ func newDBMetrics(db *DB, r prometheus.Registerer) *dbMetrics {
 		db.mtx.RLock()
 		defer db.mtx.RUnlock()
 		return float64(len(db.blocks))
-	})
-	m.lowWatermark = prometheus.NewGaugeFunc(prometheus.GaugeOpts{
-		Name: "tsdb_isolation_low_watermark",
-		Help: "The lowest write id that is still referenced.",
-	}, func() float64 {
-		return float64(db.readLowWatermark())
-	})
-	m.highWatermark = prometheus.NewGaugeFunc(prometheus.GaugeOpts{
-		Name: "tsdb_isolation_high_watermark",
-		Help: "The highest write id that has been given out.",
-	}, func() float64 {
-		db.writeMtx.Lock()
-		defer db.writeMtx.Unlock()
-		return float64(db.writeLastId)
 	})
 	m.reloads = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "prometheus_tsdb_reloads_total",
@@ -194,8 +166,6 @@ func newDBMetrics(db *DB, r prometheus.Registerer) *dbMetrics {
 	if r != nil {
 		r.MustRegister(
 			m.loadedBlocks,
-			m.lowWatermark,
-			m.highWatermark,
 			m.reloads,
 			m.reloadsFailed,
 			m.cutoffs,
@@ -223,16 +193,10 @@ func Open(dir string, l log.Logger, r prometheus.Registerer, opts *Options) (db 
 		return nil, err
 	}
 
-	head := &IsolationState{}
-	head.next = head
-	head.prev = head
-
 	db = &DB{
 		dir:                dir,
 		logger:             l,
 		opts:               opts,
-		writesOpen:         map[uint64]struct{}{},
-		readsOpen:          head,
 		compactc:           make(chan struct{}, 1),
 		donec:              make(chan struct{}),
 		stopc:              make(chan struct{}),
@@ -370,13 +334,7 @@ func (db *DB) retentionCutoff() (b bool, err error) {
 
 // Appender opens a new appender against the database.
 func (db *DB) Appender() Appender {
-	db.writeMtx.Lock()
-	db.writeLastId++
-	id := db.writeLastId
-	db.writesOpen[id] = struct{}{}
-	db.writeMtx.Unlock()
-
-	return dbAppender{db: db, Appender: db.head.Appender(id, db.readLowWatermark()), writeId: id}
+	return dbAppender{db: db, Appender: db.head.Appender()}
 }
 
 // dbAppender wraps the DB's head appender and triggers compactions on commit
@@ -384,8 +342,6 @@ func (db *DB) Appender() Appender {
 type dbAppender struct {
 	Appender
 	db *DB
-
-	writeId uint64
 }
 
 func (a dbAppender) Commit() error {
@@ -399,10 +355,6 @@ func (a dbAppender) Commit() error {
 		default:
 		}
 	}
-
-	a.db.writeMtx.Lock()
-	delete(a.db.writesOpen, a.writeId)
-	a.db.writeMtx.Unlock()
 
 	return err
 }
@@ -720,16 +672,6 @@ func (db *DB) Querier(mint, maxt int64) (Querier, error) {
 	db.mtx.RLock()
 	defer db.mtx.RUnlock()
 
-	db.writeMtx.Lock()
-	isolation := &IsolationState{
-		maxWriteId:       db.writeLastId,
-		incompleteWrites: make(map[uint64]struct{}, len(db.writesOpen)),
-	}
-	for k, _ := range db.writesOpen {
-		isolation.incompleteWrites[k] = struct{}{}
-	}
-	db.writeMtx.Unlock()
-
 	for _, b := range db.blocks {
 		m := b.Meta()
 		if intervalOverlap(mint, maxt, m.MinTime, m.MaxTime) {
@@ -741,13 +683,12 @@ func (db *DB) Querier(mint, maxt int64) (Querier, error) {
 	}
 
 	sq := &querier{
-		blocks:    make([]Querier, 0, len(blocks)),
-		db:        db,
-		isolation: db.IsolationState(),
+		blocks: make([]Querier, 0, len(blocks)),
+		db:     db,
 	}
 
 	for _, b := range blocks {
-		q, err := NewBlockQuerier(b, mint, maxt, isolation)
+		q, err := NewBlockQuerier(b, mint, maxt)
 		if err == nil {
 			sq.blocks = append(sq.blocks, q)
 			continue
@@ -764,20 +705,6 @@ func (db *DB) Querier(mint, maxt int64) (Querier, error) {
 func rangeForTimestamp(t int64, width int64) (mint, maxt int64) {
 	mint = (t / width) * width
 	return mint, mint + width
-}
-
-// readLowWatermark returns the writeId below which
-// we no longer need to track which writes were from
-// which writeId.
-func (db *DB) readLowWatermark() uint64 {
-	db.writeMtx.Lock() // Take writeMtx first.
-	defer db.writeMtx.Unlock()
-	db.readMtx.Lock()
-	defer db.readMtx.Unlock()
-	if db.readsOpen.prev == db.readsOpen {
-		return db.writeLastId
-	}
-	return db.readsOpen.prev.lowWaterMark
 }
 
 // Delete implements deletion of metrics. It only has atomicity guarantees on a per-block basis.
