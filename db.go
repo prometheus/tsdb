@@ -26,7 +26,6 @@ import (
 	"strconv"
 	"sync"
 	"time"
-	"unsafe"
 
 	"golang.org/x/sync/errgroup"
 
@@ -764,10 +763,6 @@ func intervalOverlap(amin, amax, bmin, bmax int64) bool {
 	return amin <= bmax && bmin <= amax
 }
 
-func intervalContains(min, max, t int64) bool {
-	return t >= min && t <= max
-}
-
 func isBlockDir(fi os.FileInfo) bool {
 	if !fi.IsDir() {
 		return false
@@ -865,9 +860,6 @@ func (es MultiError) Err() error {
 	}
 	return es
 }
-
-func yoloString(b []byte) string { return *((*string)(unsafe.Pointer(&b))) }
-func yoloBytes(s string) []byte  { return *((*[]byte)(unsafe.Pointer(&s))) }
 
 func closeAll(cs ...io.Closer) error {
 	var merr MultiError
