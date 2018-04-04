@@ -757,7 +757,7 @@ func TestMemSeriesIsolation(t *testing.T) {
 		idx, err := hb.Index()
 		testutil.Ok(t, err)
 
-		iso := hb.IsolationState()
+		iso := hb.iso.State()
 		iso.maxWriteID = maxWriteId
 
 		querier := &blockQuerier{
@@ -860,12 +860,12 @@ func TestHead_Truncate_WriteIDs(t *testing.T) {
 		{minTime: 1000, maxTime: 1999, chunk: chk},
 	}
 
-	s1.writeIDs = []uint64{2, 3, 4, 5, 0, 0, 0, 1}
-	s1.writeIDFirst = 7
-	s1.writeIDCount = 5
+	s1.txs.txIDs = []uint64{2, 3, 4, 5, 0, 0, 0, 1}
+	s1.txs.txIDFirst = 7
+	s1.txs.txIDCount = 5
 
 	testutil.Ok(t, h.Truncate(1000))
-	testutil.Equals(t, []uint64{3, 4, 5, 0}, s1.writeIDs)
-	testutil.Equals(t, 0, s1.writeIDFirst)
-	testutil.Equals(t, 3, s1.writeIDCount)
+	testutil.Equals(t, []uint64{3, 4, 5, 0}, s1.txs.txIDs)
+	testutil.Equals(t, 0, s1.txs.txIDFirst)
+	testutil.Equals(t, 3, s1.txs.txIDCount)
 }

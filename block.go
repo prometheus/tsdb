@@ -130,19 +130,6 @@ type BlockReader interface {
 	Tombstones() (TombstoneReader, error)
 }
 
-// IsolationState holds the isolation information.
-type IsolationState struct {
-	// We will ignore all writes above the max, or that are incomplete.
-	maxWriteID       uint64
-	incompleteWrites map[uint64]struct{}
-	lowWaterMark     uint64 // Lowest of incompleteWrites/maxWriteId.
-	head             *Head
-
-	// Doubly linked list of active reads.
-	next *IsolationState
-	prev *IsolationState
-}
-
 // BlockMeta provides meta information about a block.
 type BlockMeta struct {
 	// Unique identifier for the block and its contents. Changes on compaction.

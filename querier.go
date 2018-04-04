@@ -57,40 +57,6 @@ type querier struct {
 	blocks []Querier
 }
 
-// IsolationState returns an object used to control isolation
-// between a query and writes. Must be closed when complete.
-func (h *Head) IsolationState() *IsolationState {
-	h.writeMtx.Lock() // Take write mutex before read mutex.
-	defer h.writeMtx.Unlock()
-	isolation := &IsolationState{
-		maxWriteID:       h.lastWriteID,
-		lowWaterMark:     h.lastWriteID,
-		incompleteWrites: make(map[uint64]struct{}, len(h.writesOpen)),
-		head:             h,
-	}
-	for k := range h.writesOpen {
-		isolation.incompleteWrites[k] = struct{}{}
-		if k < isolation.lowWaterMark {
-			isolation.lowWaterMark = k
-		}
-	}
-
-	h.readMtx.Lock()
-	defer h.readMtx.Unlock()
-	isolation.prev = h.readsOpen
-	isolation.next = h.readsOpen.next
-	h.readsOpen.next.prev = isolation
-	h.readsOpen.next = isolation
-	return isolation
-}
-
-func (i *IsolationState) Close() {
-	i.head.readMtx.Lock()
-	i.next.prev = i.prev
-	i.prev.next = i.next
-	i.head.readMtx.Unlock()
-}
-
 func (q *querier) LabelValues(n string) ([]string, error) {
 	return q.lvals(q.blocks, n)
 }
