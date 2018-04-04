@@ -355,6 +355,7 @@ func (a dbAppender) Commit() error {
 		default:
 		}
 	}
+
 	return err
 }
 
@@ -683,7 +684,9 @@ func (db *DB) Querier(mint, maxt int64) (Querier, error) {
 
 	sq := &querier{
 		blocks: make([]Querier, 0, len(blocks)),
+		db:     db,
 	}
+
 	for _, b := range blocks {
 		q, err := NewBlockQuerier(b, mint, maxt)
 		if err == nil {

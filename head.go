@@ -70,6 +70,8 @@ type Head struct {
 	postings *index.MemPostings // postings lists for terms
 
 	tombstones memTombstones
+
+	iso *isolation
 }
 
 type headMetrics struct {
@@ -86,6 +88,9 @@ type headMetrics struct {
 	maxTime             prometheus.GaugeFunc
 	samplesAppended     prometheus.Counter
 	walTruncateDuration prometheus.Summary
+
+	lowWatermark  prometheus.GaugeFunc
+	highWatermark prometheus.GaugeFunc
 }
 
 func newHeadMetrics(h *Head, r prometheus.Registerer) *headMetrics {
@@ -147,6 +152,20 @@ func newHeadMetrics(h *Head, r prometheus.Registerer) *headMetrics {
 		Name: "prometheus_tsdb_head_samples_appended_total",
 		Help: "Total number of appended samples.",
 	})
+	m.lowWatermark = prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+		Name: "tsdb_isolation_low_watermark",
+		Help: "The lowest write id that is still referenced.",
+	}, func() float64 {
+		return float64(h.iso.lowWatermark())
+	})
+	m.highWatermark = prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+		Name: "tsdb_isolation_high_watermark",
+		Help: "The highest write id that has been given out.",
+	}, func() float64 {
+		h.iso.writeMtx.Lock()
+		defer h.iso.writeMtx.Unlock()
+		return float64(h.iso.lastWriteID)
+	})
 
 	if r != nil {
 		r.MustRegister(
@@ -163,6 +182,8 @@ func newHeadMetrics(h *Head, r prometheus.Registerer) *headMetrics {
 			m.gcDuration,
 			m.walTruncateDuration,
 			m.samplesAppended,
+			m.lowWatermark,
+			m.highWatermark,
 		)
 	}
 	return m
@@ -179,6 +200,7 @@ func NewHead(r prometheus.Registerer, l log.Logger, wal WAL, chunkRange int64) (
 	if chunkRange < 1 {
 		return nil, errors.Errorf("invalid chunk range %d", chunkRange)
 	}
+
 	h := &Head{
 		wal:        wal,
 		logger:     l,
@@ -190,6 +212,8 @@ func NewHead(r prometheus.Registerer, l log.Logger, wal WAL, chunkRange int64) (
 		symbols:    map[string]struct{}{},
 		postings:   index.NewUnorderedMemPostings(),
 		tombstones: memTombstones{},
+
+		iso: newIsolation(),
 	}
 	h.metrics = newHeadMetrics(h, r)
 
@@ -216,7 +240,7 @@ func (h *Head) processWALSamples(
 				unknownRefs++
 				continue
 			}
-			_, chunkCreated := ms.append(s.T, s.V)
+			_, chunkCreated := ms.append(s.T, s.V, 0)
 			if chunkCreated {
 				h.metrics.chunksCreated.Inc()
 				h.metrics.chunks.Inc()
@@ -390,7 +414,7 @@ func (h *rangeHead) Index() (IndexReader, error) {
 }
 
 func (h *rangeHead) Chunks() (ChunkReader, error) {
-	return h.head.chunksRange(h.mint, h.maxt), nil
+	return h.head.chunksRange(h.mint, h.maxt, h.head.iso.State()), nil
 }
 
 func (h *rangeHead) Tombstones() (TombstoneReader, error) {
@@ -402,6 +426,9 @@ func (h *rangeHead) Tombstones() (TombstoneReader, error) {
 type initAppender struct {
 	app  Appender
 	head *Head
+
+	writeID              uint64
+	cleanupWriteIDsBelow uint64
 }
 
 func (a *initAppender) Add(lset labels.Labels, t int64, v float64) (uint64, error) {
@@ -409,7 +436,7 @@ func (a *initAppender) Add(lset labels.Labels, t int64, v float64) (uint64, erro
 		return a.app.Add(lset, t, v)
 	}
 	a.head.initTime(t)
-	a.app = a.head.appender()
+	a.app = a.head.appender(a.writeID, a.cleanupWriteIDsBelow)
 
 	return a.app.Add(lset, t, v)
 }
@@ -439,20 +466,25 @@ func (a *initAppender) Rollback() error {
 func (h *Head) Appender() Appender {
 	h.metrics.activeAppenders.Inc()
 
+	writeID := h.iso.newWriteID()
+	cleanupWriteIDsBelow := h.iso.lowWatermark()
+
 	// The head cache might not have a starting point yet. The init appender
 	// picks up the first appended timestamp as the base.
 	if h.MinTime() == math.MinInt64 {
-		return &initAppender{head: h}
+		return &initAppender{head: h, writeID: writeID, cleanupWriteIDsBelow: cleanupWriteIDsBelow}
 	}
-	return h.appender()
+	return h.appender(writeID, cleanupWriteIDsBelow)
 }
 
-func (h *Head) appender() *headAppender {
+func (h *Head) appender(writeID, cleanupWriteIDsBelow uint64) *headAppender {
 	return &headAppender{
-		head:          h,
-		mint:          h.MaxTime() - h.chunkRange/2,
-		samples:       h.getAppendBuffer(),
-		highTimestamp: math.MinInt64,
+		head:                 h,
+		mint:                 h.MaxTime() - h.chunkRange/2,
+		samples:              h.getAppendBuffer(),
+		highTimestamp:        math.MinInt64,
+		writeID:              writeID,
+		cleanupWriteIDsBelow: cleanupWriteIDsBelow,
 	}
 }
 
@@ -475,6 +507,9 @@ type headAppender struct {
 	series        []RefSeries
 	samples       []RefSample
 	highTimestamp int64
+
+	writeID              uint64
+	cleanupWriteIDsBelow uint64
 }
 
 func (a *headAppender) Add(lset labels.Labels, t int64, v float64) (uint64, error) {
@@ -535,7 +570,8 @@ func (a *headAppender) Commit() error {
 
 	for _, s := range a.samples {
 		s.series.Lock()
-		ok, chunkCreated := s.series.append(s.T, s.V)
+		ok, chunkCreated := s.series.append(s.T, s.V, a.writeID)
+		s.series.cleanupWriteIDsBelow(a.cleanupWriteIDsBelow)
 		s.series.Unlock()
 
 		if !ok {
@@ -558,6 +594,8 @@ func (a *headAppender) Commit() error {
 			break
 		}
 	}
+
+	a.head.iso.closeWrite(a.writeID)
 
 	return nil
 }
@@ -670,14 +708,14 @@ func (h *Head) indexRange(mint, maxt int64) *headIndexReader {
 
 // Chunks returns a ChunkReader against the block.
 func (h *Head) Chunks() (ChunkReader, error) {
-	return h.chunksRange(math.MinInt64, math.MaxInt64), nil
+	return h.chunksRange(math.MinInt64, math.MaxInt64, h.iso.State()), nil
 }
 
-func (h *Head) chunksRange(mint, maxt int64) *headChunkReader {
+func (h *Head) chunksRange(mint, maxt int64, isoState *IsolationState) *headChunkReader {
 	if hmin := h.MinTime(); hmin > mint {
 		mint = hmin
 	}
-	return &headChunkReader{head: h, mint: mint, maxt: maxt}
+	return &headChunkReader{head: h, mint: mint, maxt: maxt, isoState: isoState}
 }
 
 // MinTime returns the lowest time bound on visible data in the head.
@@ -698,9 +736,12 @@ func (h *Head) Close() error {
 type headChunkReader struct {
 	head       *Head
 	mint, maxt int64
+
+	isoState *IsolationState
 }
 
 func (h *headChunkReader) Close() error {
+	h.isoState.Close()
 	return nil
 }
 
@@ -750,6 +791,8 @@ func (h *headChunkReader) Chunk(ref uint64) (chunkenc.Chunk, error) {
 		Chunk: c.chunk,
 		s:     s,
 		cid:   int(cid),
+
+		isoState: h.isoState,
 	}, nil
 }
 
@@ -757,11 +800,13 @@ type safeChunk struct {
 	chunkenc.Chunk
 	s   *memSeries
 	cid int
+
+	isoState *IsolationState
 }
 
 func (c *safeChunk) Iterator() chunkenc.Iterator {
 	c.s.Lock()
-	it := c.s.iterator(c.cid)
+	it := c.s.iterator(c.cid, c.isoState)
 	c.s.Unlock()
 	return it
 }
@@ -1010,6 +1055,7 @@ func (s *stripeSeries) gc(mint int64) (map[uint64]struct{}, int) {
 			for _, series := range all {
 				series.Lock()
 				rmChunks += series.truncateChunksBefore(mint)
+				series.cleanupExtraWriteIds()
 
 				if len(series.chunks) > 0 {
 					series.Unlock()
@@ -1107,6 +1153,8 @@ type memSeries struct {
 	sampleBuf [4]sample
 
 	app chunkenc.Appender // Current appender for the chunk.
+
+	txs *txRing
 }
 
 func (s *memSeries) minTime() int64 {
@@ -1150,6 +1198,7 @@ func newMemSeries(lset labels.Labels, id uint64, chunkRange int64) *memSeries {
 		ref:        id,
 		chunkRange: chunkRange,
 		nextAt:     math.MinInt64,
+		txs:        newTxRing(4),
 	}
 	return s
 }
@@ -1204,7 +1253,7 @@ func (s *memSeries) truncateChunksBefore(mint int64) (removed int) {
 }
 
 // append adds the sample (t, v) to the series.
-func (s *memSeries) append(t int64, v float64) (success, chunkCreated bool) {
+func (s *memSeries) append(t int64, v float64, writeID uint64) (success, chunkCreated bool) {
 	const samplesPerChunk = 120
 
 	c := s.head()
@@ -1240,7 +1289,24 @@ func (s *memSeries) append(t int64, v float64) (success, chunkCreated bool) {
 	s.sampleBuf[2] = s.sampleBuf[3]
 	s.sampleBuf[3] = sample{t: t, v: v}
 
+	s.txs.add(writeID)
+
 	return true, chunkCreated
+}
+
+// cleanupWriteIDsBelow cleans up older writeIds. Has to be called after acquiring
+// lock.
+func (s *memSeries) cleanupWriteIDsBelow(bound uint64) {
+	s.txs.cleanupWriteIDsBelow(bound)
+}
+
+func (s *memSeries) cleanupExtraWriteIds() {
+	totalSamples := 0
+	for _, c := range s.chunks {
+		totalSamples += c.chunk.NumSamples()
+	}
+
+	s.txs.cutoffN(totalSamples)
 }
 
 // computeChunkEndTime estimates the end timestamp based the beginning of a chunk,
@@ -1254,8 +1320,9 @@ func computeChunkEndTime(start, cur, max int64) int64 {
 	return start + (max-start)/a
 }
 
-func (s *memSeries) iterator(id int) chunkenc.Iterator {
+func (s *memSeries) iterator(id int, isoState *IsolationState) chunkenc.Iterator {
 	c := s.chunk(id)
+
 	// TODO(fabxc): Work around! A querier may have retrieved a pointer to a series' chunk,
 	// which got then garbage collected before it got accessed.
 	// We must ensure to not garbage collect as long as any readers still hold a reference.
@@ -1263,16 +1330,64 @@ func (s *memSeries) iterator(id int) chunkenc.Iterator {
 		return chunkenc.NewNopIterator()
 	}
 
-	if id-s.firstChunkID < len(s.chunks)-1 {
-		return c.chunk.Iterator()
+	ix := id - s.firstChunkID
+
+	numSamples := c.chunk.NumSamples()
+	stopAfter := numSamples
+
+	if isoState != nil {
+		totalSamples := 0    // totalSamples in this series.
+		previousSamples := 0 // Samples before this chunk.
+
+		for j, d := range s.chunks {
+			totalSamples += d.chunk.NumSamples()
+			if j < ix {
+				previousSamples += d.chunk.NumSamples()
+			}
+		}
+
+		// Removing the extra transactionIDs that are relevant for samples that
+		// come after this chunk, from the total transactionIDs.
+		writeIDsToConsider := s.txs.txIDCount - (totalSamples - (previousSamples + c.chunk.NumSamples()))
+
+		// Iterate over the writeIDs, find the first one that the isolation state says not
+		// to return.
+		it := s.txs.iterator()
+		for index := 0; index < writeIDsToConsider; index++ {
+			writeID := it.At()
+			if _, ok := isoState.incompleteWrites[writeID]; ok || writeID > isoState.maxWriteID {
+				// If found limit the number of samples being iterated over.
+				stopAfter = c.chunk.NumSamples() - (writeIDsToConsider - index)
+
+				if stopAfter < 0 {
+					stopAfter = 0 // Stopped in a previous chunk.
+				}
+				break
+			}
+
+			it.Next()
+		}
 	}
+
+	if id-s.firstChunkID < len(s.chunks)-1 {
+		it := &memSafeIterator{
+			Iterator:  c.chunk.Iterator(),
+			i:         -1,
+			total:     numSamples,
+			stopAfter: stopAfter,
+		}
+		return it
+	}
+
 	// Serve the last 4 samples for the last chunk from the sample buffer
 	// as their compressed bytes may be mutated by added samples.
 	it := &memSafeIterator{
-		Iterator: c.chunk.Iterator(),
-		i:        -1,
-		total:    c.chunk.NumSamples(),
-		buf:      s.sampleBuf,
+		Iterator:        c.chunk.Iterator(),
+		i:               -1,
+		total:           numSamples,
+		stopAfter:       stopAfter,
+		bufferedSamples: 4,
+		buf:             s.sampleBuf,
 	}
 	return it
 }
@@ -1292,27 +1407,29 @@ type memChunk struct {
 type memSafeIterator struct {
 	chunkenc.Iterator
 
-	i     int
-	total int
-	buf   [4]sample
+	i               int
+	total           int
+	stopAfter       int
+	bufferedSamples int
+	buf             [4]sample
 }
 
 func (it *memSafeIterator) Next() bool {
-	if it.i+1 >= it.total {
+	if it.i+1 >= it.stopAfter {
 		return false
 	}
 	it.i++
-	if it.total-it.i > 4 {
+	if it.total-it.i > it.bufferedSamples {
 		return it.Iterator.Next()
 	}
 	return true
 }
 
 func (it *memSafeIterator) At() (int64, float64) {
-	if it.total-it.i > 4 {
+	if it.total-it.i > it.bufferedSamples {
 		return it.Iterator.At()
 	}
-	s := it.buf[4-(it.total-it.i)]
+	s := it.buf[it.bufferedSamples-(it.total-it.i)]
 	return s.t, s.v
 }
 

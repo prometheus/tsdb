@@ -53,6 +53,7 @@ type Series interface {
 // querier aggregates querying results from time blocks within
 // a single partition.
 type querier struct {
+	db     *DB
 	blocks []Querier
 }
 
@@ -114,6 +115,7 @@ func (q *querier) Close() error {
 	for _, bq := range q.blocks {
 		merr.Add(bq.Close())
 	}
+
 	return merr.Err()
 }
 

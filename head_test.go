@@ -14,6 +14,7 @@
 package tsdb
 
 import (
+	"math"
 	"math/rand"
 	"testing"
 
@@ -22,6 +23,7 @@ import (
 	"github.com/prometheus/tsdb/index"
 	"github.com/prometheus/tsdb/labels"
 	"github.com/prometheus/tsdb/testutil"
+	"github.com/stretchr/testify/require"
 )
 
 func BenchmarkCreateSeries(b *testing.B) {
@@ -113,10 +115,10 @@ func TestHead_ReadWAL(t *testing.T) {
 		return x
 	}
 
-	testutil.Equals(t, []sample{{100, 2}, {101, 5}}, expandChunk(s10.iterator(0)))
+	testutil.Equals(t, []sample{{100, 2}, {101, 5}}, expandChunk(s10.iterator(0, nil)))
 	testutil.Equals(t, 0, len(s11.chunks))
-	testutil.Equals(t, []sample{{101, 6}}, expandChunk(s50.iterator(0)))
-	testutil.Equals(t, []sample{{100, 3}}, expandChunk(s100.iterator(0)))
+	testutil.Equals(t, []sample{{101, 6}}, expandChunk(s50.iterator(0, nil)))
+	testutil.Equals(t, []sample{{100, 3}}, expandChunk(s100.iterator(0, nil)))
 }
 
 func TestHead_Truncate(t *testing.T) {
@@ -132,18 +134,18 @@ func TestHead_Truncate(t *testing.T) {
 	s4, _ := h.getOrCreate(4, labels.FromStrings("a", "2", "b", "2", "c", "1"))
 
 	s1.chunks = []*memChunk{
-		{minTime: 0, maxTime: 999},
-		{minTime: 1000, maxTime: 1999},
-		{minTime: 2000, maxTime: 2999},
+		{minTime: 0, maxTime: 999, chunk: chunkenc.NewXORChunk()},
+		{minTime: 1000, maxTime: 1999, chunk: chunkenc.NewXORChunk()},
+		{minTime: 2000, maxTime: 2999, chunk: chunkenc.NewXORChunk()},
 	}
 	s2.chunks = []*memChunk{
-		{minTime: 1000, maxTime: 1999},
-		{minTime: 2000, maxTime: 2999},
-		{minTime: 3000, maxTime: 3999},
+		{minTime: 1000, maxTime: 1999, chunk: chunkenc.NewXORChunk()},
+		{minTime: 2000, maxTime: 2999, chunk: chunkenc.NewXORChunk()},
+		{minTime: 3000, maxTime: 3999, chunk: chunkenc.NewXORChunk()},
 	}
 	s3.chunks = []*memChunk{
-		{minTime: 0, maxTime: 999},
-		{minTime: 1000, maxTime: 1999},
+		{minTime: 0, maxTime: 999, chunk: chunkenc.NewXORChunk()},
+		{minTime: 1000, maxTime: 1999, chunk: chunkenc.NewXORChunk()},
 	}
 	s4.chunks = []*memChunk{}
 
@@ -153,12 +155,12 @@ func TestHead_Truncate(t *testing.T) {
 	testutil.Ok(t, h.Truncate(2000))
 
 	testutil.Equals(t, []*memChunk{
-		{minTime: 2000, maxTime: 2999},
+		{minTime: 2000, maxTime: 2999, chunk: chunkenc.NewXORChunk()},
 	}, h.series.getByID(s1.ref).chunks)
 
 	testutil.Equals(t, []*memChunk{
-		{minTime: 2000, maxTime: 2999},
-		{minTime: 3000, maxTime: 3999},
+		{minTime: 2000, maxTime: 2999, chunk: chunkenc.NewXORChunk()},
+		{minTime: 3000, maxTime: 3999, chunk: chunkenc.NewXORChunk()},
 	}, h.series.getByID(s2.ref).chunks)
 
 	testutil.Assert(t, h.series.getByID(s3.ref) == nil, "")
@@ -199,7 +201,7 @@ func TestMemSeries_truncateChunks(t *testing.T) {
 	s := newMemSeries(labels.FromStrings("a", "b"), 1, 2000)
 
 	for i := 0; i < 4000; i += 5 {
-		ok, _ := s.append(int64(i), float64(i))
+		ok, _ := s.append(int64(i), float64(i), 0)
 		testutil.Assert(t, ok == true, "sample append failed")
 	}
 
@@ -221,13 +223,14 @@ func TestMemSeries_truncateChunks(t *testing.T) {
 
 	// Validate that the series' sample buffer is applied correctly to the last chunk
 	// after truncation.
-	it1 := s.iterator(s.chunkID(len(s.chunks) - 1))
+	it1 := s.iterator(s.chunkID(len(s.chunks)-1), nil)
 	_, ok := it1.(*memSafeIterator)
 	testutil.Assert(t, ok == true, "")
 
-	it2 := s.iterator(s.chunkID(len(s.chunks) - 2))
-	_, ok = it2.(*memSafeIterator)
-	testutil.Assert(t, ok == false, "non-last chunk incorrectly wrapped with sample buffer")
+	it2 := s.iterator(s.chunkID(len(s.chunks)-2), nil)
+	it2MSI, ok := it2.(*memSafeIterator)
+	testutil.Assert(t, ok == true, "")
+	testutil.Assert(t, it2MSI.bufferedSamples == 0, "non-last chunk incorrectly wrapped with sample buffer")
 }
 
 func TestHeadDeleteSeriesWithoutSamples(t *testing.T) {
@@ -263,7 +266,6 @@ func TestHeadDeleteSimple(t *testing.T) {
 	defer head.Close()
 
 	app := head.Appender()
-
 	smpls := make([]float64, numSamples)
 	for i := int64(0); i < numSamples; i++ {
 		smpls[i] = rand.Float64()
@@ -654,19 +656,19 @@ func TestMemSeries_append(t *testing.T) {
 	// Add first two samples at the very end of a chunk range and the next two
 	// on and after it.
 	// New chunk must correctly be cut at 1000.
-	ok, chunkCreated := s.append(998, 1)
+	ok, chunkCreated := s.append(998, 1, 0)
 	testutil.Assert(t, ok, "append failed")
 	testutil.Assert(t, chunkCreated, "first sample created chunk")
 
-	ok, chunkCreated = s.append(999, 2)
+	ok, chunkCreated = s.append(999, 2, 0)
 	testutil.Assert(t, ok, "append failed")
 	testutil.Assert(t, !chunkCreated, "second sample should use same chunk")
 
-	ok, chunkCreated = s.append(1000, 3)
+	ok, chunkCreated = s.append(1000, 3, 0)
 	testutil.Assert(t, ok, "append failed")
 	testutil.Assert(t, ok, "expected new chunk on boundary")
 
-	ok, chunkCreated = s.append(1001, 4)
+	ok, chunkCreated = s.append(1001, 4, 0)
 	testutil.Assert(t, ok, "append failed")
 	testutil.Assert(t, !chunkCreated, "second sample should use same chunk")
 
@@ -676,7 +678,7 @@ func TestMemSeries_append(t *testing.T) {
 	// Fill the range [1000,2000) with many samples. Intermediate chunks should be cut
 	// at approximately 120 samples per chunk.
 	for i := 1; i < 1000; i++ {
-		ok, _ := s.append(1001+int64(i), float64(i))
+		ok, _ := s.append(1001+int64(i), float64(i), 0)
 		testutil.Assert(t, ok, "append failed")
 	}
 
@@ -698,8 +700,8 @@ func TestGCChunkAccess(t *testing.T) {
 
 	s, _ := h.getOrCreate(1, labels.FromStrings("a", "1"))
 	s.chunks = []*memChunk{
-		{minTime: 0, maxTime: 999},
-		{minTime: 1000, maxTime: 1999},
+		{minTime: 0, maxTime: 999, chunk: chunkenc.NewXORChunk()},
+		{minTime: 1000, maxTime: 1999, chunk: chunkenc.NewXORChunk()},
 	}
 
 	idx := h.indexRange(0, 1500)
@@ -714,7 +716,7 @@ func TestGCChunkAccess(t *testing.T) {
 	}}, lset)
 	testutil.Equals(t, 2, len(chunks))
 
-	cr := h.chunksRange(0, 1500)
+	cr := h.chunksRange(0, 1500, nil)
 	_, err = cr.Chunk(chunks[0].Ref)
 	testutil.Ok(t, err)
 	_, err = cr.Chunk(chunks[1].Ref)
@@ -738,8 +740,8 @@ func TestGCSeriesAccess(t *testing.T) {
 
 	s, _ := h.getOrCreate(1, labels.FromStrings("a", "1"))
 	s.chunks = []*memChunk{
-		{minTime: 0, maxTime: 999},
-		{minTime: 1000, maxTime: 1999},
+		{minTime: 0, maxTime: 999, chunk: chunkenc.NewXORChunk()},
+		{minTime: 1000, maxTime: 1999, chunk: chunkenc.NewXORChunk()},
 	}
 
 	idx := h.indexRange(0, 2000)
@@ -754,7 +756,7 @@ func TestGCSeriesAccess(t *testing.T) {
 	}}, lset)
 	testutil.Equals(t, 2, len(chunks))
 
-	cr := h.chunksRange(0, 2000)
+	cr := h.chunksRange(0, 2000, nil)
 	_, err = cr.Chunk(chunks[0].Ref)
 	testutil.Ok(t, err)
 	_, err = cr.Chunk(chunks[1].Ref)
@@ -768,4 +770,127 @@ func TestGCSeriesAccess(t *testing.T) {
 	testutil.Equals(t, ErrNotFound, err)
 	_, err = cr.Chunk(chunks[1].Ref)
 	testutil.Equals(t, ErrNotFound, err)
+}
+
+func TestMemSeriesIsolation(t *testing.T) {
+	// Put a series, select it. GC it and then access it.
+	hb, err := NewHead(nil, nil, NopWAL(), 1000)
+	testutil.Ok(t, err)
+	defer hb.Close()
+
+	lastValue := func(maxWriteId uint64) int {
+		idx, err := hb.Index()
+		testutil.Ok(t, err)
+
+		iso := hb.iso.State()
+		iso.maxWriteID = maxWriteId
+
+		querier := &blockQuerier{
+			mint:       0,
+			maxt:       10000,
+			index:      idx,
+			chunks:     hb.chunksRange(math.MinInt64, math.MaxInt64, iso),
+			tombstones: emptyTombstoneReader,
+		}
+
+		testutil.Ok(t, err)
+		defer querier.Close()
+
+		ss, err := querier.Select(labels.NewEqualMatcher("foo", "bar"))
+		testutil.Ok(t, err)
+
+		seriesSet := readSeriesSet(t, ss)
+		for _, series := range seriesSet {
+			return int(series[len(series)-1].v)
+		}
+		return -1
+	}
+
+	i := 0
+	for ; i <= 1000; i++ {
+		var app Appender
+		// To initialise bounds.
+		if hb.MinTime() == math.MinInt64 {
+			app = &initAppender{head: hb, writeID: uint64(i), cleanupWriteIDsBelow: 0}
+		} else {
+			app = hb.appender(uint64(i), 0)
+		}
+
+		_, err := app.Add(labels.FromStrings("foo", "bar"), int64(i), float64(i))
+		require.NoError(t, err, "Failed to add sample")
+		require.NoError(t, app.Commit(), "Unexpected error committing appender")
+	}
+
+	// Test simple cases in different chunks when no writeId cleanup has been performed.
+	require.Equal(t, 10, lastValue(10))
+	require.Equal(t, 130, lastValue(130))
+	require.Equal(t, 160, lastValue(160))
+	require.Equal(t, 240, lastValue(240))
+	require.Equal(t, 500, lastValue(500))
+	require.Equal(t, 750, lastValue(750))
+	require.Equal(t, 995, lastValue(995))
+	require.Equal(t, 999, lastValue(999))
+
+	// Cleanup writeIds below 500.
+	app := hb.appender(uint64(i), 500)
+	_, err = app.Add(labels.FromStrings("foo", "bar"), int64(i), float64(i))
+	require.NoError(t, err, "Failed to add sample")
+	require.NoError(t, app.Commit(), "Unexpected error committing appender")
+	i++
+
+	// We should not get queries with a maxWriteId below 500 after the cleanup,
+	// but they only take the remaining writeIds into account.
+	require.Equal(t, 499, lastValue(10))
+	require.Equal(t, 499, lastValue(130))
+	require.Equal(t, 499, lastValue(160))
+	require.Equal(t, 499, lastValue(240))
+	require.Equal(t, 500, lastValue(500))
+	require.Equal(t, 995, lastValue(995))
+	require.Equal(t, 999, lastValue(999))
+
+	// Cleanup writeIds below 1000, which means the sample buffer is
+	// the only thing with writeIds.
+	app = hb.appender(uint64(i), 1000)
+	_, err = app.Add(labels.FromStrings("foo", "bar"), int64(i), float64(i))
+	require.NoError(t, err, "Failed to add sample")
+	require.NoError(t, app.Commit(), "Unexpected error committing appender")
+	i++
+	require.Equal(t, 999, lastValue(998))
+	require.Equal(t, 999, lastValue(999))
+	require.Equal(t, 1000, lastValue(1000))
+	require.Equal(t, 1001, lastValue(1001))
+	require.Equal(t, 1002, lastValue(1002))
+	require.Equal(t, 1002, lastValue(1003))
+}
+
+func TestHead_Truncate_WriteIDs(t *testing.T) {
+	h, err := NewHead(nil, nil, nil, 1000)
+	testutil.Ok(t, err)
+	defer h.Close()
+
+	h.initTime(0)
+
+	s1, _ := h.getOrCreate(1, labels.FromStrings("a", "1", "b", "1"))
+
+	chk := chunkenc.NewXORChunk()
+	app, err := chk.Appender()
+	testutil.Ok(t, err)
+
+	app.Append(1, 0)
+	app.Append(2, 0)
+	app.Append(3, 0)
+
+	s1.chunks = []*memChunk{
+		{minTime: 0, maxTime: 999, chunk: chk},
+		{minTime: 1000, maxTime: 1999, chunk: chk},
+	}
+
+	s1.txs.txIDs = []uint64{2, 3, 4, 5, 0, 0, 0, 1}
+	s1.txs.txIDFirst = 7
+	s1.txs.txIDCount = 5
+
+	testutil.Ok(t, h.Truncate(1000))
+	testutil.Equals(t, []uint64{3, 4, 5, 0}, s1.txs.txIDs)
+	testutil.Equals(t, 0, s1.txs.txIDFirst)
+	testutil.Equals(t, 3, s1.txs.txIDCount)
 }
