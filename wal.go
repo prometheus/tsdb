@@ -761,10 +761,12 @@ func (w *SegmentWAL) write(t WALEntryType, flag uint8, buf []byte) error {
 		}
 	}
 	n, err := w.writeTo(w.cur, w.crc32, t, flag, buf)
+	if err != nil {
+		return err
+	}
 
 	w.curN += int64(n)
-
-	return err
+	return nil
 }
 
 func (w *SegmentWAL) writeTo(wr io.Writer, crc32 hash.Hash, t WALEntryType, flag uint8, buf []byte) (int, error) {
