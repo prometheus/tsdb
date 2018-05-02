@@ -190,10 +190,13 @@ const (
 	flagStd  = 1
 )
 
-const indexFilename = "index"
-const metaFilename = "meta.json"
+const (
+	indexFilename = "index"
+	metaFilename  = "meta.json"
+	chunksDirname = "chunks"
+)
 
-func chunkDir(dir string) string { return filepath.Join(dir, "chunks") }
+func chunkDir(dir string) string { return filepath.Join(dir, chunksDirname) }
 func walDir(dir string) string   { return filepath.Join(dir, "wal") }
 
 func readMetaFile(dir string) (*BlockMeta, error) {

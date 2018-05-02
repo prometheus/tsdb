@@ -2,6 +2,7 @@ package tsdb
 
 import (
 	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 
@@ -53,9 +54,9 @@ func TestRepairBadIndexVersion(t *testing.T) {
 		t.Fatal("error expected but got none")
 	}
 	// Touch chunks dir in block.
-	os.MkdirAll(dir+"chunks", 0777)
+	os.MkdirAll(chunkDir(dir), 0777)
 
-	r, err := index.NewFileReader(dir + "index")
+	r, err := index.NewFileReader(filepath.Join(dir, indexFilename))
 	if err != nil {
 		t.Fatal(err)
 	}

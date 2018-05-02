@@ -20,6 +20,7 @@ import (
 	"io"
 	"io/ioutil"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"runtime/pprof"
@@ -31,6 +32,8 @@ import (
 	"time"
 
 	"github.com/go-kit/kit/log"
+	"github.com/go-kit/kit/log/level"
+	"github.com/oklog/ulid"
 	"github.com/pkg/errors"
 	"github.com/prometheus/tsdb"
 	"github.com/prometheus/tsdb/labels"
@@ -48,6 +51,10 @@ func main() {
 		listCmd              = cli.Command("ls", "list db blocks")
 		listCmdHumanReadable = listCmd.Flag("human-readable", "print human readable values").Short('h').Bool()
 		listPath             = listCmd.Arg("db path", "database path (default is benchout/storage)").Default("benchout/storage").String()
+		scanCmd              = cli.Command("scan", "scans the db and lists corrupted blocks")
+		scanCmdHumanReadable = scanCmd.Flag("human-readable", "print human readable values").Short('h').Bool()
+		scanPath             = scanCmd.Arg("dir", "database path (default is current dir ./)").Default("./").ExistingDir()
+		logger               = level.NewFilter(log.NewLogfmtLogger(log.NewSyncWriter(os.Stderr)), level.AllowError())
 	)
 
 	switch kingpin.MustParse(cli.Parse(os.Args[1:])) {
@@ -58,14 +65,183 @@ func main() {
 			samplesFile: *benchSamplesFile,
 		}
 		wb.run()
+
 	case listCmd.FullCommand():
 		db, err := tsdb.Open(*listPath, nil, nil, nil)
 		if err != nil {
 			exitWithError(err)
 		}
 		printBlocks(db.Blocks(), listCmdHumanReadable)
+
+	case scanCmd.FullCommand():
+		scanTmps(*scanPath, scanCmdHumanReadable)
+
+		scan, err := tsdb.NewDBScanner(*scanPath, logger)
+		if err != nil {
+			exitWithError(err)
+		}
+		scanTmbst(scan, scanCmdHumanReadable)
+		scanIndexes(scan, scanCmdHumanReadable)
+		scanOverlapping(scan, scanCmdHumanReadable)
+
+		fmt.Println("Scan complete!")
+		fmt.Println("Hooray! The db is clean(or the scan tool is broken):\U0001f638")
 	}
 	flag.CommandLine.Set("log.level", "debug")
+}
+
+func scanOverlapping(scan tsdb.Scanner, hformat *bool) {
+	overlaps, err := scan.Overlapping()
+	if err != nil {
+		exitWithError(err)
+	}
+	if len(overlaps) > 0 {
+		fmt.Println("Overlaping blocks.")
+		fmt.Println("Deleting these will remove all data in the listed time range.")
+		var blocksDel []*tsdb.Block
+		for t, overBcks := range overlaps {
+			fmt.Printf("overlapping blocks : %v-%v \n", time.Unix(t.Min/1000, 0).Format("06/01/02 15:04:05"), time.Unix(t.Max/1000, 0).Format("15:04:05 06/01/02"))
+
+			var largest int
+			for i, b := range overBcks {
+				if b.Meta().Stats.NumSamples > overBcks[largest].Meta().Stats.NumSamples {
+					largest = i
+				}
+			}
+			fmt.Printf("\nBlock %v contains highest samples count and is ommited from the deletion list! \n\n", overBcks[largest])
+			//Remove the largest block from the slice.
+			o := append(overBcks[:largest], overBcks[largest+1:]...)
+			// Add this range to all blocks for deletion.
+			blocksDel = append(blocksDel, o...)
+		}
+
+		var paths []string
+		for _, b := range blocksDel {
+			_, folder := path.Split(b.Dir())
+			if _, err := ulid.Parse(folder); err != nil {
+				fmt.Printf("\nskipping invalid block dir: %v :%v \n\n", b.Dir(), err)
+				continue
+			}
+			paths = append(paths, b.Dir())
+		}
+		printBlocks(blocksDel, hformat)
+		if confirm() {
+			if err = dellAll(paths); err != nil {
+				exitWithError(errors.Wrap(err, "deleting overlapping blocks"))
+			}
+		}
+	}
+}
+
+func scanIndexes(scan tsdb.Scanner, hformat *bool) {
+	unrepairable, repaired, err := scan.Indexes()
+	if err != nil {
+		exitWithError(err)
+	}
+
+	if len(repaired) > 0 {
+		fmt.Println("Corrupted indexes that were repaired.")
+		for _, stats := range repaired {
+			fmt.Printf("path:%v stats:%+v  \n", stats.BlockDir, stats)
+		}
+	}
+
+	if len(unrepairable) > 0 {
+		for cause, bdirs := range unrepairable {
+			fmt.Println("Blocks with unrepairable indexes! \n", cause)
+			printFiles(bdirs, hformat)
+			if confirm() {
+				if err = dellAll(bdirs); err != nil {
+					exitWithError(errors.Wrap(err, "deleting blocks with invalid indexes"))
+				}
+			}
+		}
+	}
+}
+
+func scanTmbst(scan tsdb.Scanner, hformat *bool) {
+	invalid, err := scan.Tombstones()
+	if err != nil {
+		exitWithError(errors.Wrap(err, "scannings Tombstones"))
+	}
+
+	if len(invalid) > 0 {
+		fmt.Println("Tombstones include data to be deleted so removing these will cancel deleting these timeseries.")
+		for cause, files := range invalid {
+			for _, p := range files {
+				_, file := filepath.Split(p)
+				if file != "tombstone" {
+					exitWithError(fmt.Errorf("path doesn't contain a valid tombstone filename: %v", p))
+				}
+			}
+			fmt.Println("invalid tombstones:", cause)
+			printFiles(files, hformat)
+			if confirm() {
+				if err = dellAll(files); err != nil {
+					exitWithError(errors.Wrap(err, "deleting Tombstones"))
+				}
+			}
+		}
+	}
+}
+
+func scanTmps(scanPath string, hformat *bool) {
+	var files []string
+	filepath.Walk(scanPath, func(path string, f os.FileInfo, _ error) error {
+		if filepath.Ext(path) == ".tmp" {
+			files = append(files, path)
+		}
+		return nil
+	})
+	if len(files) > 0 {
+		fmt.Println(`
+			These are usually caused by a crash or incomplete compaction and 
+			are safe to delete as long as no other application is currently using this database.`)
+		for _, p := range files {
+			if filepath.Ext(p) != ".tmp" {
+				exitWithError(fmt.Errorf("path doesn't contain a valid tmp extension: %v", p))
+			}
+		}
+		printFiles(files, hformat)
+		if confirm() {
+			if err := dellAll(files); err != nil {
+				exitWithError(errors.Wrap(err, "deleting temp files"))
+			}
+		}
+	}
+}
+
+func dellAll(paths []string) error {
+	for _, p := range paths {
+		if err := os.RemoveAll(p); err != nil {
+			return fmt.Errorf("error deleting: %v, %v", p, err)
+		}
+	}
+	return nil
+}
+
+func confirm() bool {
+	for x := 0; x < 3; x++ {
+		fmt.Println("DELETE (y/N)?")
+		var s string
+		_, err := fmt.Scanln(&s)
+		if err != nil {
+			exitWithError(err)
+		}
+
+		s = strings.TrimSpace(s)
+		s = strings.ToLower(s)
+
+		if s == "y" || s == "yes" {
+			return true
+		}
+		if s == "n" || s == "no" {
+			return false
+		}
+		fmt.Println(s, "is not a valid answer")
+	}
+	fmt.Printf("Bailing out, too many invalid answers! \n\n")
+	return false
 }
 
 type writeBenchmark struct {
@@ -346,22 +522,40 @@ func exitWithError(err error) {
 	os.Exit(1)
 }
 
+func printFiles(files []string, humanReadable *bool) {
+	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	defer tw.Flush()
+
+	fmt.Fprintln(tw, "PATH\tSIZE\tDATE\t")
+	for _, path := range files {
+		f, e := os.Stat(path)
+		if e != nil {
+			exitWithError(e)
+		}
+		fmt.Fprintf(tw,
+			"%v\t%v\t%v\n",
+			path, f.Size(), getFormatedTime(f.ModTime().Unix(), humanReadable),
+		)
+	}
+}
+
 func printBlocks(blocks []*tsdb.Block, humanReadable *bool) {
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	defer tw.Flush()
 
-	fmt.Fprintln(tw, "BLOCK ULID\tMIN TIME\tMAX TIME\tNUM SAMPLES\tNUM CHUNKS\tNUM SERIES")
+	fmt.Fprintln(tw, "BLOCK ULID\tMIN TIME\tMAX TIME\tNUM SAMPLES\tNUM CHUNKS\tNUM SERIES\tPATH")
 	for _, b := range blocks {
 		meta := b.Meta()
 
 		fmt.Fprintf(tw,
-			"%v\t%v\t%v\t%v\t%v\t%v\n",
+			"%v\t%v\t%v\t%v\t%v\t%v\t%v\n",
 			meta.ULID,
 			getFormatedTime(meta.MinTime, humanReadable),
 			getFormatedTime(meta.MaxTime, humanReadable),
 			meta.Stats.NumSamples,
 			meta.Stats.NumChunks,
 			meta.Stats.NumSeries,
+			b.Dir(),
 		)
 	}
 }
