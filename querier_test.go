@@ -390,6 +390,16 @@ func TestBlockQuerier(t *testing.T) {
 					},
 				},
 			},
+			{
+				lset: map[string]string{
+					"s": "s",
+				},
+				chunks: [][]sample{
+					{
+						{1, 2}, {10, 11},
+					},
+				},
+			},
 		},
 
 		queries: []query{
@@ -445,6 +455,18 @@ func TestBlockQuerier(t *testing.T) {
 						"x": "xyz",
 					},
 						[]sample{{2, 3}, {3, 4}, {5, 2}, {6, 3}},
+					),
+				}),
+			},
+			{
+				mint: 2,
+				maxt: 9,
+				ms:   []labels.Matcher{labels.NewEqualMatcher("s", "s")},
+				exp: newListSeriesSet([]Series{
+					newSeries(map[string]string{
+						"s": "s",
+					},
+						[]sample{},
 					),
 				}),
 			},
@@ -558,7 +580,7 @@ func TestBlockQuerierDelete(t *testing.T) {
 			},
 		},
 		tombstones: memTombstones{
-			1: Intervals{{1, 3}},
+			1: Intervals{{1, 2}},
 			2: Intervals{{1, 3}, {6, 10}},
 			3: Intervals{{6, 10}},
 		},
@@ -572,7 +594,7 @@ func TestBlockQuerierDelete(t *testing.T) {
 					newSeries(map[string]string{
 						"a": "a",
 					},
-						[]sample{{5, 2}, {6, 3}, {7, 4}},
+						[]sample{{3, 4}, {5, 2}, {6, 3}, {7, 4}},
 					),
 					newSeries(map[string]string{
 						"a": "a",
@@ -607,6 +629,11 @@ func TestBlockQuerierDelete(t *testing.T) {
 				exp: newListSeriesSet([]Series{
 					newSeries(map[string]string{
 						"a": "a",
+					},
+						[]sample{{3, 4}},
+					),
+					newSeries(map[string]string{
+						"a": "a",
 						"b": "b",
 					},
 						[]sample{{4, 15}},
@@ -615,9 +642,15 @@ func TestBlockQuerierDelete(t *testing.T) {
 			},
 			{
 				mint: 1,
-				maxt: 3,
+				maxt: 2,
 				ms:   []labels.Matcher{labels.NewEqualMatcher("a", "a")},
-				exp:  newListSeriesSet([]Series{}),
+				exp: newListSeriesSet([]Series{
+					newSeries(map[string]string{
+						"a": "a",
+					},
+						[]sample{},
+					),
+				}),
 			},
 		},
 	}
@@ -987,7 +1020,7 @@ func TestSeriesIterator(t *testing.T) {
 						{10, 22}, {203, 3493},
 					},
 
-					seek:    203,
+					seek:    101,
 					success: false,
 					exp:     nil,
 					mint:    2,
