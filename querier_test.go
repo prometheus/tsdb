@@ -1020,7 +1020,7 @@ func TestSeriesIterator(t *testing.T) {
 						{10, 22}, {203, 3493},
 					},
 
-					seek:    100,
+					seek:    101,
 					success: false,
 					exp:     nil,
 					mint:    2,
