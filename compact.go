@@ -160,7 +160,10 @@ func (c *LeveledCompactor) Plan(dir string) ([]string, error) {
 	for _, dir := range dirs {
 		meta, err := readMetaFile(dir)
 		if err != nil {
-			return nil, err
+			level.Debug(c.logger).Log("msg", "couldn't read a block meta file at planning", "err", err)
+			// We continue with the rest of the blocks.
+			// This one will be deleted when reloading the db.
+			continue
 		}
 		dms = append(dms, dirMeta{dir, meta})
 	}
@@ -323,13 +326,15 @@ func (c *LeveledCompactor) Compact(dest string, dirs ...string) (uid ulid.ULID, 
 	for _, d := range dirs {
 		b, err := OpenBlock(d, c.chunkPool)
 		if err != nil {
-			return uid, err
+			level.Error(c.logger).Log("msg", "couldn't open a block", "dir", d, "err", err.Error())
+			continue
 		}
 		defer b.Close()
 
 		meta, err := readMetaFile(d)
 		if err != nil {
-			return uid, err
+			level.Error(c.logger).Log("msg", "reading meta file", "dir", d, "err", err.Error())
+			continue
 		}
 
 		metas = append(metas, meta)

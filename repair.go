@@ -30,6 +30,12 @@ func repairBadIndexVersion(logger log.Logger, dir string) error {
 			continue
 		}
 		d = path.Join(dir, d)
+		if _, err := os.Stat(filepath.Join(d, metaFilename)); os.IsNotExist(err) {
+			level.Debug(logger).Log("msg", "couldn't read a block meta file at index repair", "err", err)
+			// We continue with the rest of the blocks.
+			// This one will be deleted when reloading the db.
+			continue
+		}
 
 		meta, err := readBogusMetaFile(d)
 		if err != nil {
