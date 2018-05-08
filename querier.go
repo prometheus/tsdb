@@ -804,7 +804,7 @@ func (it *chunkSeriesIterator) Seek(t int64) (ok bool) {
 
 	for it.cur.Next() {
 		t0, _ := it.cur.At()
-		if t0 >= t {
+		if t0 >= t && t0 <= it.maxt {
 			return true
 		}
 	}
@@ -824,13 +824,9 @@ func (it *chunkSeriesIterator) Next() bool {
 				return false
 			}
 			t, _ = it.At()
+		}
 
-			return t <= it.maxt
-		}
-		if t > it.maxt {
-			return false
-		}
-		return true
+		return t <= it.maxt
 	}
 	if err := it.cur.Err(); err != nil {
 		return false
