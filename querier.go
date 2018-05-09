@@ -783,6 +783,9 @@ func newChunkSeriesIterator(cs []chunks.Meta, dranges Intervals, mint, maxt int6
 
 func (it *chunkSeriesIterator) Seek(t int64) (ok bool) {
 	if t > it.maxt {
+		it.i = len(it.chunks)
+	}
+	if it.cur.Err() != nil || it.i >= len(it.chunks) {
 		return false
 	}
 
@@ -791,31 +794,46 @@ func (it *chunkSeriesIterator) Seek(t int64) (ok bool) {
 		t = it.mint
 	}
 
-	for ; it.chunks[it.i].MaxTime < t; it.i++ {
-		if it.i == len(it.chunks)-1 {
-			return false
-		}
+	// Return early if already past t.
+	if t0, _ := it.cur.At(); t0 >= t {
+		return t0 <= it.maxt
 	}
 
-	it.cur = it.chunks[it.i].Chunk.Iterator()
-	if len(it.intervals) > 0 {
-		it.cur = &deletedIterator{it: it.cur, intervals: it.intervals}
-	}
+	iCur := it.i
+	for ; it.i < len(it.chunks); it.i++ {
+		if it.chunks[it.i].MaxTime >= t {
+			if it.i != iCur {
+				it.cur = it.chunks[it.i].Chunk.Iterator()
+				if len(it.intervals) > 0 {
+					it.cur = &deletedIterator{it: it.cur, intervals: it.intervals}
+				}
+			}
 
-	for it.cur.Next() {
-		t0, _ := it.cur.At()
-		if t0 >= t {
-			return true
+			for it.cur.Next() {
+				t0, _ := it.cur.At()
+				if t0 > it.maxt || it.cur.Err() != nil {
+					return false
+				}
+				if t0 >= t {
+					return true
+				}
+			}
 		}
 	}
 	return false
 }
 
 func (it *chunkSeriesIterator) At() (t int64, v float64) {
+	// Should it panic if it.cur.Err() != nil || it.i >= len(it.chunks)?
+	// What about before Next() or Seek() were called?
 	return it.cur.At()
 }
 
 func (it *chunkSeriesIterator) Next() bool {
+	if it.cur.Err() != nil || it.i >= len(it.chunks) {
+		return false
+	}
+
 	if it.cur.Next() {
 		t, _ := it.cur.At()
 
@@ -824,22 +842,18 @@ func (it *chunkSeriesIterator) Next() bool {
 				return false
 			}
 			t, _ = it.At()
+		}
 
-			return t <= it.maxt
-		}
-		if t > it.maxt {
-			return false
-		}
-		return true
+		return t <= it.maxt
 	}
 	if err := it.cur.Err(); err != nil {
 		return false
 	}
-	if it.i == len(it.chunks)-1 {
-		return false
-	}
 
 	it.i++
+	if it.i == len(it.chunks) {
+		return false
+	}
 	it.cur = it.chunks[it.i].Chunk.Iterator()
 	if len(it.intervals) > 0 {
 		it.cur = &deletedIterator{it: it.cur, intervals: it.intervals}
