@@ -581,7 +581,7 @@ func TestBlockQuerierDelete(t *testing.T) {
 		},
 		tombstones: memTombstones{
 			1: Intervals{{1, 2}},
-			2: Intervals{{1, 3}, {6, 10}},
+			2: Intervals{{2, 3}, {6, 10}},
 			3: Intervals{{6, 10}},
 		},
 
@@ -636,7 +636,7 @@ func TestBlockQuerierDelete(t *testing.T) {
 						"a": "a",
 						"b": "b",
 					},
-						[]sample{{4, 15}},
+						[]sample{{1, 1}, {4, 15}},
 					),
 				}),
 			},
@@ -649,6 +649,12 @@ func TestBlockQuerierDelete(t *testing.T) {
 						"a": "a",
 					},
 						[]sample{},
+					),
+					newSeries(map[string]string{
+						"a": "a",
+						"b": "b",
+					},
+						[]sample{{1, 1}},
 					),
 				}),
 			},
@@ -899,7 +905,7 @@ func TestSeriesIterator(t *testing.T) {
 			b: []sample{},
 			c: []sample{},
 
-			seek:    0,
+			seek:    1,
 			success: false,
 			exp:     nil,
 		},
@@ -1071,10 +1077,10 @@ func TestSeriesIterator(t *testing.T) {
 					testutil.Assert(t, remaining == true, "")
 
 					for remaining {
-						sExp, eExp := exp.At()
-						sRes, eRes := res.At()
-						testutil.Equals(t, eExp, eRes)
-						testutil.Equals(t, sExp, sRes)
+						tExp, vExp := exp.At()
+						tRes, vRes := res.At()
+						testutil.Equals(t, tExp, tRes)
+						testutil.Equals(t, vExp, vRes)
 
 						remaining = exp.Next()
 						testutil.Equals(t, remaining, res.Next())
@@ -1117,10 +1123,10 @@ func TestSeriesIterator(t *testing.T) {
 					testutil.Assert(t, remaining == true, "")
 
 					for remaining {
-						sExp, eExp := exp.At()
-						sRes, eRes := res.At()
-						testutil.Equals(t, eExp, eRes)
-						testutil.Equals(t, sExp, sRes)
+						tExp, vExp := exp.At()
+						tRes, vRes := res.At()
+						testutil.Equals(t, tExp, tRes)
+						testutil.Equals(t, vExp, vRes)
 
 						remaining = exp.Next()
 						testutil.Equals(t, remaining, res.Next())
@@ -1147,6 +1153,24 @@ func TestChunkSeriesIterator_DoubleSeek(t *testing.T) {
 	ts, v := res.At()
 	testutil.Equals(t, int64(2), ts)
 	testutil.Equals(t, float64(2), v)
+}
+
+// Regression for: https://github.com/prometheus/tsdb/pull/327
+// Seek would go back within the same chunk.
+func TestChunkSeriesIterator_DoubleSeekBackwards(t *testing.T) {
+	chkMetas := []chunks.Meta{
+		chunkFromSamples([]sample{}),
+		chunkFromSamples([]sample{{1, 1}, {2, 2}, {3, 3}}),
+		chunkFromSamples([]sample{{4, 4}, {5, 5}}),
+	}
+
+	// Seek for 3, then 2. Iterator should remain positioned on 3.
+	res := newChunkSeriesIterator(chkMetas, nil, 2, 8)
+	testutil.Assert(t, res.Seek(3) == true, "")
+	testutil.Assert(t, res.Seek(2) == true, "")
+	ts, v := res.At()
+	testutil.Equals(t, int64(3), ts)
+	testutil.Equals(t, float64(3), v)
 }
 
 // Regression when seeked chunks were still found via binary search and we always
@@ -1180,6 +1204,20 @@ func TestChunkSeriesIterator_NextWithMinTime(t *testing.T) {
 
 	it := newChunkSeriesIterator(metas, nil, 2, 4)
 	testutil.Assert(t, it.Next() == false, "")
+}
+
+// Regression for: https://github.com/prometheus/tsdb/pull/327
+// Calling Seek() with a time between [mint, maxt] after the iterator had
+// already passed the end would incorrectly return true.
+func TestChunkSeriesIterator_SeekWithMinTime(t *testing.T) {
+	metas := []chunks.Meta{
+		chunkFromSamples([]sample{{1, 6}, {5, 6}, {7, 8}}),
+	}
+
+	it := newChunkSeriesIterator(metas, nil, 2, 5)
+	testutil.Assert(t, it.Seek(6) == false, "")
+	// A second, within bounds Seek() used to succeed. Make sure it also returns false.
+	testutil.Assert(t, it.Seek(3) == false, "")
 }
 
 func TestPopulatedCSReturnsValidChunkSlice(t *testing.T) {
