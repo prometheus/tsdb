@@ -802,23 +802,25 @@ func (it *chunkSeriesIterator) Seek(t int64) (ok bool) {
 	iCur := it.i
 	for ; it.i < len(it.chunks); it.i++ {
 		// Skip chunks with MaxTime < t.
-		if it.chunks[it.i].MaxTime >= t {
-			// Don't reset the iterator unless we've moved on to a different chunk.
-			if it.i != iCur {
-				it.cur = it.chunks[it.i].Chunk.Iterator()
-				if len(it.intervals) > 0 {
-					it.cur = &deletedIterator{it: it.cur, intervals: it.intervals}
-				}
-			}
+		if it.chunks[it.i].MaxTime < t {
+			continue
+		}
 
-			for it.cur.Next() {
-				t0, _ := it.cur.At()
-				if t0 > it.maxt || it.cur.Err() != nil {
-					return false
-				}
-				if t0 >= t {
-					return true
-				}
+		// Don't reset the iterator unless we've moved on to a different chunk.
+		if it.i != iCur {
+			it.cur = it.chunks[it.i].Chunk.Iterator()
+			if len(it.intervals) > 0 {
+				it.cur = &deletedIterator{it: it.cur, intervals: it.intervals}
+			}
+		}
+
+		for it.cur.Next() {
+			t0, _ := it.cur.At()
+			if t0 > it.maxt || it.cur.Err() != nil {
+				return false
+			}
+			if t0 >= t {
+				return true
 			}
 		}
 	}
