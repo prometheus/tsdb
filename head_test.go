@@ -74,14 +74,14 @@ func TestHead_ReadWAL(t *testing.T) {
 		},
 		[]RefSample{
 			{Ref: 0, T: 99, V: 1},
-			{Ref: 10, T: 100, V: 2},
+			{Ref: 10, T: 1, V: 2},
 			{Ref: 100, T: 100, V: 3},
 		},
 		[]RefSeries{
 			{Ref: 50, Labels: labels.FromStrings("a", "4")},
 		},
 		[]RefSample{
-			{Ref: 10, T: 101, V: 5},
+			{Ref: 10, T: 2, V: 5},
 			{Ref: 50, T: 101, V: 6},
 		},
 	}
@@ -93,6 +93,8 @@ func TestHead_ReadWAL(t *testing.T) {
 
 	testutil.Ok(t, head.ReadWAL())
 	testutil.Equals(t, uint64(100), head.lastSeriesID)
+	testutil.Equals(t, int64(1), head.MinTime())
+	testutil.Equals(t, int64(101), head.MaxTime())
 
 	s10 := head.series.getByID(10)
 	s11 := head.series.getByID(11)
@@ -113,7 +115,7 @@ func TestHead_ReadWAL(t *testing.T) {
 		return x
 	}
 
-	testutil.Equals(t, []sample{{100, 2}, {101, 5}}, expandChunk(s10.iterator(0)))
+	testutil.Equals(t, []sample{{1, 2}, {2, 5}}, expandChunk(s10.iterator(0)))
 	testutil.Equals(t, 0, len(s11.chunks))
 	testutil.Equals(t, []sample{{101, 6}}, expandChunk(s50.iterator(0)))
 	testutil.Equals(t, []sample{{100, 3}}, expandChunk(s100.iterator(0)))
