@@ -199,12 +199,15 @@ func NewHead(r prometheus.Registerer, l log.Logger, wal WAL, chunkRange int64) (
 // processWALSamples adds a partition of samples it receives to the head and passes
 // them on to other workers.
 // Samples before the mint timestamp are discarded.
+// Returns the mint and maxt of all processed samples.
 func (h *Head) processWALSamples(
 	mint int64,
 	partition, total uint64,
 	input <-chan []RefSample, output chan<- []RefSample,
-) (unknownRefs uint64) {
+) (unknownRefs uint64, smint, smaxt int64) {
 	defer close(output)
+	smint = math.MaxInt64 // Start with Maxint64 and go down from here.
+	smaxt = math.MinInt64 // Start with MinInt64 and go up from here.
 
 	for samples := range input {
 		for _, s := range samples {
@@ -221,10 +224,18 @@ func (h *Head) processWALSamples(
 				h.metrics.chunksCreated.Inc()
 				h.metrics.chunks.Inc()
 			}
+
+			if s.T < smint {
+				smint = s.T
+			}
+
+			if s.T > smaxt {
+				smaxt = s.T
+			}
 		}
 		output <- samples
 	}
-	return unknownRefs
+	return unknownRefs, smint, smaxt
 }
 
 // ReadWAL initializes the head by consuming the write ahead log.
@@ -253,8 +264,20 @@ func (h *Head) ReadWAL() error {
 		output := make(chan []RefSample, 300)
 
 		go func(i int, input <-chan []RefSample, output chan<- []RefSample) {
-			unknown := h.processWALSamples(mint, uint64(i), uint64(n), input, output)
+			unknown, smint, smaxt := h.processWALSamples(mint, uint64(i), uint64(n), input, output)
 			atomic.AddUint64(&unknownRefs, unknown)
+
+			if h.minTime == math.MinInt64 {
+				h.minTime = smint
+			}
+
+			if h.minTime > smint {
+				h.minTime = smint
+			}
+
+			if h.maxTime < smaxt {
+				h.maxTime = smaxt
+			}
 			wg.Done()
 		}(i, input, output)
 
