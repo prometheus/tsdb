@@ -580,13 +580,14 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 
 		if len(dranges) > 0 {
 			// Re-encode the chunk to not have deleted values.
+			var app chunkenc.Appender
 			for i, chk := range chks {
 				if !intervalOverlap(dranges[0].Mint, dranges[len(dranges)-1].Maxt, chk.MinTime, chk.MaxTime) {
 					continue
 				}
 
 				newChunk := chunkenc.NewXORChunk()
-				app, err := newChunk.Appender()
+				app, err := newChunk.Appender(app)
 				if err != nil {
 					return err
 				}

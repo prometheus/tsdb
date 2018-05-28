@@ -76,28 +76,33 @@ func (c *XORChunk) NumSamples() int {
 }
 
 // Appender implements the Chunk interface.
-func (c *XORChunk) Appender() (Appender, error) {
-	it := c.iterator()
-
-	// To get an appender we must know the state it would have if we had
-	// appended all existing data from scratch.
-	// We iterate through the end and populate via the iterator's state.
-	for it.Next() {
-	}
-	if err := it.Err(); err != nil {
-		return nil, err
+func (c *XORChunk) Appender(old Appender) (Appender, error) {
+	var a *xorAppender
+	if aold, ok := old.(*xorAppender); ok {
+		a = aold
+	} else {
+		a = &xorAppender{}
 	}
 
-	a := &xorAppender{
-		b:        c.b,
-		t:        it.t,
-		v:        it.val,
-		tDelta:   it.tDelta,
-		leading:  it.leading,
-		trailing: it.trailing,
-	}
+	a.b = c.b
 	if binary.BigEndian.Uint16(a.b.bytes()) == 0 {
+		// Chunk is empty.
 		a.leading = 0xff
+	} else {
+		// To get an appender we must know the state it would have if we had
+		// appended all existing data from scratch.
+		// We iterate through the end and populate via the iterator's state.
+		it := c.iterator()
+		for it.Next() {
+		}
+		if err := it.Err(); err != nil {
+			return nil, err
+		}
+		a.t = it.t
+		a.v = it.val
+		a.tDelta = it.tDelta
+		a.leading = it.leading
+		a.trailing = it.trailing
 	}
 	return a, nil
 }

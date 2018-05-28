@@ -1135,7 +1135,7 @@ func (s *memSeries) cut(mint int64) *memChunk {
 	// may be chosen dynamically at a later point.
 	_, s.nextAt = rangeForTimestamp(mint, s.chunkRange)
 
-	app, err := c.chunk.Appender()
+	app, err := c.chunk.Appender(s.app)
 	if err != nil {
 		panic(err)
 	}

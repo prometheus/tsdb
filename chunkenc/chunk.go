@@ -43,7 +43,9 @@ const (
 type Chunk interface {
 	Bytes() []byte
 	Encoding() Encoding
-	Appender() (Appender, error)
+	// If passed a non-nil Appender, its memory will be reused
+	// rather than allocating a new one.
+	Appender(Appender) (Appender, error)
 	Iterator() Iterator
 	NumSamples() int
 }

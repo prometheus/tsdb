@@ -44,7 +44,7 @@ func TestChunk(t *testing.T) {
 }
 
 func testChunk(c Chunk) error {
-	app, err := c.Appender()
+	app, err := c.Appender(nil)
 	if err != nil {
 		return err
 	}
@@ -66,7 +66,7 @@ func testChunk(c Chunk) error {
 		// Start with a new appender every 10th sample. This emulates starting
 		// appending to a partially filled chunk.
 		if i%10 == 0 {
-			app, err = c.Appender()
+			app, err = c.Appender(nil)
 			if err != nil {
 				return err
 			}
@@ -107,10 +107,11 @@ func benchmarkIterator(b *testing.B, newChunk func() Chunk) {
 	}
 
 	var chunks []Chunk
+	var a Appender
 	for i := 0; i < b.N; {
 		c := newChunk()
 
-		a, err := c.Appender()
+		a, err := c.Appender(a)
 		if err != nil {
 			b.Fatalf("get appender: %s", err)
 		}
@@ -178,10 +179,11 @@ func benchmarkAppender(b *testing.B, newChunk func() Chunk) {
 	b.ResetTimer()
 
 	var chunks []Chunk
+	var a Appender
 	for i := 0; i < b.N; {
 		c := newChunk()
 
-		a, err := c.Appender()
+		a, err := c.Appender(a)
 		if err != nil {
 			b.Fatalf("get appender: %s", err)
 		}
