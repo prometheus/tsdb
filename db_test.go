@@ -14,13 +14,17 @@
 package tsdb
 
 import (
+	"fmt"
 	"io/ioutil"
 	"math"
 	"math/rand"
 	"os"
+	"path/filepath"
 	"sort"
 	"testing"
+	"time"
 
+	"github.com/oklog/ulid"
 	"github.com/pkg/errors"
 	"github.com/prometheus/tsdb/labels"
 	"github.com/prometheus/tsdb/testutil"
@@ -63,6 +67,31 @@ func query(t testing.TB, q Querier, matchers ...labels.Matcher) map[string][]sam
 	return result
 }
 
+// Ensure that blocks are held in memory in their time order
+// and not in ULID order as they are read from the directory.
+func TestDB_reloadOrder(t *testing.T) {
+	db, close := openTestDB(t, nil)
+	defer close()
+	defer db.Close()
+
+	metas := []*BlockMeta{
+		{ULID: ulid.MustNew(100, nil), MinTime: 90, MaxTime: 100},
+		{ULID: ulid.MustNew(200, nil), MinTime: 70, MaxTime: 80},
+		{ULID: ulid.MustNew(300, nil), MinTime: 100, MaxTime: 110},
+	}
+	for _, m := range metas {
+		bdir := filepath.Join(db.Dir(), m.ULID.String())
+		createEmptyBlock(t, bdir, m)
+	}
+
+	testutil.Ok(t, db.reload())
+	blocks := db.Blocks()
+	testutil.Equals(t, 3, len(blocks))
+	testutil.Equals(t, *metas[1], blocks[0].Meta())
+	testutil.Equals(t, *metas[0], blocks[1].Meta())
+	testutil.Equals(t, *metas[2], blocks[2].Meta())
+}
+
 func TestDataAvailableOnlyAfterCommit(t *testing.T) {
 	db, close := openTestDB(t, nil)
 	defer close()
@@ -89,7 +118,7 @@ func TestDataAvailableOnlyAfterCommit(t *testing.T) {
 
 	seriesSet = query(t, querier, labels.NewEqualMatcher("foo", "bar"))
 
-	testutil.Equals(t, seriesSet, map[string][]sample{`{foo="bar"}`: []sample{{t: 0, v: 0}}})
+	testutil.Equals(t, seriesSet, map[string][]sample{`{foo="bar"}`: {{t: 0, v: 0}}})
 }
 
 func TestDataNotAvailableAfterRollback(t *testing.T) {
@@ -156,7 +185,7 @@ func TestDBAppenderAddRef(t *testing.T) {
 	res := query(t, q, labels.NewEqualMatcher("a", "b"))
 
 	testutil.Equals(t, map[string][]sample{
-		labels.FromStrings("a", "b").String(): []sample{
+		labels.FromStrings("a", "b").String(): {
 			{t: 123, v: 0},
 			{t: 124, v: 1},
 			{t: 125, v: 0},
@@ -310,7 +339,7 @@ func TestSkippingInvalidValuesInSameTxn(t *testing.T) {
 	ssMap := query(t, q, labels.NewEqualMatcher("a", "b"))
 
 	testutil.Equals(t, map[string][]sample{
-		labels.New(labels.Label{"a", "b"}).String(): []sample{{0, 1}},
+		labels.New(labels.Label{"a", "b"}).String(): {{0, 1}},
 	}, ssMap)
 
 	testutil.Ok(t, q.Close())
@@ -329,7 +358,7 @@ func TestSkippingInvalidValuesInSameTxn(t *testing.T) {
 	ssMap = query(t, q, labels.NewEqualMatcher("a", "b"))
 
 	testutil.Equals(t, map[string][]sample{
-		labels.New(labels.Label{"a", "b"}).String(): []sample{{0, 1}, {10, 3}},
+		labels.New(labels.Label{"a", "b"}).String(): {{0, 1}, {10, 3}},
 	}, ssMap)
 	testutil.Ok(t, q.Close())
 }
@@ -754,6 +783,99 @@ func TestTombstoneClean(t *testing.T) {
 	}
 }
 
+// TestTombstoneCleanFail tests that a failing TombstoneClean doesn't leave any blocks behind.
+// When TombstoneClean errors the original block that should be rebuilt doesn't get deleted so
+// if TombstoneClean leaves any blocks behind these will overlap.
+func TestTombstoneCleanFail(t *testing.T) {
+
+	db, close := openTestDB(t, nil)
+	defer close()
+
+	var expectedBlockDirs []string
+
+	// Create some empty blocks pending for compaction.
+	// totalBlocks should be >=2 so we have enough blocks to trigger compaction failure.
+	totalBlocks := 2
+	for i := 0; i < totalBlocks; i++ {
+		entropy := rand.New(rand.NewSource(time.Now().UnixNano()))
+		uid := ulid.MustNew(ulid.Now(), entropy)
+		meta := &BlockMeta{
+			Version: 2,
+			ULID:    uid,
+		}
+		blockDir := filepath.Join(db.Dir(), uid.String())
+		block := createEmptyBlock(t, blockDir, meta)
+
+		// Add some some fake tombstones to trigger the compaction.
+		tomb := memTombstones{}
+		tomb[0] = Intervals{{0, 1}}
+		block.tombstones = tomb
+
+		db.blocks = append(db.blocks, block)
+		expectedBlockDirs = append(expectedBlockDirs, blockDir)
+	}
+
+	// Initialize the mockCompactorFailing with a room for a single compaction iteration.
+	// mockCompactorFailing will fail on the second iteration so we can check if the cleanup works as expected.
+	db.compactor = &mockCompactorFailing{
+		t:      t,
+		blocks: db.blocks,
+		max:    totalBlocks + 1,
+	}
+
+	// The compactor should trigger a failure here.
+	testutil.NotOk(t, db.CleanTombstones())
+
+	// Now check that the CleanTombstones didn't leave any blocks behind after a failure.
+	actualBlockDirs, err := blockDirs(db.dir)
+	testutil.Ok(t, err)
+	testutil.Equals(t, expectedBlockDirs, actualBlockDirs)
+}
+
+// mockCompactorFailing creates a new empty block on every write and fails when reached the max allowed total.
+type mockCompactorFailing struct {
+	t      *testing.T
+	blocks []*Block
+	max    int
+}
+
+func (*mockCompactorFailing) Plan(dir string) ([]string, error) {
+	return nil, nil
+}
+func (c *mockCompactorFailing) Write(dest string, b BlockReader, mint, maxt int64) (ulid.ULID, error) {
+	if len(c.blocks) >= c.max {
+		return ulid.ULID{}, fmt.Errorf("the compactor already did the maximum allowed blocks so it is time to fail")
+	}
+
+	entropy := rand.New(rand.NewSource(time.Now().UnixNano()))
+	uid := ulid.MustNew(ulid.Now(), entropy)
+	meta := &BlockMeta{
+		Version: 2,
+		ULID:    uid,
+	}
+
+	block := createEmptyBlock(c.t, filepath.Join(dest, meta.ULID.String()), meta)
+	c.blocks = append(c.blocks, block)
+
+	// Now check that all expected blocks are actually persisted on disk.
+	// This way we make sure that the we have some blocks that are supposed to be removed.
+	var expectedBlocks []string
+	for _, b := range c.blocks {
+		expectedBlocks = append(expectedBlocks, filepath.Join(dest, b.Meta().ULID.String()))
+	}
+	actualBlockDirs, err := blockDirs(dest)
+	testutil.Ok(c.t, err)
+
+	testutil.Equals(c.t, expectedBlocks, actualBlockDirs)
+
+	return block.Meta().ULID, nil
+}
+
+func (*mockCompactorFailing) Compact(dest string, dirs ...string) (ulid.ULID, error) {
+	return ulid.ULID{}, nil
+
+}
+
 func TestDB_Retention(t *testing.T) {
 	db, close := openTestDB(t, nil)
 	defer close()
@@ -891,4 +1013,88 @@ func expandSeriesSet(ss SeriesSet) ([]labels.Labels, error) {
 	}
 
 	return result, ss.Err()
+}
+
+func TestOverlappingBlocksDetectsAllOverlaps(t *testing.T) {
+	// Create 10 blocks that does not overlap (0-10, 10-20, ..., 100-110) but in reverse order to ensure our algorithm
+	// will handle that.
+	var metas = make([]BlockMeta, 11)
+	for i := 10; i >= 0; i-- {
+		metas[i] = BlockMeta{MinTime: int64(i * 10), MaxTime: int64((i + 1) * 10)}
+	}
+
+	testutil.Assert(t, len(OverlappingBlocks(metas)) == 0, "we found unexpected overlaps")
+
+	// Add overlapping blocks.
+
+	// o1 overlaps with 10-20.
+	o1 := BlockMeta{MinTime: 15, MaxTime: 17}
+	testutil.Equals(t, Overlaps{
+		{Min: 15, Max: 17}: {metas[1], o1},
+	}, OverlappingBlocks(append(metas, o1)))
+
+	// o2 overlaps with 20-30 and 30-40.
+	o2 := BlockMeta{MinTime: 21, MaxTime: 31}
+	testutil.Equals(t, Overlaps{
+		{Min: 21, Max: 30}: {metas[2], o2},
+		{Min: 30, Max: 31}: {o2, metas[3]},
+	}, OverlappingBlocks(append(metas, o2)))
+
+	// o3a and o3b overlaps with 30-40 and each other.
+	o3a := BlockMeta{MinTime: 33, MaxTime: 39}
+	o3b := BlockMeta{MinTime: 34, MaxTime: 36}
+	testutil.Equals(t, Overlaps{
+		{Min: 34, Max: 36}: {metas[3], o3a, o3b},
+	}, OverlappingBlocks(append(metas, o3a, o3b)))
+
+	// o4 is 1:1 overlap with 50-60.
+	o4 := BlockMeta{MinTime: 50, MaxTime: 60}
+	testutil.Equals(t, Overlaps{
+		{Min: 50, Max: 60}: {metas[5], o4},
+	}, OverlappingBlocks(append(metas, o4)))
+
+	// o5 overlaps with 60-70, 70-80 and 80-90.
+	o5 := BlockMeta{MinTime: 61, MaxTime: 85}
+	testutil.Equals(t, Overlaps{
+		{Min: 61, Max: 70}: {metas[6], o5},
+		{Min: 70, Max: 80}: {o5, metas[7]},
+		{Min: 80, Max: 85}: {o5, metas[8]},
+	}, OverlappingBlocks(append(metas, o5)))
+
+	// o6a overlaps with 90-100, 100-110 and o6b, o6b overlaps with 90-100 and o6a.
+	o6a := BlockMeta{MinTime: 92, MaxTime: 105}
+	o6b := BlockMeta{MinTime: 94, MaxTime: 99}
+	testutil.Equals(t, Overlaps{
+		{Min: 94, Max: 99}:   {metas[9], o6a, o6b},
+		{Min: 100, Max: 105}: {o6a, metas[10]},
+	}, OverlappingBlocks(append(metas, o6a, o6b)))
+
+	// All together.
+	testutil.Equals(t, Overlaps{
+		{Min: 15, Max: 17}: {metas[1], o1},
+		{Min: 21, Max: 30}: {metas[2], o2}, {Min: 30, Max: 31}: {o2, metas[3]},
+		{Min: 34, Max: 36}: {metas[3], o3a, o3b},
+		{Min: 50, Max: 60}: {metas[5], o4},
+		{Min: 61, Max: 70}: {metas[6], o5}, {Min: 70, Max: 80}: {o5, metas[7]}, {Min: 80, Max: 85}: {o5, metas[8]},
+		{Min: 94, Max: 99}: {metas[9], o6a, o6b}, {Min: 100, Max: 105}: {o6a, metas[10]},
+	}, OverlappingBlocks(append(metas, o1, o2, o3a, o3b, o4, o5, o6a, o6b)))
+
+	// Additional case.
+	var nc1 []BlockMeta
+	nc1 = append(nc1, BlockMeta{MinTime: 1, MaxTime: 5})
+	nc1 = append(nc1, BlockMeta{MinTime: 2, MaxTime: 3})
+	nc1 = append(nc1, BlockMeta{MinTime: 2, MaxTime: 3})
+	nc1 = append(nc1, BlockMeta{MinTime: 2, MaxTime: 3})
+	nc1 = append(nc1, BlockMeta{MinTime: 2, MaxTime: 3})
+	nc1 = append(nc1, BlockMeta{MinTime: 2, MaxTime: 6})
+	nc1 = append(nc1, BlockMeta{MinTime: 3, MaxTime: 5})
+	nc1 = append(nc1, BlockMeta{MinTime: 5, MaxTime: 7})
+	nc1 = append(nc1, BlockMeta{MinTime: 7, MaxTime: 10})
+	nc1 = append(nc1, BlockMeta{MinTime: 8, MaxTime: 9})
+	testutil.Equals(t, Overlaps{
+		{Min: 2, Max: 3}: {nc1[0], nc1[1], nc1[2], nc1[3], nc1[4], nc1[5]}, // 1-5, 2-3, 2-3, 2-3, 2-3, 2,6
+		{Min: 3, Max: 5}: {nc1[0], nc1[5], nc1[6]},                         // 1-5, 2-6, 3-5
+		{Min: 5, Max: 6}: {nc1[5], nc1[7]},                                 // 2-6, 5-7
+		{Min: 8, Max: 9}: {nc1[8], nc1[9]},                                 // 7-10, 8-9
+	}, OverlappingBlocks(nc1))
 }

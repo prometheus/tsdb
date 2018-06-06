@@ -179,17 +179,17 @@ func TestHead_Truncate(t *testing.T) {
 	testutil.Assert(t, postingsC1 == nil, "")
 
 	testutil.Equals(t, map[string]struct{}{
-		"":  struct{}{}, // from 'all' postings list
-		"a": struct{}{},
-		"b": struct{}{},
-		"1": struct{}{},
-		"2": struct{}{},
+		"":  {}, // from 'all' postings list
+		"a": {},
+		"b": {},
+		"1": {},
+		"2": {},
 	}, h.symbols)
 
 	testutil.Equals(t, map[string]stringset{
-		"a": stringset{"1": struct{}{}, "2": struct{}{}},
-		"b": stringset{"1": struct{}{}},
-		"":  stringset{"": struct{}{}},
+		"a": {"1": struct{}{}, "2": struct{}{}},
+		"b": {"1": struct{}{}},
+		"":  {"": struct{}{}},
 	}, h.values)
 }
 
@@ -228,6 +228,31 @@ func TestMemSeries_truncateChunks(t *testing.T) {
 	it2 := s.iterator(s.chunkID(len(s.chunks) - 2))
 	_, ok = it2.(*memSafeIterator)
 	testutil.Assert(t, ok == false, "non-last chunk incorrectly wrapped with sample buffer")
+}
+
+func TestHeadDeleteSeriesWithoutSamples(t *testing.T) {
+	entries := []interface{}{
+		[]RefSeries{
+			{Ref: 10, Labels: labels.FromStrings("a", "1")},
+		},
+		[]RefSample{},
+		[]RefSeries{
+			{Ref: 50, Labels: labels.FromStrings("a", "2")},
+		},
+		[]RefSample{
+			{Ref: 50, T: 80, V: 1},
+			{Ref: 50, T: 90, V: 1},
+		},
+	}
+	wal := &memoryWAL{entries: entries}
+
+	head, err := NewHead(nil, nil, wal, 1000)
+	testutil.Ok(t, err)
+	defer head.Close()
+
+	testutil.Ok(t, head.ReadWAL())
+
+	testutil.Ok(t, head.Delete(0, 100, labels.NewEqualMatcher("a", "1")))
 }
 
 func TestHeadDeleteSimple(t *testing.T) {
@@ -606,7 +631,7 @@ func TestComputeChunkEndTime(t *testing.T) {
 			max:   1000,
 			res:   1000,
 		},
-		// Catch divison by zero for cur == start. Strictly not a possible case.
+		// Catch division by zero for cur == start. Strictly not a possible case.
 		{
 			start: 100,
 			cur:   100,

@@ -36,9 +36,20 @@ func repairBadIndexVersion(logger log.Logger, dir string) error {
 			return err
 		}
 		if meta.Version == 1 {
+			level.Info(logger).Log(
+				"msg", "found healthy block",
+				"mint", meta.MinTime,
+				"maxt", meta.MaxTime,
+				"ulid", meta.ULID,
+			)
 			continue
 		}
-		level.Info(logger).Log("msg", "fixing broken block", "ulid", meta.ULID)
+		level.Info(logger).Log(
+			"msg", "fixing broken block",
+			"mint", meta.MinTime,
+			"maxt", meta.MaxTime,
+			"ulid", meta.ULID,
+		)
 
 		repl, err := os.Create(filepath.Join(d, "index.repaired"))
 		if err != nil {
@@ -59,6 +70,9 @@ func repairBadIndexVersion(logger log.Logger, dir string) error {
 			return err
 		}
 		if err := repl.Close(); err != nil {
+			return err
+		}
+		if err := broken.Close(); err != nil {
 			return err
 		}
 		if err := renameFile(repl.Name(), broken.Name()); err != nil {
