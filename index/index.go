@@ -875,6 +875,18 @@ func (r *Reader) LabelValues(names ...string) (StringTuples, error) {
 	return st, nil
 }
 
+func (r *Reader) LabelNames() []string {
+	const sep = "\xff"
+
+	res := make([]string, 0)
+	for key := range r.labels {
+		if !strings.Contains(key, sep) {
+			res = append(res, key)
+		}
+	}
+	return res
+}
+
 type emptyStringTuples struct{}
 
 func (emptyStringTuples) At(i int) ([]string, error) { return nil, nil }

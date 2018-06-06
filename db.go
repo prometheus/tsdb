@@ -469,6 +469,14 @@ func (db *DB) getBlock(id ulid.ULID) (*Block, bool) {
 	return nil, false
 }
 
+func (db *DB) getLabelNames() []string {
+	res := make([]string, 0)
+	for _, b := range db.blocks {
+		res = append(res, b.indexr.LabelNames()...)
+	}
+	return res
+}
+
 func stringsContain(set []string, elem string) bool {
 	for _, e := range set {
 		if elem == e {

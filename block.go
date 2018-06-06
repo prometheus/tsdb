@@ -88,6 +88,12 @@ type IndexReader interface {
 	Close() error
 }
 
+type IndexExtra interface {
+	IndexReader
+	// LabelValues returns all labels names for this index
+	LabelNames() []string
+}
+
 // StringTuples provides access to a sorted list of string tuples.
 type StringTuples interface {
 	// Total number of tuples in the list.
@@ -239,7 +245,7 @@ type Block struct {
 	meta BlockMeta
 
 	chunkr     ChunkReader
-	indexr     IndexReader
+	indexr     IndexExtra
 	tombstones TombstoneReader
 }
 
@@ -474,7 +480,7 @@ func (pb *Block) CleanTombstones(dest string, c Compactor) (*ulid.ULID, error) {
 	numStones := 0
 
 	pb.tombstones.Iter(func(id uint64, ivs Intervals) error {
-		numStones += len(ivs)
+	  numStones += len(ivs)
 
 		return nil
 	})
