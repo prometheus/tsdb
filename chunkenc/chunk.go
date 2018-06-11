@@ -15,6 +15,7 @@ package chunkenc
 
 import (
 	"fmt"
+	"math"
 	"sync"
 
 	"github.com/pkg/errors"
@@ -64,6 +65,7 @@ type Appender interface {
 
 // Iterator is a simple iterator that can only get the next value.
 type Iterator interface {
+	// At returns (math.MinInt64, 0.0) before the iterator has advanced.
 	At() (int64, float64)
 	Err() error
 	Next() bool
@@ -76,7 +78,7 @@ func NewNopIterator() Iterator {
 
 type nopIterator struct{}
 
-func (nopIterator) At() (int64, float64) { return 0, 0 }
+func (nopIterator) At() (int64, float64) { return math.MinInt64, 0 }
 func (nopIterator) Next() bool           { return false }
 func (nopIterator) Err() error           { return nil }
 
