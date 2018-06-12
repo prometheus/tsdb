@@ -1155,8 +1155,7 @@ func TestChunkSeriesIterator_DoubleSeek(t *testing.T) {
 	testutil.Equals(t, float64(2), v)
 }
 
-// Regression for: https://github.com/prometheus/tsdb/pull/327
-// Seek would go back within the same chunk.
+// Seek should not go back within the same chunk.
 func TestChunkSeriesIterator_DoubleSeekBackwards(t *testing.T) {
 	chkMetas := []chunks.Meta{
 		chunkFromSamples([]sample{}),
@@ -1206,7 +1205,6 @@ func TestChunkSeriesIterator_NextWithMinTime(t *testing.T) {
 	testutil.Assert(t, it.Next() == false, "")
 }
 
-// Regression for: https://github.com/prometheus/tsdb/pull/327
 // Calling Seek() with a time between [mint, maxt] after the iterator had
 // already passed the end would incorrectly return true.
 func TestChunkSeriesIterator_SeekWithMinTime(t *testing.T) {

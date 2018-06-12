@@ -784,6 +784,7 @@ func newChunkSeriesIterator(cs []chunks.Meta, dranges Intervals, mint, maxt int6
 func (it *chunkSeriesIterator) Seek(t int64) (ok bool) {
 	if t > it.maxt {
 		it.i = len(it.chunks)
+		return false
 	}
 	if it.cur.Err() != nil || it.i >= len(it.chunks) {
 		return false
