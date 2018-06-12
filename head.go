@@ -1149,6 +1149,7 @@ func newMemSeries(lset labels.Labels, id uint64, chunkRange int64) *memSeries {
 		ref:        id,
 		chunkRange: chunkRange,
 		nextAt:     math.MinInt64,
+		sampleBuf:  [4]sample{{math.MinInt64, 0}, {math.MinInt64, 0}, {math.MinInt64, 0}, {math.MinInt64, 0}},
 	}
 	return s
 }
