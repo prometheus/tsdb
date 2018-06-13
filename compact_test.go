@@ -15,12 +15,16 @@ package tsdb
 
 import (
 	"io/ioutil"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/go-kit/kit/log"
 	"github.com/pkg/errors"
+	"github.com/prometheus/tsdb/chunks"
+	"github.com/prometheus/tsdb/index"
+	"github.com/prometheus/tsdb/labels"
 	"github.com/prometheus/tsdb/testutil"
 )
 
@@ -401,3 +405,333 @@ type erringBReader struct{}
 func (erringBReader) Index() (IndexReader, error)          { return nil, errors.New("index") }
 func (erringBReader) Chunks() (ChunkReader, error)         { return nil, errors.New("chunks") }
 func (erringBReader) Tombstones() (TombstoneReader, error) { return nil, errors.New("tombstones") }
+
+type mockedBReader struct {
+	ir IndexReader
+	cr ChunkReader
+}
+
+func (r *mockedBReader) Index() (IndexReader, error)          { return r.ir, nil }
+func (r *mockedBReader) Chunks() (ChunkReader, error)         { return r.cr, nil }
+func (r *mockedBReader) Tombstones() (TombstoneReader, error) { return NewMemTombstones(), nil }
+
+type mockedIndexWriter struct {
+	series []seriesSamples
+}
+
+func (mockedIndexWriter) AddSymbols(sym map[string]struct{}) error { return nil }
+func (m *mockedIndexWriter) AddSeries(ref uint64, l labels.Labels, chunks ...chunks.Meta) error {
+	i := -1
+	for j, s := range m.series {
+		if !labels.FromMap(s.lset).Equals(l) {
+			continue
+		}
+		i = j
+		break
+	}
+	if i == -1 {
+		m.series = append(m.series, seriesSamples{
+			lset: l.Map(),
+		})
+		i = len(m.series) - 1
+	}
+
+	for _, chk := range chunks {
+		samples := make([]sample, 0, chk.Chunk.NumSamples())
+
+		iter := chk.Chunk.Iterator()
+		for iter.Next() {
+			s := sample{}
+			s.t, s.v = iter.At()
+
+			samples = append(samples, s)
+		}
+		if err := iter.Err(); err != nil {
+			return err
+		}
+
+		m.series[i].chunks = append(m.series[i].chunks, samples)
+	}
+	return nil
+}
+
+func (mockedIndexWriter) WriteLabelIndex(names []string, values []string) error     { return nil }
+func (mockedIndexWriter) WritePostings(name, value string, it index.Postings) error { return nil }
+func (mockedIndexWriter) Close() error                                              { return nil }
+
+type nopChunkWriter struct{}
+
+func (nopChunkWriter) WriteChunks(chunks ...chunks.Meta) error { return nil }
+func (nopChunkWriter) Close() error                            { return nil }
+
+var populateBlocksCases = []struct {
+	inputBlocks    [][]seriesSamples
+	compactMinTime int64
+	compactMaxTime int64 // by default it is math.MaxInt64
+
+	expectedBlock []seriesSamples
+	expectedErr   error
+}{
+	{
+		// Populate block from empty input should return error.
+		inputBlocks: [][]seriesSamples{},
+		expectedErr: errors.New("cannot populate block from no readers"),
+	},
+	{
+		// Populate from single block without chunks. We expect these kind of series being ignored.
+		inputBlocks: [][]seriesSamples{
+			{
+				{
+					lset: map[string]string{"a": "b"},
+				},
+			},
+		},
+	},
+	{
+		// Populate from single block. We expect the same samples at the output.
+		inputBlocks: [][]seriesSamples{
+			{
+				{
+					lset:   map[string]string{"a": "b"},
+					chunks: [][]sample{{{t: 0}, {t: 10}}, {{t: 11}, {t: 20}}},
+				},
+			},
+		},
+		expectedBlock: []seriesSamples{
+			{
+				lset:   map[string]string{"a": "b"},
+				chunks: [][]sample{{{t: 0}, {t: 10}}, {{t: 11}, {t: 20}}},
+			},
+		},
+	},
+	{
+		// Populate from two blocks.
+		inputBlocks: [][]seriesSamples{
+			{
+				{
+					lset:   map[string]string{"a": "b"},
+					chunks: [][]sample{{{t: 0}, {t: 10}}, {{t: 11}, {t: 20}}},
+				},
+				{
+					lset:   map[string]string{"a": "c"},
+					chunks: [][]sample{{{t: 1}, {t: 9}}, {{t: 10}, {t: 19}}},
+				},
+				{
+					// no-chunk series should be dropped.
+					lset: map[string]string{"a": "empty"},
+				},
+			},
+			{
+				{
+					lset:   map[string]string{"a": "b"},
+					chunks: [][]sample{{{t: 21}, {t: 30}}},
+				},
+				{
+					lset:   map[string]string{"a": "c"},
+					chunks: [][]sample{{{t: 40}, {t: 45}}},
+				},
+			},
+		},
+		expectedBlock: []seriesSamples{
+			{
+				lset:   map[string]string{"a": "b"},
+				chunks: [][]sample{{{t: 0}, {t: 10}}, {{t: 11}, {t: 20}}, {{t: 21}, {t: 30}}},
+			},
+			{
+				lset:   map[string]string{"a": "c"},
+				chunks: [][]sample{{{t: 1}, {t: 9}}, {{t: 10}, {t: 19}}, {{t: 40}, {t: 45}}},
+			},
+		},
+	},
+	{
+		// Populate from two blocks showing that order is maintained.
+		inputBlocks: [][]seriesSamples{
+			{
+				{
+					lset:   map[string]string{"a": "b"},
+					chunks: [][]sample{{{t: 21}, {t: 30}}},
+				},
+				{
+					lset:   map[string]string{"a": "c"},
+					chunks: [][]sample{{{t: 40}, {t: 45}}},
+				},
+			},
+			{
+				{
+					lset:   map[string]string{"a": "b"},
+					chunks: [][]sample{{{t: 0}, {t: 10}}, {{t: 11}, {t: 20}}},
+				},
+				{
+					lset:   map[string]string{"a": "c"},
+					chunks: [][]sample{{{t: 1}, {t: 9}}, {{t: 10}, {t: 19}}},
+				},
+			},
+		},
+		expectedBlock: []seriesSamples{
+			{
+				lset:   map[string]string{"a": "b"},
+				chunks: [][]sample{{{t: 21}, {t: 30}}, {{t: 0}, {t: 10}}, {{t: 11}, {t: 20}}},
+			},
+			{
+				lset:   map[string]string{"a": "c"},
+				chunks: [][]sample{{{t: 40}, {t: 45}}, {{t: 1}, {t: 9}}, {{t: 10}, {t: 19}}},
+			},
+		},
+	},
+	{
+		// Populate from two blocks showing that order or series is sorted.
+		inputBlocks: [][]seriesSamples{
+			{
+				{
+					lset:   map[string]string{"a": "4"},
+					chunks: [][]sample{{{t: 5}, {t: 7}}},
+				},
+				{
+					lset:   map[string]string{"a": "3"},
+					chunks: [][]sample{{{t: 5}, {t: 6}}},
+				},
+				{
+					lset:   map[string]string{"a": "same"},
+					chunks: [][]sample{{{t: 1}, {t: 4}}},
+				},
+			},
+			{
+				{
+					lset:   map[string]string{"a": "2"},
+					chunks: [][]sample{{{t: 1}, {t: 3}}},
+				},
+				{
+					lset:   map[string]string{"a": "1"},
+					chunks: [][]sample{{{t: 1}, {t: 2}}},
+				},
+				{
+					lset:   map[string]string{"a": "same"},
+					chunks: [][]sample{{{t: 5}, {t: 8}}},
+				},
+			},
+		},
+		expectedBlock: []seriesSamples{
+			{
+				lset:   map[string]string{"a": "1"},
+				chunks: [][]sample{{{t: 1}, {t: 2}}},
+			},
+			{
+				lset:   map[string]string{"a": "2"},
+				chunks: [][]sample{{{t: 1}, {t: 3}}},
+			},
+			{
+				lset:   map[string]string{"a": "3"},
+				chunks: [][]sample{{{t: 5}, {t: 6}}},
+			},
+			{
+				lset:   map[string]string{"a": "4"},
+				chunks: [][]sample{{{t: 5}, {t: 7}}},
+			},
+			{
+				lset:   map[string]string{"a": "same"},
+				chunks: [][]sample{{{t: 1}, {t: 4}}, {{t: 5}, {t: 8}}},
+			},
+		},
+	},
+	{
+		// Populate from single block containing chunk outside of compact meta time range.
+		// This should not happened because head block is making sure the chunks are not crossing block boundaries.
+		inputBlocks: [][]seriesSamples{
+			{
+				{
+					lset:   map[string]string{"a": "b"},
+					chunks: [][]sample{{{t: 1}, {t: 2}}, {{t: 10}, {t: 30}}},
+				},
+			},
+		},
+		compactMinTime: 0,
+		compactMaxTime: 20,
+		expectedErr:    errors.New("found chunk with minTime: 10 maxTime: 30 outside of compacted minTime: 0 maxTime: 20"),
+	},
+	{
+		// Populate from single block containing extra chunk introduced by https://github.com/prometheus/tsdb/issues/347.
+		inputBlocks: [][]seriesSamples{
+			{
+				{
+					lset:   map[string]string{"a": "issue347"},
+					chunks: [][]sample{{{t: 1}, {t: 2}}, {{t: 10}, {t: 20}}},
+				},
+			},
+		},
+		compactMinTime: 0,
+		compactMaxTime: 10,
+		expectedErr:    errors.New("found chunk with minTime: 10 maxTime: 20 outside of compacted minTime: 0 maxTime: 10"),
+	},
+	{
+		// Populate from two blocks containing duplicated chunk.
+		// No special deduplication expected.
+		inputBlocks: [][]seriesSamples{
+			{
+				{
+					lset:   map[string]string{"a": "b"},
+					chunks: [][]sample{{{t: 1}, {t: 2}}, {{t: 10}, {t: 20}}},
+				},
+			},
+			{
+				{
+					lset:   map[string]string{"a": "b"},
+					chunks: [][]sample{{{t: 10}, {t: 20}}},
+				},
+			},
+		},
+		expectedBlock: []seriesSamples{
+			{
+				lset:   map[string]string{"a": "b"},
+				chunks: [][]sample{{{t: 1}, {t: 2}}, {{t: 10}, {t: 20}}, {{t: 10}, {t: 20}}},
+			},
+		},
+	},
+}
+
+func TestCompaction_populateBlock(t *testing.T) {
+	for _, tc := range populateBlocksCases {
+		if ok := t.Run("", func(t *testing.T) {
+			blocks := make([]BlockReader, 0, len(tc.inputBlocks))
+			for _, b := range tc.inputBlocks {
+				ir, cr := createIdxChkReaders(b)
+				blocks = append(blocks, &mockedBReader{ir: ir, cr: cr})
+			}
+
+			c, err := NewLeveledCompactor(nil, nil, []int64{0}, nil)
+			testutil.Ok(t, err)
+
+			meta := &BlockMeta{
+				MinTime: tc.compactMinTime,
+				MaxTime: tc.compactMaxTime,
+			}
+			if meta.MaxTime == 0 {
+				meta.MaxTime = math.MaxInt64
+			}
+
+			iw := &mockedIndexWriter{}
+			err = c.populateBlock(blocks, meta, iw, nopChunkWriter{})
+			if tc.expectedErr != nil {
+				testutil.NotOk(t, err)
+				testutil.Equals(t, tc.expectedErr.Error(), err.Error())
+				return
+			}
+			testutil.Ok(t, err)
+
+			testutil.Equals(t, tc.expectedBlock, iw.series)
+
+			// Check if stats are calculated properly.
+			s := BlockStats{
+				NumSeries: uint64(len(tc.expectedBlock)),
+			}
+			for _, series := range tc.expectedBlock {
+				s.NumChunks += uint64(len(series.chunks))
+				for _, chk := range series.chunks {
+					s.NumSamples += uint64(len(chk))
+				}
+			}
+			testutil.Equals(t, s, meta.Stats)
+		}); !ok {
+			return
+		}
+	}
+}
