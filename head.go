@@ -207,6 +207,9 @@ func (h *Head) processWALSamples(
 	defer close(output)
 
 	for samples := range input {
+		maxT := int64(math.MinInt64)
+		minT := int64(math.MaxInt64)
+
 		for _, s := range samples {
 			if s.T < mint || s.Ref%total != partition {
 				continue
@@ -220,6 +223,30 @@ func (h *Head) processWALSamples(
 			if chunkCreated {
 				h.metrics.chunksCreated.Inc()
 				h.metrics.chunks.Inc()
+			}
+
+			if s.T > maxT {
+				maxT = s.T
+			}
+
+			if s.T < minT {
+				minT = s.T
+			}
+		}
+
+		minT, _ = rangeForTimestamp(minT, h.chunkRange)
+		hMinT := h.MinTime()
+		if hMinT == math.MinInt64 || hMinT > minT {
+			atomic.CompareAndSwapInt64(&h.minTime, hMinT, minT)
+		}
+
+		for {
+			ht := h.MaxTime()
+			if maxT <= ht {
+				break
+			}
+			if atomic.CompareAndSwapInt64(&h.maxTime, ht, maxT) {
+				break
 			}
 		}
 		output <- samples

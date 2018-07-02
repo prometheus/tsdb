@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"testing"
 	"time"
 
@@ -377,6 +378,20 @@ func TestDB_Snapshot(t *testing.T) {
 	testutil.Ok(t, app.Commit())
 	testutil.Ok(t, app.Rollback())
 
+	// append data
+	go func() {
+		app2 := db.Appender()
+		for i := 1001; i < 3000; i++ {
+			_, err := app2.Add(labels.FromStrings("foo", "bar"+strconv.Itoa(i)), mint+int64(i), 1.0)
+			testutil.Ok(t, err)
+
+			if i%1000 == 0 {
+				testutil.Ok(t, app2.Commit())
+				testutil.Ok(t, app2.Rollback())
+			}
+		}
+	}()
+
 	// create snapshot
 	snap, err := ioutil.TempDir("", "snap")
 	testutil.Ok(t, err)
@@ -408,7 +423,28 @@ func TestDB_Snapshot(t *testing.T) {
 		testutil.Ok(t, series.Err())
 	}
 	testutil.Ok(t, seriesSet.Err())
-	testutil.Equals(t, sum, 1000.0)
+	testutil.Equals(t, 1000.0, sum)
+
+	snapShotMaxTime := db.blocks[0].meta.MaxTime
+	querier2, err := db.Querier(snapShotMaxTime, snapShotMaxTime+500)
+	testutil.Ok(t, err)
+	defer querier2.Close()
+
+	// sum values
+	seriesSet, err = querier2.Select(labels.NewPrefixMatcher("foo", "bar"))
+	testutil.Ok(t, err)
+
+	sum = 0.0
+	for seriesSet.Next() {
+		series := seriesSet.At().Iterator()
+		for series.Next() {
+			_, v := series.At()
+			sum += v
+		}
+		testutil.Ok(t, series.Err())
+	}
+	testutil.Ok(t, seriesSet.Err())
+	testutil.Equals(t, 1.0, sum)
 }
 
 func TestDB_SnapshotWithDelete(t *testing.T) {

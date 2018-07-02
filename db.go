@@ -743,7 +743,14 @@ func (db *DB) Snapshot(dir string, withHead bool) error {
 	if !withHead {
 		return nil
 	}
-	_, err := db.compactor.Write(dir, db.head, db.head.MinTime(), db.head.MaxTime(), nil)
+
+
+	head := &rangeHead{
+		head: db.head,
+		mint: db.head.MinTime(),
+		maxt: db.head.MaxTime(),
+	}
+	_, err := db.compactor.Write(dir, head, head.mint, head.maxt, nil)
 	return errors.Wrap(err, "snapshot head block")
 }
 
