@@ -1104,9 +1104,10 @@ type memSeries struct {
 	chunkRange   int64
 	firstChunkID int
 
-	nextAt    int64 // timestamp at which to cut the next chunk.
-	lastValue float64
-	sampleBuf [4]sample
+	nextAt       int64 // timestamp at which to cut the next chunk.
+	lastValue    float64
+	sampleBuf    [128]sample
+	sampleBufPos int
 
 	app chunkenc.Appender // Current appender for the chunk.
 }
@@ -1237,10 +1238,8 @@ func (s *memSeries) append(t int64, v float64) (success, chunkCreated bool) {
 
 	s.lastValue = v
 
-	s.sampleBuf[0] = s.sampleBuf[1]
-	s.sampleBuf[1] = s.sampleBuf[2]
-	s.sampleBuf[2] = s.sampleBuf[3]
-	s.sampleBuf[3] = sample{t: t, v: v}
+	s.sampleBuf[s.sampleBufPos] = sample{t: t, v: v}
+	s.sampleBufPos = (s.sampleBufPos + 1) % len(s.sampleBuf)
 
 	return true, chunkCreated
 }
@@ -1268,13 +1267,13 @@ func (s *memSeries) iterator(id int) chunkenc.Iterator {
 	if id-s.firstChunkID < len(s.chunks)-1 {
 		return c.chunk.Iterator()
 	}
-	// Serve the last 4 samples for the last chunk from the sample buffer
-	// as their compressed bytes may be mutated by added samples.
+	// Serve the samples for the last chunk from the sample buffer to avoid
+	// decoding the whole chunk for the last few samples.
 	it := &memSafeIterator{
 		Iterator: c.chunk.Iterator(),
 		i:        -1,
 		total:    c.chunk.NumSamples(),
-		buf:      s.sampleBuf,
+		buf:      getSampleBufCopy(s.sampleBuf[:], s.sampleBufPos),
 	}
 	return it
 }
@@ -1296,26 +1295,53 @@ type memSafeIterator struct {
 
 	i     int
 	total int
-	buf   [4]sample
+	buf   []sample
 }
 
 func (it *memSafeIterator) Next() bool {
 	if it.i+1 >= it.total {
+		it.Close()
 		return false
 	}
 	it.i++
-	if it.total-it.i > 4 {
+	if it.total-it.i > len(it.buf) {
 		return it.Iterator.Next()
 	}
 	return true
 }
 
 func (it *memSafeIterator) At() (int64, float64) {
-	if it.total-it.i > 4 {
+	i := it.total - it.i
+	if i > len(it.buf) {
 		return it.Iterator.At()
 	}
-	s := it.buf[4-(it.total-it.i)]
+	s := &it.buf[len(it.buf)-i]
 	return s.t, s.v
+}
+
+func (it *memSafeIterator) Close() {
+	if it.buf != nil {
+		putSampleSlice(it.buf)
+		it.buf = nil
+	}
+}
+
+var samplePool = sync.Pool{}
+
+func getSampleBufCopy(orig []sample, pos int) []sample {
+	var s []sample
+	p := samplePool.Get()
+	if p != nil {
+		s = p.([]sample)
+	} else {
+		s = make([]sample, 0, len(orig))
+	}
+	s = append(s, orig[pos:]...)
+	return append(s, orig[:pos]...)
+}
+
+func putSampleSlice(p []sample) {
+	samplePool.Put(p[:0])
 }
 
 type stringset map[string]struct{}

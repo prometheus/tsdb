@@ -330,6 +330,7 @@ func (it *xorIterator) Next() bool {
 
 	return it.readValue()
 }
+func (it *xorIterator) Close() {}
 
 func (it *xorIterator) readValue() bool {
 	bit, err := it.br.readBit()

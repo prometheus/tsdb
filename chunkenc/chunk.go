@@ -67,6 +67,7 @@ type Iterator interface {
 	At() (int64, float64)
 	Err() error
 	Next() bool
+	Close()
 }
 
 // NewNopIterator returns a new chunk iterator that does not hold any data.
@@ -79,6 +80,7 @@ type nopIterator struct{}
 func (nopIterator) At() (int64, float64) { return 0, 0 }
 func (nopIterator) Next() bool           { return false }
 func (nopIterator) Err() error           { return nil }
+func (nopIterator) Close()               {}
 
 type Pool interface {
 	Put(Chunk) error
