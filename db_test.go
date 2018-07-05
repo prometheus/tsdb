@@ -34,6 +34,10 @@ func openTestDB(t testing.TB, opts *Options) (db *DB, close func()) {
 	tmpdir, err := ioutil.TempDir("", "test")
 	testutil.Ok(t, err)
 
+	if opts == nil {
+		opts = DefaultOptions
+		opts.RetentionDuration = 0
+	}
 	db, err = Open(tmpdir, nil, nil, opts)
 	testutil.Ok(t, err)
 

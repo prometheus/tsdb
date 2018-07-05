@@ -750,14 +750,16 @@ func (db *DB) Snapshot(dir string, withHead bool) error {
 // Querier returns a new querier over the data partition for the given time range.
 // A goroutine must not handle more than one open Querier.
 func (db *DB) Querier(mint, maxt int64) (Querier, error) {
-	// Substract the retention from the current time and convert it to milliseconds so we can compare it with mint, maxt.
-	retentionCutoff := time.Now().Add(-time.Duration(db.opts.RetentionDuration)*time.Millisecond).UnixNano() / int64(time.Millisecond)
-	// Limit the querer to the retention time.
-	if mint < retentionCutoff {
-		mint = retentionCutoff
-	}
-	if maxt < retentionCutoff {
-		maxt = retentionCutoff
+	if db.opts.RetentionDuration > 0 {
+		// Substract the retention from the current time and convert it to milliseconds so we can compare it with mint, maxt.
+		retentionCutoff := time.Now().Add(-time.Duration(db.opts.RetentionDuration)*time.Millisecond).UnixNano() / int64(time.Millisecond)
+		// Limit the querer to the retention time.
+		if mint < retentionCutoff {
+			mint = retentionCutoff
+		}
+		if maxt < retentionCutoff {
+			maxt = retentionCutoff
+		}
 	}
 
 	var blocks []BlockReader
