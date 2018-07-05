@@ -880,6 +880,47 @@ func (*mockCompactorFailing) Compact(dest string, dirs ...string) (ulid.ULID, er
 
 }
 
+func TestDB_RetentionDataQuering(t *testing.T) {
+	opts := DefaultOptions
+	opts.RetentionDuration = 1000
+	db, close := openTestDB(t, opts)
+	defer close()
+	defer db.Close()
+
+	app := db.Appender()
+
+	timeNow := time.Now().UnixNano() / 1e6
+	timeBeforeRetention := timeNow - int64(opts.RetentionDuration) - 1
+
+	lbls := labels.Labels{labels.Label{Name: "name", Value: "value"}}
+	_, err := app.Add(lbls, timeBeforeRetention, 1)
+	_, err = app.Add(lbls, timeNow, 1)
+
+	testutil.Ok(t, err)
+	testutil.Ok(t, app.Commit())
+
+	// Shouldn't return the sample before the retention time.
+	{
+		querier, err := db.Querier(timeBeforeRetention, timeNow)
+		testutil.Ok(t, err)
+		defer querier.Close()
+
+		seriesSet := query(t, querier, labels.NewEqualMatcher(lbls[0].Name, lbls[0].Value))
+		testutil.Equals(t, map[string][]sample{`{` + lbls[0].Name + `="` + lbls[0].Value + `"}`: {{t: timeNow, v: 1}}}, seriesSet)
+	}
+
+	// Shouldn't return any samples since the mint, maxt for the querier are before the retention time.
+	{
+		querier, err := db.Querier(timeBeforeRetention, timeBeforeRetention)
+		testutil.Ok(t, err)
+		defer querier.Close()
+
+		seriesSet := query(t, querier, labels.NewEqualMatcher(lbls[0].Name, lbls[0].Value))
+		testutil.Equals(t, map[string][]sample{}, seriesSet)
+	}
+
+}
+
 func TestDB_Retention(t *testing.T) {
 	db, close := openTestDB(t, nil)
 	defer close()
