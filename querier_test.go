@@ -90,6 +90,8 @@ func (it *listSeriesIterator) Err() error {
 	return nil
 }
 
+func (it *listSeriesIterator) Close() {}
+
 func TestMergedSeriesSet(t *testing.T) {
 
 	cases := []struct {

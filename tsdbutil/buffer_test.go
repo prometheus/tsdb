@@ -158,3 +158,5 @@ func (it *listSeriesIterator) Seek(t int64) bool {
 func (it *listSeriesIterator) Err() error {
 	return nil
 }
+
+func (it *listSeriesIterator) Close() {}

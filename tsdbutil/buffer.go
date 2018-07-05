@@ -84,6 +84,12 @@ func (b *BufferedSeriesIterator) At() (int64, float64) {
 func (b *BufferedSeriesIterator) Err() error {
 	return b.it.Err()
 }
+func (b *BufferedSeriesIterator) Close() {
+	if b != nil && b.it != nil {
+		b.it.Close()
+		b.it = nil
+	}
+}
 
 type sample struct {
 	t int64
@@ -137,6 +143,8 @@ func (it *sampleRingIterator) Err() error {
 func (it *sampleRingIterator) At() (int64, float64) {
 	return it.r.at(it.i)
 }
+
+func (it *sampleRingIterator) Close() {}
 
 func (r *sampleRing) at(i int) (int64, float64) {
 	j := (r.f + i) % len(r.buf)
