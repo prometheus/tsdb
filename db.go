@@ -123,7 +123,7 @@ type dbMetrics struct {
 	compactionsTriggered prometheus.Counter
 	cutoffs              prometheus.Counter
 	cutoffsFailed        prometheus.Counter
-	startTime            prometheus.Gauge
+	startTime            prometheus.GaugeFunc
 	tombCleanTimer       prometheus.Histogram
 }
 
@@ -158,9 +158,19 @@ func newDBMetrics(db *DB, r prometheus.Registerer) *dbMetrics {
 		Name: "prometheus_tsdb_retention_cutoffs_failures_total",
 		Help: "Number of times the database failed to cut off block data from disk.",
 	})
-	m.startTime = prometheus.NewGauge(prometheus.GaugeOpts{
+	m.startTime = prometheus.NewGaugeFunc(prometheus.GaugeOpts{
 		Name: "prometheus_tsdb_start_time_seconds",
 		Help: "Oldest timestamp stored in the database.",
+	}, func() float64 {
+		db.mtx.RLock()
+		defer db.mtx.RUnlock()
+		startTime := time.Now().Unix()
+		for _, b := range db.Blocks() {
+			if b.meta.MinTime < startTime {
+				startTime = b.meta.MinTime
+			}
+		}
+		return float64(startTime)
 	})
 	m.tombCleanTimer = prometheus.NewHistogram(prometheus.HistogramOpts{
 		Name: "prometheus_tsdb_tombstone_cleanup_seconds",
@@ -243,9 +253,6 @@ func Open(dir string, l log.Logger, r prometheus.Registerer, opts *Options) (db 
 	}
 
 	go db.run()
-
-	head := db.Head()
-	db.metrics.startTime.Set(float64(head.minTime))
 
 	return db, nil
 }
