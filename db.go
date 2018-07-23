@@ -164,13 +164,10 @@ func newDBMetrics(db *DB, r prometheus.Registerer) *dbMetrics {
 	}, func() float64 {
 		db.mtx.RLock()
 		defer db.mtx.RUnlock()
-		startTime := time.Now().Unix()
-		for _, b := range db.Blocks() {
-			if b.meta.MinTime < startTime {
-				startTime = b.meta.MinTime
-			}
+		if len(db.blocks) == 0 {
+			return float64(db.head.minTime)
 		}
-		return float64(startTime)
+		return float64(db.blocks[0].meta.MinTime)
 	})
 	m.tombCleanTimer = prometheus.NewHistogram(prometheus.HistogramOpts{
 		Name: "prometheus_tsdb_tombstone_cleanup_seconds",
