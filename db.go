@@ -159,8 +159,8 @@ func newDBMetrics(db *DB, r prometheus.Registerer) *dbMetrics {
 		Help: "Number of times the database failed to cut off block data from disk.",
 	})
 	m.startTime = prometheus.NewGaugeFunc(prometheus.GaugeOpts{
-		Name: "prometheus_tsdb_start_time_seconds",
-		Help: "Oldest timestamp stored in the database.",
+		Name: "prometheus_tsdb_lowest_timestamp",
+		Help: "Lowest timestamp value stored in the database.",
 	}, func() float64 {
 		db.mtx.RLock()
 		defer db.mtx.RUnlock()
