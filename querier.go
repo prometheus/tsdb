@@ -829,8 +829,6 @@ func (it *chunkSeriesIterator) Seek(t int64) (ok bool) {
 }
 
 func (it *chunkSeriesIterator) At() (t int64, v float64) {
-	// Should it panic if it.cur.Err() != nil || it.i >= len(it.chunks)?
-	// What about before Next() or Seek() were called?
 	return it.cur.At()
 }
 
