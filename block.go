@@ -164,6 +164,13 @@ type BlockStats struct {
 	NumTombstones uint64 `json:"numTombstones,omitempty"`
 }
 
+// BlockDesc describes a block by ULID and time range.
+type BlockDesc struct {
+	ULID    ulid.ULID `json:"ulid"`
+	MinTime int64     `json:"minTime"`
+	MaxTime int64     `json:"maxTime"`
+}
+
 // BlockMetaCompaction holds information about compactions a block went through.
 type BlockMetaCompaction struct {
 	// Maximum number of compaction cycles any source block has
@@ -171,6 +178,9 @@ type BlockMetaCompaction struct {
 	Level int `json:"level"`
 	// ULIDs of all source head blocks that went into the block.
 	Sources []ulid.ULID `json:"sources,omitempty"`
+	// Short descriptions of the direct blocks that were used to create
+	// this block.
+	Parents []BlockDesc `json:"parents,omitempty"`
 	Failed  bool        `json:"failed,omitempty"`
 }
 
@@ -424,7 +434,7 @@ func (pb *Block) Delete(mint, maxt int64, ms ...labels.Matcher) error {
 	ir := pb.indexr
 
 	// Choose only valid postings which have chunks in the time-range.
-	stones := memTombstones{}
+	stones := NewMemTombstones()
 
 	var lset labels.Labels
 	var chks []chunks.Meta
@@ -437,10 +447,10 @@ Outer:
 		}
 
 		for _, chk := range chks {
-			if intervalOverlap(mint, maxt, chk.MinTime, chk.MaxTime) {
+			if chk.OverlapsClosedInterval(mint, maxt) {
 				// Delete only until the current values and not beyond.
 				tmin, tmax := clampInterval(mint, maxt, chks[0].MinTime, chks[len(chks)-1].MaxTime)
-				stones[p.At()] = Intervals{{tmin, tmax}}
+				stones.addInterval(p.At(), Interval{tmin, tmax})
 				continue Outer
 			}
 		}
@@ -452,7 +462,7 @@ Outer:
 
 	err = pb.tombstones.Iter(func(id uint64, ivs Intervals) error {
 		for _, iv := range ivs {
-			stones.add(id, iv)
+			stones.addInterval(id, iv)
 			pb.meta.Stats.NumTombstones++
 		}
 		return nil
@@ -468,26 +478,25 @@ Outer:
 	return writeMetaFile(pb.dir, &pb.meta)
 }
 
-// CleanTombstones will rewrite the block if there any tombstones to remove them
-// and returns if there was a re-write.
-func (pb *Block) CleanTombstones(dest string, c Compactor) (bool, error) {
+// CleanTombstones will remove the tombstones and rewrite the block (only if there are any tombstones).
+// If there was a rewrite, then it returns the ULID of the new block written, else nil.
+func (pb *Block) CleanTombstones(dest string, c Compactor) (*ulid.ULID, error) {
 	numStones := 0
 
 	pb.tombstones.Iter(func(id uint64, ivs Intervals) error {
 		numStones += len(ivs)
-
 		return nil
 	})
-
 	if numStones == 0 {
-		return false, nil
+		return nil, nil
 	}
 
-	if _, err := c.Write(dest, pb, pb.meta.MinTime, pb.meta.MaxTime); err != nil {
-		return false, err
+	meta := pb.Meta()
+	uid, err := c.Write(dest, pb, pb.meta.MinTime, pb.meta.MaxTime, &meta)
+	if err != nil {
+		return nil, err
 	}
-
-	return true, nil
+	return &uid, nil
 }
 
 // Snapshot creates snapshot of the block into dir.
@@ -528,6 +537,13 @@ func (pb *Block) Snapshot(dir string) error {
 	}
 
 	return nil
+}
+
+// Returns true if the block overlaps [mint, maxt].
+func (pb *Block) OverlapsClosedInterval(mint, maxt int64) bool {
+	// The block itself is a half-open interval
+	// [pb.meta.MinTime, pb.meta.MaxTime).
+	return pb.meta.MinTime <= maxt && mint < pb.meta.MaxTime
 }
 
 func clampInterval(a, b, mint, maxt int64) (int64, int64) {

@@ -14,14 +14,20 @@
 package tsdb
 
 import (
+	"fmt"
 	"io/ioutil"
 	"math"
 	"math/rand"
 	"os"
+	"path/filepath"
 	"sort"
 	"testing"
+	"time"
 
+	"github.com/oklog/ulid"
 	"github.com/pkg/errors"
+	"github.com/prometheus/tsdb/chunks"
+	"github.com/prometheus/tsdb/index"
 	"github.com/prometheus/tsdb/labels"
 	"github.com/prometheus/tsdb/testutil"
 )
@@ -61,6 +67,31 @@ func query(t testing.TB, q Querier, matchers ...labels.Matcher) map[string][]sam
 	testutil.Ok(t, ss.Err())
 
 	return result
+}
+
+// Ensure that blocks are held in memory in their time order
+// and not in ULID order as they are read from the directory.
+func TestDB_reloadOrder(t *testing.T) {
+	db, close := openTestDB(t, nil)
+	defer close()
+	defer db.Close()
+
+	metas := []*BlockMeta{
+		{ULID: ulid.MustNew(100, nil), MinTime: 90, MaxTime: 100},
+		{ULID: ulid.MustNew(200, nil), MinTime: 70, MaxTime: 80},
+		{ULID: ulid.MustNew(300, nil), MinTime: 100, MaxTime: 110},
+	}
+	for _, m := range metas {
+		bdir := filepath.Join(db.Dir(), m.ULID.String())
+		createEmptyBlock(t, bdir, m)
+	}
+
+	testutil.Ok(t, db.reload())
+	blocks := db.Blocks()
+	testutil.Equals(t, 3, len(blocks))
+	testutil.Equals(t, *metas[1], blocks[0].Meta())
+	testutil.Equals(t, *metas[0], blocks[1].Meta())
+	testutil.Equals(t, *metas[2], blocks[2].Meta())
 }
 
 func TestDataAvailableOnlyAfterCommit(t *testing.T) {
@@ -749,9 +780,102 @@ func TestTombstoneClean(t *testing.T) {
 		}
 
 		for _, b := range db.blocks {
-			testutil.Equals(t, emptyTombstoneReader, b.tombstones)
+			testutil.Equals(t, NewMemTombstones(), b.tombstones)
 		}
 	}
+}
+
+// TestTombstoneCleanFail tests that a failing TombstoneClean doesn't leave any blocks behind.
+// When TombstoneClean errors the original block that should be rebuilt doesn't get deleted so
+// if TombstoneClean leaves any blocks behind these will overlap.
+func TestTombstoneCleanFail(t *testing.T) {
+
+	db, close := openTestDB(t, nil)
+	defer close()
+
+	var expectedBlockDirs []string
+
+	// Create some empty blocks pending for compaction.
+	// totalBlocks should be >=2 so we have enough blocks to trigger compaction failure.
+	totalBlocks := 2
+	for i := 0; i < totalBlocks; i++ {
+		entropy := rand.New(rand.NewSource(time.Now().UnixNano()))
+		uid := ulid.MustNew(ulid.Now(), entropy)
+		meta := &BlockMeta{
+			Version: 2,
+			ULID:    uid,
+		}
+		blockDir := filepath.Join(db.Dir(), uid.String())
+		block := createEmptyBlock(t, blockDir, meta)
+
+		// Add some some fake tombstones to trigger the compaction.
+		tomb := NewMemTombstones()
+		tomb.addInterval(0, Interval{0, 1})
+		block.tombstones = tomb
+
+		db.blocks = append(db.blocks, block)
+		expectedBlockDirs = append(expectedBlockDirs, blockDir)
+	}
+
+	// Initialize the mockCompactorFailing with a room for a single compaction iteration.
+	// mockCompactorFailing will fail on the second iteration so we can check if the cleanup works as expected.
+	db.compactor = &mockCompactorFailing{
+		t:      t,
+		blocks: db.blocks,
+		max:    totalBlocks + 1,
+	}
+
+	// The compactor should trigger a failure here.
+	testutil.NotOk(t, db.CleanTombstones())
+
+	// Now check that the CleanTombstones didn't leave any blocks behind after a failure.
+	actualBlockDirs, err := blockDirs(db.dir)
+	testutil.Ok(t, err)
+	testutil.Equals(t, expectedBlockDirs, actualBlockDirs)
+}
+
+// mockCompactorFailing creates a new empty block on every write and fails when reached the max allowed total.
+type mockCompactorFailing struct {
+	t      *testing.T
+	blocks []*Block
+	max    int
+}
+
+func (*mockCompactorFailing) Plan(dir string) ([]string, error) {
+	return nil, nil
+}
+func (c *mockCompactorFailing) Write(dest string, b BlockReader, mint, maxt int64, parent *BlockMeta) (ulid.ULID, error) {
+	if len(c.blocks) >= c.max {
+		return ulid.ULID{}, fmt.Errorf("the compactor already did the maximum allowed blocks so it is time to fail")
+	}
+
+	entropy := rand.New(rand.NewSource(time.Now().UnixNano()))
+	uid := ulid.MustNew(ulid.Now(), entropy)
+	meta := &BlockMeta{
+		Version: 2,
+		ULID:    uid,
+	}
+
+	block := createEmptyBlock(c.t, filepath.Join(dest, meta.ULID.String()), meta)
+	c.blocks = append(c.blocks, block)
+
+	// Now check that all expected blocks are actually persisted on disk.
+	// This way we make sure that the we have some blocks that are supposed to be removed.
+	var expectedBlocks []string
+	for _, b := range c.blocks {
+		expectedBlocks = append(expectedBlocks, filepath.Join(dest, b.Meta().ULID.String()))
+	}
+	actualBlockDirs, err := blockDirs(dest)
+	testutil.Ok(c.t, err)
+
+	testutil.Equals(c.t, expectedBlocks, actualBlockDirs)
+
+	return block.Meta().ULID, nil
+}
+
+func (*mockCompactorFailing) Compact(dest string, dirs ...string) (ulid.ULID, error) {
+	return ulid.ULID{}, nil
+
 }
 
 func TestDB_Retention(t *testing.T) {
@@ -803,10 +927,8 @@ func TestDB_Retention(t *testing.T) {
 
 	testutil.Equals(t, 2, len(db.blocks))
 
-	// Now call retention.
-	changes, err := db.retentionCutoff()
-	testutil.Ok(t, err)
-	testutil.Assert(t, changes, "there should be changes")
+	// Reload blocks, which should drop blocks beyond the retention boundary.
+	testutil.Ok(t, db.reload())
 	testutil.Equals(t, 1, len(db.blocks))
 	testutil.Equals(t, int64(100), db.blocks[0].meta.MaxTime) // To verify its the right block.
 }
@@ -975,4 +1097,91 @@ func TestOverlappingBlocksDetectsAllOverlaps(t *testing.T) {
 		{Min: 5, Max: 6}: {nc1[5], nc1[7]},                                 // 2-6, 5-7
 		{Min: 8, Max: 9}: {nc1[8], nc1[9]},                                 // 7-10, 8-9
 	}, OverlappingBlocks(nc1))
+}
+
+// Regression test for https://github.com/prometheus/tsdb/issues/347
+func TestChunkAtBlockBoundary(t *testing.T) {
+	db, close := openTestDB(t, nil)
+	defer close()
+	defer db.Close()
+
+	app := db.Appender()
+
+	blockRange := DefaultOptions.BlockRanges[0]
+	label := labels.FromStrings("foo", "bar")
+
+	for i := int64(0); i < 3; i++ {
+		_, err := app.Add(label, i*blockRange, 0)
+		testutil.Ok(t, err)
+		_, err = app.Add(label, i*blockRange+1000, 0)
+		testutil.Ok(t, err)
+	}
+
+	err := app.Commit()
+	testutil.Ok(t, err)
+
+	_, err = db.compact()
+	testutil.Ok(t, err)
+
+	for _, block := range db.blocks {
+		r, err := block.Index()
+		testutil.Ok(t, err)
+		defer r.Close()
+
+		meta := block.Meta()
+
+		p, err := r.Postings(index.AllPostingsKey())
+		testutil.Ok(t, err)
+
+		var (
+			lset labels.Labels
+			chks []chunks.Meta
+		)
+
+		chunkCount := 0
+
+		for p.Next() {
+			err = r.Series(p.At(), &lset, &chks)
+			testutil.Ok(t, err)
+			for _, c := range chks {
+				testutil.Assert(t, meta.MinTime <= c.MinTime && c.MaxTime <= meta.MaxTime,
+					"chunk spans beyond block boundaries: [block.MinTime=%d, block.MaxTime=%d]; [chunk.MinTime=%d, chunk.MaxTime=%d]",
+					meta.MinTime, meta.MaxTime, c.MinTime, c.MaxTime)
+				chunkCount++
+			}
+		}
+		testutil.Assert(t, chunkCount == 1, "expected 1 chunk in block %s, got %d", meta.ULID, chunkCount)
+	}
+}
+
+func TestQuerierWithBoundaryChunks(t *testing.T) {
+	db, close := openTestDB(t, nil)
+	defer close()
+	defer db.Close()
+
+	app := db.Appender()
+
+	blockRange := DefaultOptions.BlockRanges[0]
+	label := labels.FromStrings("foo", "bar")
+
+	for i := int64(0); i < 5; i++ {
+		_, err := app.Add(label, i*blockRange, 0)
+		testutil.Ok(t, err)
+	}
+
+	err := app.Commit()
+	testutil.Ok(t, err)
+
+	_, err = db.compact()
+	testutil.Ok(t, err)
+
+	testutil.Assert(t, len(db.blocks) >= 3, "invalid test, less than three blocks in DB")
+
+	q, err := db.Querier(blockRange, 2*blockRange)
+	testutil.Ok(t, err)
+	defer q.Close()
+
+	// The requested interval covers 2 blocks, so the querier should contain 2 blocks.
+	count := len(q.(*querier).blocks)
+	testutil.Assert(t, count == 2, "expected 2 blocks in querier, got %d", count)
 }
