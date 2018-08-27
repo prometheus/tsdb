@@ -862,8 +862,6 @@ func (db *DB) LabelNames() []string {
 	}
 
 	db.mtx.RLock()
-	defer db.mtx.RUnlock()
-
 	for _, b := range db.blocks {
 		blockIndexr, err := b.Index()
 		if err != nil {
@@ -874,6 +872,7 @@ func (db *DB) LabelNames() []string {
 			labelNamesMap[name] = struct{}{}
 		}
 	}
+	db.mtx.RUnlock()
 
 	labelNames := make([]string, 0, len(labelNamesMap))
 	for name := range labelNamesMap {
@@ -884,37 +883,6 @@ func (db *DB) LabelNames() []string {
 	})
 
 	return labelNames
-}
-
-func sortedStringSliceUnion(s1, s2 []string) []string {
-	var (
-		i, j int
-		n    = len(s1)
-		m    = len(s2)
-	)
-	var union []string
-	for i < n && j < m {
-		if s1[i] < s2[j] {
-			union = append(union, s1[i])
-			i++
-		} else if s1[i] > s2[j] {
-			union = append(union, s2[j])
-			j++
-		} else {
-			union = append(union, s1[i])
-			i++
-			j++
-		}
-	}
-	for i < n {
-		union = append(union, s1[i])
-		i++
-	}
-	for j < m {
-		union = append(union, s2[j])
-		j++
-	}
-	return union
 }
 
 func isBlockDir(fi os.FileInfo) bool {

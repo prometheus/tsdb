@@ -961,8 +961,11 @@ func (h *headIndexReader) LabelValues(names ...string) (index.StringTuples, erro
 
 // LabelNames returns all the unique label names present in the head.
 func (h *headIndexReader) LabelNames() []string {
-	labelNames := make([]string, 0, len(h.head.values))
+	var labelNames []string
 	for name := range h.head.values {
+		if name == "" {
+			continue
+		}
 		labelNames = append(labelNames, name)
 	}
 	return labelNames

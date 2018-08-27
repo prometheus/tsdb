@@ -1301,3 +1301,51 @@ func TestInitializeHeadTimestamp(t *testing.T) {
 		testutil.Equals(t, int64(15000), db.head.MaxTime())
 	})
 }
+func TestDB_LabelNames(t *testing.T) {
+	tests := []struct {
+		sampleLabels [][2]string
+		exp          []string
+	}{
+		{
+			sampleLabels: [][2]string{
+				[2]string{"name1", "value1"},
+				[2]string{"name3", "value3"},
+				[2]string{"name2", "value2"},
+			},
+			exp: []string{"name1", "name2", "name3"},
+		},
+		{
+			sampleLabels: [][2]string{
+				[2]string{"name2", "value3"},
+				[2]string{"name1", "value1"},
+				[2]string{"name2", "value2"},
+			},
+			exp: []string{"name1", "name2"},
+		},
+	}
+
+	for _, tst := range tests {
+		db, close := openTestDB(t, nil)
+		defer close()
+		defer db.Close()
+
+		app := db.Appender()
+
+		blockRange := DefaultOptions.BlockRanges[0]
+		for i := int64(0); i < 5; i++ {
+			for _, tuple := range tst.sampleLabels {
+				label := labels.FromStrings(tuple[0], tuple[1])
+				_, err := app.Add(label, i*blockRange, 0)
+				testutil.Ok(t, err)
+			}
+		}
+
+		err := app.Commit()
+		testutil.Ok(t, err)
+
+		_, err = db.compact()
+		testutil.Ok(t, err)
+
+		testutil.Equals(t, tst.exp, db.LabelNames())
+	}
+}

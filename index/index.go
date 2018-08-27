@@ -940,6 +940,9 @@ func (r *Reader) LabelNames() []string {
 	for key := range r.labels {
 		names := strings.Split(key, sep)
 		for _, name := range names {
+			if name == allPostingsKey.Name {
+				continue
+			}
 			labelNames[name] = struct{}{}
 		}
 	}
