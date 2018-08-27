@@ -1476,3 +1476,11 @@ func (m mockIndex) LabelIndices() ([][]string, error) {
 
 	return res, nil
 }
+
+func (m mockIndex) LabelNames() []string {
+	labelNames := make([]string, 0, len(m.labelIndex))
+	for name := range m.labelIndex {
+		labelNames = append(labelNames, name)
+	}
+	return labelNames
+}

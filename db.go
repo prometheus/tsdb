@@ -852,6 +852,71 @@ func (db *DB) CleanTombstones() (err error) {
 	return errors.Wrap(db.reload(), "reload blocks")
 }
 
+// LabelNames returns all the unique label names present in the DB in sorted order.
+func (db *DB) LabelNames() []string {
+	headIndexr, _ := db.head.Index()
+	labelNamesMap := make(map[string]struct{})
+
+	for _, name := range headIndexr.LabelNames() {
+		labelNamesMap[name] = struct{}{}
+	}
+
+	db.mtx.RLock()
+	defer db.mtx.RUnlock()
+
+	for _, b := range db.blocks {
+		blockIndexr, err := b.Index()
+		if err != nil {
+			level.Error(db.logger).Log("msg", "block index reader fail", "err", err)
+			continue
+		}
+		for _, name := range blockIndexr.LabelNames() {
+			labelNamesMap[name] = struct{}{}
+		}
+	}
+
+	labelNames := make([]string, 0, len(labelNamesMap))
+	for name := range labelNamesMap {
+		labelNames = append(labelNames, name)
+	}
+	sort.Slice(labelNames, func(i, j int) bool {
+		return labelNames[i] < labelNames[j]
+	})
+
+	return labelNames
+}
+
+func sortedStringSliceUnion(s1, s2 []string) []string {
+	var (
+		i, j int
+		n    = len(s1)
+		m    = len(s2)
+	)
+	var union []string
+	for i < n && j < m {
+		if s1[i] < s2[j] {
+			union = append(union, s1[i])
+			i++
+		} else if s1[i] > s2[j] {
+			union = append(union, s2[j])
+			j++
+		} else {
+			union = append(union, s1[i])
+			i++
+			j++
+		}
+	}
+	for i < n {
+		union = append(union, s1[i])
+		i++
+	}
+	for j < m {
+		union = append(union, s2[j])
+		j++
+	}
+	return union
+}
+
 func isBlockDir(fi os.FileInfo) bool {
 	if !fi.IsDir() {
 		return false

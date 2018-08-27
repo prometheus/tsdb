@@ -933,6 +933,23 @@ func (r *Reader) SortedPostings(p Postings) Postings {
 	return p
 }
 
+// LabelNames returns all the unique label names present in the index.
+func (r *Reader) LabelNames() []string {
+	const sep = "\xff"
+	labelNames := make(map[string]struct{})
+	for key := range r.labels {
+		names := strings.Split(key, sep)
+		for _, name := range names {
+			labelNames[name] = struct{}{}
+		}
+	}
+	labelNamesSlice := make([]string, 0, len(labelNames))
+	for name := range labelNames {
+		labelNamesSlice = append(labelNamesSlice, name)
+	}
+	return labelNamesSlice
+}
+
 type stringTuples struct {
 	l int      // tuple length
 	s []string // flattened tuple entries

@@ -84,6 +84,9 @@ type IndexReader interface {
 	// LabelIndices returns a list of string tuples for which a label value index exists.
 	LabelIndices() ([][]string, error)
 
+	// LabelNames returns all the unique label names present in the index.
+	LabelNames() []string
+
 	// Close releases the underlying resources of the reader.
 	Close() error
 }
@@ -392,6 +395,10 @@ func (r blockIndexReader) LabelIndices() ([][]string, error) {
 	return ss, errors.Wrapf(err, "block: %s", r.b.Meta().ULID)
 }
 
+func (r blockIndexReader) LabelNames() []string {
+	return r.b.LabelNames()
+}
+
 func (r blockIndexReader) Close() error {
 	r.b.pendingReaders.Done()
 	return nil
@@ -544,6 +551,11 @@ func (pb *Block) OverlapsClosedInterval(mint, maxt int64) bool {
 	// The block itself is a half-open interval
 	// [pb.meta.MinTime, pb.meta.MaxTime).
 	return pb.meta.MinTime <= maxt && mint < pb.meta.MaxTime
+}
+
+// LabelNames returns all the unique label names present in the Block in sorted order.
+func (pb *Block) LabelNames() []string {
+	return pb.indexr.LabelNames()
 }
 
 func clampInterval(a, b, mint, maxt int64) (int64, int64) {
