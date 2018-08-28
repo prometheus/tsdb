@@ -853,26 +853,45 @@ func (db *DB) CleanTombstones() (err error) {
 }
 
 // LabelNames returns all the unique label names present in the DB in sorted order.
-func (db *DB) LabelNames() []string {
-	headIndexr, _ := db.head.Index()
+func (db *DB) LabelNames() ([]string, error) {
+	headIndexr, err := db.head.Index()
+	if err != nil {
+		return nil, errors.Wrap(err, "get head IndexReader")
+	}
 	labelNamesMap := make(map[string]struct{})
 
-	for _, name := range headIndexr.LabelNames() {
+	names, err := headIndexr.LabelNames()
+	if err != nil {
+		return nil, errors.Wrap(err, "LabelNames() from head IndexReader")
+	}
+	for _, name := range names {
 		labelNamesMap[name] = struct{}{}
+	}
+	err = headIndexr.Close()
+	if err != nil {
+		return nil, errors.Wrap(err, "close head IndexReader")
 	}
 
 	db.mtx.RLock()
-	for _, b := range db.blocks {
+	blocks := db.blocks[:]
+	db.mtx.RUnlock()
+	for _, b := range blocks {
 		blockIndexr, err := b.Index()
 		if err != nil {
-			level.Error(db.logger).Log("msg", "block index reader fail", "err", err)
-			continue
+			return nil, errors.Wrap(err, "get block IndexReader")
 		}
-		for _, name := range blockIndexr.LabelNames() {
+		names, err := blockIndexr.LabelNames()
+		if err != nil {
+			return nil, errors.Wrap(err, "LabelNames() from block IndexReader")
+		}
+		for _, name := range names {
 			labelNamesMap[name] = struct{}{}
 		}
+		err = blockIndexr.Close()
+		if err != nil {
+			return nil, errors.Wrap(err, "close block IndexReader")
+		}
 	}
-	db.mtx.RUnlock()
 
 	labelNames := make([]string, 0, len(labelNamesMap))
 	for name := range labelNamesMap {
@@ -882,7 +901,7 @@ func (db *DB) LabelNames() []string {
 		return labelNames[i] < labelNames[j]
 	})
 
-	return labelNames
+	return labelNames, nil
 }
 
 func isBlockDir(fi os.FileInfo) bool {

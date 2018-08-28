@@ -84,8 +84,8 @@ type IndexReader interface {
 	// LabelIndices returns a list of string tuples for which a label value index exists.
 	LabelIndices() ([][]string, error)
 
-	// LabelNames returns all the unique label names present in the index.
-	LabelNames() []string
+	// LabelNames returns all the unique label names present in the index in sorted order.
+	LabelNames() ([]string, error)
 
 	// Close releases the underlying resources of the reader.
 	Close() error
@@ -395,7 +395,7 @@ func (r blockIndexReader) LabelIndices() ([][]string, error) {
 	return ss, errors.Wrapf(err, "block: %s", r.b.Meta().ULID)
 }
 
-func (r blockIndexReader) LabelNames() []string {
+func (r blockIndexReader) LabelNames() ([]string, error) {
 	return r.b.LabelNames()
 }
 
@@ -554,7 +554,7 @@ func (pb *Block) OverlapsClosedInterval(mint, maxt int64) bool {
 }
 
 // LabelNames returns all the unique label names present in the Block in sorted order.
-func (pb *Block) LabelNames() []string {
+func (pb *Block) LabelNames() ([]string, error) {
 	return pb.indexr.LabelNames()
 }
 

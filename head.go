@@ -960,7 +960,9 @@ func (h *headIndexReader) LabelValues(names ...string) (index.StringTuples, erro
 }
 
 // LabelNames returns all the unique label names present in the head.
-func (h *headIndexReader) LabelNames() []string {
+func (h *headIndexReader) LabelNames() ([]string, error) {
+	h.head.symMtx.RLock()
+	defer h.head.symMtx.RUnlock()
 	var labelNames []string
 	for name := range h.head.values {
 		if name == "" {
@@ -968,7 +970,10 @@ func (h *headIndexReader) LabelNames() []string {
 		}
 		labelNames = append(labelNames, name)
 	}
-	return labelNames
+	sort.Slice(labelNames, func(i, j int) bool {
+		return labelNames[i] < labelNames[j]
+	})
+	return labelNames, nil
 }
 
 // Postings returns the postings list iterator for the label pair.

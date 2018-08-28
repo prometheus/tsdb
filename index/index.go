@@ -38,6 +38,8 @@ const (
 
 	indexFormatV1 = 1
 	indexFormatV2 = 2
+
+	labelNameSeperator = "\xff"
 )
 
 type indexWriterSeries struct {
@@ -848,9 +850,8 @@ func (r *Reader) SymbolTable() map[uint32]string {
 
 // LabelValues returns value tuples that exist for the given label name tuples.
 func (r *Reader) LabelValues(names ...string) (StringTuples, error) {
-	const sep = "\xff"
 
-	key := strings.Join(names, sep)
+	key := strings.Join(names, labelNameSeperator)
 	off, ok := r.labels[key]
 	if !ok {
 		// XXX(fabxc): hot fix. Should return a partial data error and handle cases
@@ -882,12 +883,10 @@ func (emptyStringTuples) Len() int                   { return 0 }
 
 // LabelIndices returns a for which labels or label tuples value indices exist.
 func (r *Reader) LabelIndices() ([][]string, error) {
-	const sep = "\xff"
-
 	res := [][]string{}
 
 	for s := range r.labels {
-		res = append(res, strings.Split(s, sep))
+		res = append(res, strings.Split(s, labelNameSeperator))
 	}
 	return res, nil
 }
@@ -934,23 +933,25 @@ func (r *Reader) SortedPostings(p Postings) Postings {
 }
 
 // LabelNames returns all the unique label names present in the index.
-func (r *Reader) LabelNames() []string {
-	const sep = "\xff"
-	labelNames := make(map[string]struct{})
+func (r *Reader) LabelNames() ([]string, error) {
+	labelNamesMap := make(map[string]struct{})
 	for key := range r.labels {
-		names := strings.Split(key, sep)
+		names := strings.Split(key, labelNameSeperator)
 		for _, name := range names {
 			if name == allPostingsKey.Name {
 				continue
 			}
-			labelNames[name] = struct{}{}
+			labelNamesMap[name] = struct{}{}
 		}
 	}
-	labelNamesSlice := make([]string, 0, len(labelNames))
-	for name := range labelNames {
-		labelNamesSlice = append(labelNamesSlice, name)
+	labelNames := make([]string, 0, len(labelNamesMap))
+	for name := range labelNamesMap {
+		labelNames = append(labelNames, name)
 	}
-	return labelNamesSlice
+	sort.Slice(labelNames, func(i, j int) bool {
+		return labelNames[i] < labelNames[j]
+	})
+	return labelNames, nil
 }
 
 type stringTuples struct {
