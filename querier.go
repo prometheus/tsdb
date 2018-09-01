@@ -690,7 +690,7 @@ func (s *chainedSeries) Labels() labels.Labels {
 }
 
 func (s *chainedSeries) Iterator() SeriesIterator {
-	return newChainedSeriesIterator(s.series...)
+	return newVerticalMergedSeriesIterator(s.series...)
 }
 
 // chainedSeriesIterator implements a series iterater over a list
@@ -748,6 +748,87 @@ func (it *chainedSeriesIterator) At() (t int64, v float64) {
 
 func (it *chainedSeriesIterator) Err() error {
 	return it.cur.Err()
+}
+
+// verticalMergedSeriesIterator implements a series iterater over a list
+// of time-sorted, overlapping iterators.
+type verticalMergedSeriesIterator struct {
+	a, b                  SeriesIterator
+	aok, bok, initialized bool
+
+	curT int64
+	curV float64
+}
+
+func newVerticalMergedSeriesIterator(s ...Series) SeriesIterator {
+	if len(s) == 1 {
+		return s[0].Iterator()
+	} else if len(s) == 2 {
+		return &verticalMergedSeriesIterator{
+			a: s[0].Iterator(),
+			b: s[1].Iterator(),
+		}
+	}
+	return &verticalMergedSeriesIterator{
+		a: s[0].Iterator(),
+		b: newVerticalMergedSeriesIterator(s[1:]...),
+	}
+}
+
+func (it *verticalMergedSeriesIterator) Seek(t int64) bool {
+	it.aok, it.bok = it.a.Seek(t), it.b.Seek(t)
+	it.initialized = true
+	return it.Next()
+}
+
+func (it *verticalMergedSeriesIterator) Next() bool {
+
+	if !it.initialized {
+		it.aok = it.a.Next()
+		it.bok = it.b.Next()
+		it.initialized = true
+	}
+
+	if !it.aok && !it.bok {
+		return false
+	}
+
+	if !it.aok {
+		it.curT, it.curV = it.b.At()
+		it.bok = it.b.Next()
+		return true
+	}
+	if !it.bok {
+		it.curT, it.curV = it.a.At()
+		it.aok = it.a.Next()
+		return true
+	}
+
+	acurT, acurV := it.a.At()
+	bcurT, bcurV := it.b.At()
+	if acurT < bcurT {
+		it.curT, it.curV = acurT, acurV
+		it.aok = it.a.Next()
+	} else if acurT > bcurT {
+		it.curT, it.curV = bcurT, bcurV
+		it.bok = it.b.Next()
+	} else {
+		it.curT, it.curV = acurT, acurV
+		it.aok = it.a.Next()
+		it.bok = it.b.Next()
+	}
+	return true
+}
+
+func (it *verticalMergedSeriesIterator) At() (t int64, v float64) {
+	return it.curT, it.curV
+}
+
+func (it *verticalMergedSeriesIterator) Err() error {
+	if it.a.Err() != nil {
+		return it.a.Err()
+	}
+	return it.b.Err()
 }
 
 // chunkSeriesIterator implements a series iterator on top

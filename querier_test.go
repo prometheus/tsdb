@@ -1096,6 +1096,91 @@ func TestSeriesIterator(t *testing.T) {
 		})
 	})
 
+	t.Run("Chain", func(t *testing.T) {
+		itcasesExtra := []struct {
+			a, b, c []sample
+			exp     []sample
+
+			mint, maxt int64
+		}{
+			{
+				a: []sample{
+					{1, 2}, {2, 3}, {3, 5}, {6, 1},
+				},
+				b: []sample{
+					{5, 49}, {7, 89}, {9, 8},
+				},
+				c: []sample{
+					{2, 33}, {4, 44}, {10, 3},
+				},
+
+				exp: []sample{
+					{1, 2}, {2, 3}, {3, 5}, {4, 44}, {5, 49}, {6, 1}, {7, 89}, {9, 8}, {10, 3},
+				},
+				mint: math.MinInt64,
+				maxt: math.MaxInt64,
+			},
+			{
+				a: []sample{
+					{1, 2}, {2, 3}, {9, 5}, {13, 1},
+				},
+				b: []sample{},
+				c: []sample{
+					{1, 23}, {2, 342}, {3, 25}, {6, 11},
+				},
+
+				exp: []sample{
+					{1, 2}, {2, 3}, {3, 25}, {6, 11}, {9, 5}, {13, 1},
+				},
+				mint: math.MinInt64,
+				maxt: math.MaxInt64,
+			},
+		}
+		for _, tc := range append(itcases, itcasesExtra...) {
+			a, b, c := itSeries{newListSeriesIterator(tc.a)},
+				itSeries{newListSeriesIterator(tc.b)},
+				itSeries{newListSeriesIterator(tc.c)}
+
+			res := newVerticalMergedSeriesIterator(a, b, c)
+			exp := newListSeriesIterator(tc.exp)
+
+			smplExp, errExp := expandSeriesIterator(exp)
+			smplRes, errRes := expandSeriesIterator(res)
+
+			testutil.Equals(t, errExp, errRes)
+			testutil.Equals(t, smplExp, smplRes)
+		}
+
+		t.Run("Seek", func(t *testing.T) {
+			for _, tc := range seekcases {
+				a, b, c := itSeries{newListSeriesIterator(tc.a)},
+					itSeries{newListSeriesIterator(tc.b)},
+					itSeries{newListSeriesIterator(tc.c)}
+
+				res := newVerticalMergedSeriesIterator(a, b, c)
+				exp := newListSeriesIterator(tc.exp)
+
+				testutil.Equals(t, tc.success, res.Seek(tc.seek))
+
+				if tc.success {
+					// Init the list and then proceed to check.
+					remaining := exp.Next()
+					testutil.Assert(t, remaining == true, "")
+
+					for remaining {
+						sExp, eExp := exp.At()
+						sRes, eRes := res.At()
+						testutil.Equals(t, eExp, eRes)
+						testutil.Equals(t, sExp, sRes)
+
+						remaining = exp.Next()
+						testutil.Equals(t, remaining, res.Next())
+					}
+				}
+			}
+		})
+	})
+
 	return
 }
 
