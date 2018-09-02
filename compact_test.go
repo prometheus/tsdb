@@ -302,6 +302,52 @@ func TestLeveledCompactor_plan(t *testing.T) {
 			},
 			expected: []string{"7", "8"},
 		},
+		{
+			metas: []dirMeta{
+				metaRange("1", 0, 20, nil),
+			},
+			expected: nil,
+		},
+		{
+			metas: []dirMeta{
+				metaRange("1", 0, 20, nil),
+				metaRange("2", 20, 40, nil),
+			},
+			expected: nil,
+		},
+		{
+			metas: []dirMeta{
+				metaRange("1", 0, 20, nil),
+				metaRange("2", 19, 40, nil),
+				metaRange("3", 40, 60, nil),
+			},
+			expected: []string{"1", "2"},
+		},
+		{
+			metas: []dirMeta{
+				metaRange("1", 0, 20, nil),
+				metaRange("2", 20, 40, nil),
+				metaRange("3", 30, 50, nil),
+			},
+			expected: []string{"2", "3"},
+		},
+		{
+			metas: []dirMeta{
+				metaRange("1", 0, 20, nil),
+				metaRange("2", 10, 40, nil),
+				metaRange("3", 30, 50, nil),
+			},
+			expected: []string{"1", "2", "3"},
+		},
+		{
+			metas: []dirMeta{
+				metaRange("5", 0, 360, nil),
+				metaRange("6", 340, 560, nil),
+				metaRange("7", 360, 420, nil),
+				metaRange("8", 420, 540, nil),
+			},
+			expected: []string{"5", "6", "7"},
+		},
 	}
 
 	for _, c := range cases {

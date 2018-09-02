@@ -172,11 +172,20 @@ func (c *LeveledCompactor) plan(dms []dirMeta) ([]string, error) {
 		return dms[i].meta.MinTime < dms[j].meta.MinTime
 	})
 
+	var res []string
+	// Checking for overlapping blocks.
+	for _, dm := range c.selectOverlappingDirs(dms) {
+		res = append(res, dm.dir)
+	}
+	if len(res) > 0 {
+		return res, nil
+	}
+
 	// We do not include a recently created block with max(minTime), so the block which was just created from WAL.
 	// This gives users a window of a full block size to piece-wise backup new data without having to care about data overlap.
 	dms = dms[:len(dms)-1]
 
-	var res []string
+	// No overlapping blocks, do compaction the usual way.
 	for _, dm := range c.selectDirs(dms) {
 		res = append(res, dm.dir)
 	}
@@ -236,6 +245,31 @@ func (c *LeveledCompactor) selectDirs(ds []dirMeta) []dirMeta {
 	}
 
 	return nil
+}
+
+// selectOverlappingDirs returns the dir metas of the blocks whose ranges are overlapping,
+// that should be compacted into a single new block.
+func (c *LeveledCompactor) selectOverlappingDirs(ds []dirMeta) []dirMeta {
+	if len(ds) < 2 {
+		return nil
+	}
+	startBlock, endBlock := -1, -1
+	prevMaxTime := ds[0].meta.MaxTime
+	for i, d := range ds[1:] {
+		if d.meta.MinTime < prevMaxTime {
+			if startBlock < 0 {
+				startBlock = i
+			}
+			endBlock = i + 1
+		} else if startBlock >= 0 {
+			break
+		}
+		prevMaxTime = d.meta.MaxTime
+	}
+	if startBlock < 0 {
+		return nil
+	}
+	return ds[startBlock : endBlock+1]
 }
 
 // splitByRange splits the directories by the time range. The range sequence starts at 0.
