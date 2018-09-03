@@ -198,7 +198,40 @@ func (w *Writer) write(b []byte) error {
 	return err
 }
 
-func (w *Writer) WriteChunks(chks ...Meta) error {
+// mergeOverlappingChunks removes the samples whose timestamp is overlapping.
+// The first appearing sample is retained in case there is overlapping.
+func (w *Writer) mergeOverlappingChunks(chks []Meta) ([]Meta, error) {
+	if len(chks) < 2 {
+		return chks, nil
+	}
+	var newChks []Meta
+	newChks = append(newChks, chks[0])
+	last := 0
+	for _, c := range chks[1:] {
+		if c.MinTime > newChks[last].MaxTime {
+			newChks = append(newChks, c)
+			continue
+		}
+		nc := &newChks[last]
+		if c.MaxTime > nc.MaxTime {
+			nc.MaxTime = c.MaxTime
+		}
+		chk, err := chunkenc.MergeChunks(nc.Chunk, c.Chunk)
+		if err != nil {
+			return nil, err
+		}
+		nc.Chunk = chk
+	}
+
+	return newChks, nil
+}
+
+func (w *Writer) WriteChunks(chks ...Meta) ([]Meta, error) {
+	chks, err := w.mergeOverlappingChunks(chks)
+	if err != nil {
+		return nil, err
+	}
+
 	// Calculate maximum space we need and cut a new segment in case
 	// we don't fit into the current one.
 	maxLen := int64(binary.MaxVarintLen32) // The number of chunks.
@@ -210,7 +243,7 @@ func (w *Writer) WriteChunks(chks ...Meta) error {
 
 	if w.wbuf == nil || w.n > w.segmentSize || newsz > w.segmentSize && maxLen <= w.segmentSize {
 		if err := w.cut(); err != nil {
-			return err
+			return nil, err
 		}
 	}
 
@@ -226,26 +259,26 @@ func (w *Writer) WriteChunks(chks ...Meta) error {
 		n := binary.PutUvarint(b[:], uint64(len(chk.Chunk.Bytes())))
 
 		if err := w.write(b[:n]); err != nil {
-			return err
+			return nil, err
 		}
 		b[0] = byte(chk.Chunk.Encoding())
 		if err := w.write(b[:1]); err != nil {
-			return err
+			return nil, err
 		}
 		if err := w.write(chk.Chunk.Bytes()); err != nil {
-			return err
+			return nil, err
 		}
 
 		w.crc32.Reset()
 		if err := chk.writeHash(w.crc32); err != nil {
-			return err
+			return nil, err
 		}
 		if err := w.write(w.crc32.Sum(b[:0])); err != nil {
-			return err
+			return nil, err
 		}
 	}
 
-	return nil
+	return chks, nil
 }
 
 func (w *Writer) seq() int {

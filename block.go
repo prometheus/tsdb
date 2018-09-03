@@ -100,9 +100,11 @@ type StringTuples interface {
 type ChunkWriter interface {
 	// WriteChunks writes several chunks. The Chunk field of the ChunkMetas
 	// must be populated.
+	// After successful write, it returns the actual chunks that it wrote.
+	// It might differ from original if there was overlapping between chunks.
 	// After returning successfully, the Ref fields in the ChunkMetas
 	// are set and can be used to retrieve the chunks from the written data.
-	WriteChunks(chunks ...chunks.Meta) error
+	WriteChunks(chunks ...chunks.Meta) ([]chunks.Meta, error)
 
 	// Close writes any required finalization and closes the resources
 	// associated with the underlying writer.

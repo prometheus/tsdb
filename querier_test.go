@@ -1051,52 +1051,6 @@ func TestSeriesIterator(t *testing.T) {
 	})
 
 	t.Run("Chain", func(t *testing.T) {
-		for _, tc := range itcases {
-			a, b, c := itSeries{newListSeriesIterator(tc.a)},
-				itSeries{newListSeriesIterator(tc.b)},
-				itSeries{newListSeriesIterator(tc.c)}
-
-			res := newChainedSeriesIterator(a, b, c)
-			exp := newListSeriesIterator(tc.exp)
-
-			smplExp, errExp := expandSeriesIterator(exp)
-			smplRes, errRes := expandSeriesIterator(res)
-
-			testutil.Equals(t, errExp, errRes)
-			testutil.Equals(t, smplExp, smplRes)
-		}
-
-		t.Run("Seek", func(t *testing.T) {
-			for _, tc := range seekcases {
-				a, b, c := itSeries{newListSeriesIterator(tc.a)},
-					itSeries{newListSeriesIterator(tc.b)},
-					itSeries{newListSeriesIterator(tc.c)}
-
-				res := newChainedSeriesIterator(a, b, c)
-				exp := newListSeriesIterator(tc.exp)
-
-				testutil.Equals(t, tc.success, res.Seek(tc.seek))
-
-				if tc.success {
-					// Init the list and then proceed to check.
-					remaining := exp.Next()
-					testutil.Assert(t, remaining == true, "")
-
-					for remaining {
-						sExp, eExp := exp.At()
-						sRes, eRes := res.At()
-						testutil.Equals(t, eExp, eRes)
-						testutil.Equals(t, sExp, sRes)
-
-						remaining = exp.Next()
-						testutil.Equals(t, remaining, res.Next())
-					}
-				}
-			}
-		})
-	})
-
-	t.Run("Chain", func(t *testing.T) {
 		itcasesExtra := []struct {
 			a, b, c []sample
 			exp     []sample
@@ -1141,7 +1095,7 @@ func TestSeriesIterator(t *testing.T) {
 				itSeries{newListSeriesIterator(tc.b)},
 				itSeries{newListSeriesIterator(tc.c)}
 
-			res := newVerticalMergedSeriesIterator(a, b, c)
+			res := newVerticalMergeSeriesIterator(a, b, c)
 			exp := newListSeriesIterator(tc.exp)
 
 			smplExp, errExp := expandSeriesIterator(exp)
@@ -1157,7 +1111,7 @@ func TestSeriesIterator(t *testing.T) {
 					itSeries{newListSeriesIterator(tc.b)},
 					itSeries{newListSeriesIterator(tc.c)}
 
-				res := newVerticalMergedSeriesIterator(a, b, c)
+				res := newVerticalMergeSeriesIterator(a, b, c)
 				exp := newListSeriesIterator(tc.exp)
 
 				testutil.Equals(t, tc.success, res.Seek(tc.seek))

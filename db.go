@@ -506,9 +506,6 @@ func (db *DB) reload() (err error) {
 	sort.Slice(blocks, func(i, j int) bool {
 		return blocks[i].Meta().MinTime < blocks[j].Meta().MinTime
 	})
-	if err := validateBlockSequence(blocks); err != nil {
-		return errors.Wrap(err, "invalid block sequence")
-	}
 
 	// Swap in new blocks first for subsequently created readers to be seen.
 	// Then close previous blocks, which may block for pending readers to complete.
@@ -541,25 +538,6 @@ func (db *DB) reload() (err error) {
 	maxt := blocks[len(blocks)-1].Meta().MaxTime
 
 	return errors.Wrap(db.head.Truncate(maxt), "head truncate failed")
-}
-
-// validateBlockSequence returns error if given block meta files indicate that some blocks overlaps within sequence.
-func validateBlockSequence(bs []*Block) error {
-	if len(bs) <= 1 {
-		return nil
-	}
-
-	var metas []BlockMeta
-	for _, b := range bs {
-		metas = append(metas, b.meta)
-	}
-
-	overlaps := OverlappingBlocks(metas)
-	if len(overlaps) > 0 {
-		return errors.Errorf("block time ranges overlap: %s", overlaps)
-	}
-
-	return nil
 }
 
 // TimeRange specifies minTime and maxTime range.

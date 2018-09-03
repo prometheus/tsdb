@@ -690,69 +690,12 @@ func (s *chainedSeries) Labels() labels.Labels {
 }
 
 func (s *chainedSeries) Iterator() SeriesIterator {
-	return newVerticalMergedSeriesIterator(s.series...)
+	return newVerticalMergeSeriesIterator(s.series...)
 }
 
-// chainedSeriesIterator implements a series iterater over a list
-// of time-sorted, non-overlapping iterators.
-type chainedSeriesIterator struct {
-	series []Series // series in time order
-
-	i   int
-	cur SeriesIterator
-}
-
-func newChainedSeriesIterator(s ...Series) *chainedSeriesIterator {
-	return &chainedSeriesIterator{
-		series: s,
-		i:      0,
-		cur:    s[0].Iterator(),
-	}
-}
-
-func (it *chainedSeriesIterator) Seek(t int64) bool {
-	// We just scan the chained series sequentially as they are already
-	// pre-selected by relevant time and should be accessed sequentially anyway.
-	for i, s := range it.series[it.i:] {
-		cur := s.Iterator()
-		if !cur.Seek(t) {
-			continue
-		}
-		it.cur = cur
-		it.i += i
-		return true
-	}
-	return false
-}
-
-func (it *chainedSeriesIterator) Next() bool {
-	if it.cur.Next() {
-		return true
-	}
-	if err := it.cur.Err(); err != nil {
-		return false
-	}
-	if it.i == len(it.series)-1 {
-		return false
-	}
-
-	it.i++
-	it.cur = it.series[it.i].Iterator()
-
-	return it.Next()
-}
-
-func (it *chainedSeriesIterator) At() (t int64, v float64) {
-	return it.cur.At()
-}
-
-func (it *chainedSeriesIterator) Err() error {
-	return it.cur.Err()
-}
-
-// verticalMergedSeriesIterator implements a series iterater over a list
+// verticalMergeSeriesIterator implements a series iterater over a list
 // of time-sorted, overlapping iterators.
-type verticalMergedSeriesIterator struct {
+type verticalMergeSeriesIterator struct {
 	a, b                  SeriesIterator
 	aok, bok, initialized bool
 
@@ -760,28 +703,28 @@ type verticalMergedSeriesIterator struct {
 	curV float64
 }
 
-func newVerticalMergedSeriesIterator(s ...Series) SeriesIterator {
+func newVerticalMergeSeriesIterator(s ...Series) SeriesIterator {
 	if len(s) == 1 {
 		return s[0].Iterator()
 	} else if len(s) == 2 {
-		return &verticalMergedSeriesIterator{
+		return &verticalMergeSeriesIterator{
 			a: s[0].Iterator(),
 			b: s[1].Iterator(),
 		}
 	}
-	return &verticalMergedSeriesIterator{
+	return &verticalMergeSeriesIterator{
 		a: s[0].Iterator(),
-		b: newVerticalMergedSeriesIterator(s[1:]...),
+		b: newVerticalMergeSeriesIterator(s[1:]...),
 	}
 }
 
-func (it *verticalMergedSeriesIterator) Seek(t int64) bool {
+func (it *verticalMergeSeriesIterator) Seek(t int64) bool {
 	it.aok, it.bok = it.a.Seek(t), it.b.Seek(t)
 	it.initialized = true
 	return it.Next()
 }
 
-func (it *verticalMergedSeriesIterator) Next() bool {
+func (it *verticalMergeSeriesIterator) Next() bool {
 
 	if !it.initialized {
 		it.aok = it.a.Next()
@@ -813,18 +756,18 @@ func (it *verticalMergedSeriesIterator) Next() bool {
 		it.curT, it.curV = bcurT, bcurV
 		it.bok = it.b.Next()
 	} else {
-		it.curT, it.curV = acurT, acurV
+		it.curT, it.curV = bcurT, bcurV
 		it.aok = it.a.Next()
 		it.bok = it.b.Next()
 	}
 	return true
 }
 
-func (it *verticalMergedSeriesIterator) At() (t int64, v float64) {
+func (it *verticalMergeSeriesIterator) At() (t int64, v float64) {
 	return it.curT, it.curV
 }
 
-func (it *verticalMergedSeriesIterator) Err() error {
+func (it *verticalMergeSeriesIterator) Err() error {
 	if it.a.Err() != nil {
 		return it.a.Err()
 	}

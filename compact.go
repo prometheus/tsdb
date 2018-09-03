@@ -264,7 +264,9 @@ func (c *LeveledCompactor) selectOverlappingDirs(ds []dirMeta) []dirMeta {
 		} else if startBlock >= 0 {
 			break
 		}
-		prevMaxTime = d.meta.MaxTime
+		if d.meta.MaxTime > prevMaxTime {
+			prevMaxTime = d.meta.MaxTime
+		}
 	}
 	if startBlock < 0 {
 		return nil
@@ -443,7 +445,7 @@ type instrumentedChunkWriter struct {
 	trange  prometheus.Histogram
 }
 
-func (w *instrumentedChunkWriter) WriteChunks(chunks ...chunks.Meta) error {
+func (w *instrumentedChunkWriter) WriteChunks(chunks ...chunks.Meta) ([]chunks.Meta, error) {
 	for _, c := range chunks {
 		w.size.Observe(float64(len(c.Chunk.Bytes())))
 		w.samples.Observe(float64(c.Chunk.NumSamples()))
@@ -617,6 +619,10 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 
 	for set.Next() {
 		lset, chks, dranges := set.At() // The chunks here are not fully deleted.
+		// If blocks are overlapped, it is possible to have unsorted chunks.
+		sort.Slice(chks, func(i, j int) bool {
+			return chks[i].MinTime < chks[j].MinTime
+		})
 
 		// Skip the series with all deleted chunks.
 		if len(chks) == 0 {
@@ -645,7 +651,8 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 				chks[i].Chunk = newChunk
 			}
 		}
-		if err := chunkw.WriteChunks(chks...); err != nil {
+		var err error
+		if chks, err = chunkw.WriteChunks(chks...); err != nil {
 			return errors.Wrap(err, "write chunks")
 		}
 

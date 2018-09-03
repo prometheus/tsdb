@@ -302,19 +302,7 @@ func TestLeveledCompactor_plan(t *testing.T) {
 			},
 			expected: []string{"7", "8"},
 		},
-		{
-			metas: []dirMeta{
-				metaRange("1", 0, 20, nil),
-			},
-			expected: nil,
-		},
-		{
-			metas: []dirMeta{
-				metaRange("1", 0, 20, nil),
-				metaRange("2", 20, 40, nil),
-			},
-			expected: nil,
-		},
+		// For overlapping blocks.
 		{
 			metas: []dirMeta{
 				metaRange("1", 0, 20, nil),

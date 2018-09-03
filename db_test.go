@@ -27,7 +27,9 @@ import (
 
 	"github.com/oklog/ulid"
 	"github.com/pkg/errors"
+	"github.com/prometheus/tsdb/chunkenc"
 	"github.com/prometheus/tsdb/chunks"
+	"github.com/prometheus/tsdb/fileutil"
 	"github.com/prometheus/tsdb/index"
 	"github.com/prometheus/tsdb/labels"
 	"github.com/prometheus/tsdb/testutil"
@@ -1300,4 +1302,535 @@ func TestInitializeHeadTimestamp(t *testing.T) {
 		testutil.Equals(t, int64(6000), db.head.MinTime())
 		testutil.Equals(t, int64(15000), db.head.MaxTime())
 	})
+}
+
+func TestVerticalCompaction(t *testing.T) {
+
+	cases := []struct {
+		blockSeries [][]Series
+		exp         map[string][]sample
+		mint, maxt  []int64
+	}{
+		// Case 1
+		// |--------------|
+		//        |----------------|
+		{
+			mint: []int64{0, 3},
+			maxt: []int64{9, 14},
+			blockSeries: [][]Series{
+				[]Series{
+					newSeries(map[string]string{"a": "b"}, []sample{
+						sample{0, 0},
+						sample{1, 0},
+						sample{2, 0},
+						sample{4, 0},
+						sample{5, 0},
+						sample{7, 0},
+						sample{8, 0},
+						sample{9, 0},
+					}),
+				},
+				[]Series{
+					newSeries(map[string]string{"a": "b"}, []sample{
+						sample{3, 99},
+						sample{5, 99},
+						sample{6, 99},
+						sample{7, 99},
+						sample{8, 99},
+						sample{9, 99},
+						sample{10, 99},
+						sample{11, 99},
+						sample{12, 99},
+						sample{13, 99},
+						sample{14, 99},
+					}),
+				},
+			},
+			exp: map[string][]sample{`{a="b"}`: {
+				sample{0, 0},
+				sample{1, 0},
+				sample{2, 0},
+				sample{3, 99},
+				sample{4, 0},
+				sample{5, 99},
+				sample{6, 99},
+				sample{7, 99},
+				sample{8, 99},
+				sample{9, 99},
+				sample{10, 99},
+				sample{11, 99},
+				sample{12, 99},
+				sample{13, 99},
+				sample{14, 99},
+			}},
+		},
+		// Case 2
+		// |-------------------------------|
+		//        |----------------|
+		{
+			mint: []int64{0, 3},
+			maxt: []int64{17, 10},
+			blockSeries: [][]Series{
+				[]Series{
+					newSeries(map[string]string{"a": "b"}, []sample{
+						sample{0, 0},
+						sample{1, 0},
+						sample{2, 0},
+						sample{4, 0},
+						sample{5, 0},
+						sample{7, 0},
+						sample{8, 0},
+						sample{9, 0},
+						sample{11, 0},
+						sample{13, 0},
+						sample{17, 0},
+					}),
+				},
+				[]Series{
+					newSeries(map[string]string{"a": "b"}, []sample{
+						sample{3, 99},
+						sample{5, 99},
+						sample{6, 99},
+						sample{7, 99},
+						sample{8, 99},
+						sample{9, 99},
+						sample{10, 99},
+					}),
+				},
+			},
+			exp: map[string][]sample{`{a="b"}`: {
+				sample{0, 0},
+				sample{1, 0},
+				sample{2, 0},
+				sample{3, 99},
+				sample{4, 0},
+				sample{5, 99},
+				sample{6, 99},
+				sample{7, 99},
+				sample{8, 99},
+				sample{9, 99},
+				sample{10, 99},
+				sample{11, 0},
+				sample{13, 0},
+				sample{17, 0},
+			}},
+		},
+		// Case 3
+		// |-------------------------------|
+		//        |------------|
+		//                           |--------------------|
+		{
+			mint: []int64{0, 3, 14},
+			maxt: []int64{17, 9, 22},
+			blockSeries: [][]Series{
+				[]Series{
+					newSeries(map[string]string{"a": "b"}, []sample{
+						sample{0, 0},
+						sample{1, 0},
+						sample{2, 0},
+						sample{4, 0},
+						sample{5, 0},
+						sample{7, 0},
+						sample{8, 0},
+						sample{9, 0},
+						sample{11, 0},
+						sample{13, 0},
+						sample{17, 0},
+					}),
+				},
+				[]Series{
+					newSeries(map[string]string{"a": "b"}, []sample{
+						sample{3, 99},
+						sample{5, 99},
+						sample{6, 99},
+						sample{7, 99},
+						sample{8, 99},
+						sample{9, 99},
+					}),
+				},
+				[]Series{
+					newSeries(map[string]string{"a": "b"}, []sample{
+						sample{14, 59},
+						sample{15, 59},
+						sample{17, 59},
+						sample{20, 59},
+						sample{21, 59},
+						sample{22, 59},
+					}),
+				},
+			},
+			exp: map[string][]sample{`{a="b"}`: {
+				sample{0, 0},
+				sample{1, 0},
+				sample{2, 0},
+				sample{3, 99},
+				sample{4, 0},
+				sample{5, 99},
+				sample{6, 99},
+				sample{7, 99},
+				sample{8, 99},
+				sample{9, 99},
+				sample{11, 0},
+				sample{13, 0},
+				sample{14, 59},
+				sample{15, 59},
+				sample{17, 59},
+				sample{20, 59},
+				sample{21, 59},
+				sample{22, 59},
+			}},
+		},
+		// Case 4
+		// |-------------------|
+		//                           |--------------------|
+		//               |----------------|
+		{
+			mint: []int64{0, 14, 5},
+			maxt: []int64{9, 22, 17},
+			blockSeries: [][]Series{
+				[]Series{
+					newSeries(map[string]string{"a": "b"}, []sample{
+						sample{0, 0},
+						sample{1, 0},
+						sample{2, 0},
+						sample{4, 0},
+						sample{5, 0},
+						sample{8, 0},
+						sample{9, 0},
+					}),
+				},
+				[]Series{
+					newSeries(map[string]string{"a": "b"}, []sample{
+						sample{14, 59},
+						sample{15, 59},
+						sample{17, 59},
+						sample{20, 59},
+						sample{21, 59},
+						sample{22, 59},
+					}),
+				},
+				[]Series{
+					newSeries(map[string]string{"a": "b"}, []sample{
+						sample{5, 99},
+						sample{6, 99},
+						sample{7, 99},
+						sample{8, 99},
+						sample{9, 99},
+						sample{10, 99},
+						sample{13, 99},
+						sample{15, 99},
+						sample{16, 99},
+						sample{17, 99},
+					}),
+				},
+			},
+			exp: map[string][]sample{`{a="b"}`: {
+				sample{0, 0},
+				sample{1, 0},
+				sample{2, 0},
+				sample{4, 0},
+				sample{5, 99},
+				sample{6, 99},
+				sample{7, 99},
+				sample{8, 99},
+				sample{9, 99},
+				sample{10, 99},
+				sample{13, 99},
+				sample{14, 59},
+				sample{15, 59},
+				sample{16, 99},
+				sample{17, 59},
+				sample{20, 59},
+				sample{21, 59},
+				sample{22, 59},
+			}},
+		},
+		// Case 5
+		// |-------------------------------------|
+		//            |------------|
+		//      |-------------------------|
+		{
+			mint: []int64{0, 7, 3},
+			maxt: []int64{22, 11, 17},
+			blockSeries: [][]Series{
+				[]Series{
+					newSeries(map[string]string{"a": "b"}, []sample{
+						sample{0, 0},
+						sample{1, 0},
+						sample{2, 0},
+						sample{4, 0},
+						sample{5, 0},
+						sample{8, 0},
+						sample{9, 0},
+						sample{10, 0},
+						sample{13, 0},
+						sample{15, 0},
+						sample{16, 0},
+						sample{17, 0},
+						sample{20, 0},
+						sample{22, 0},
+					}),
+				},
+				[]Series{
+					newSeries(map[string]string{"a": "b"}, []sample{
+						sample{7, 59},
+						sample{8, 59},
+						sample{9, 59},
+						sample{10, 59},
+						sample{11, 59},
+					}),
+				},
+				[]Series{
+					newSeries(map[string]string{"a": "b"}, []sample{
+						sample{3, 99},
+						sample{5, 99},
+						sample{6, 99},
+						sample{8, 99},
+						sample{9, 99},
+						sample{10, 99},
+						sample{13, 99},
+						sample{15, 99},
+						sample{16, 99},
+						sample{17, 99},
+					}),
+				},
+			},
+			exp: map[string][]sample{`{a="b"}`: {
+				sample{0, 0},
+				sample{1, 0},
+				sample{2, 0},
+				sample{3, 99},
+				sample{4, 0},
+				sample{5, 99},
+				sample{6, 99},
+				sample{7, 59},
+				sample{8, 59},
+				sample{9, 59},
+				sample{10, 59},
+				sample{11, 59},
+				sample{13, 99},
+				sample{15, 99},
+				sample{16, 99},
+				sample{17, 99},
+				sample{20, 0},
+				sample{22, 0},
+			}},
+		},
+	}
+
+	for _, c := range cases {
+		tmpdir, err := ioutil.TempDir("", "data")
+		testutil.Ok(t, err)
+
+		// Creating blocks.
+		for i, series := range c.blockSeries {
+			symbols := make(map[string]struct{})
+			for _, s := range series {
+				for _, l := range s.Labels() {
+					symbols[l.Name] = struct{}{}
+					symbols[l.Value] = struct{}{}
+				}
+			}
+			css := &MockChunkSeriesSet{
+				ss: newListSeriesSet(series),
+			}
+			createNewBlock(t, tmpdir, c.mint[i], c.maxt[i], css, symbols)
+		}
+
+		db, err := Open(tmpdir, nil, nil, nil)
+		testutil.Ok(t, err)
+		testutil.Assert(t, len(db.blocks) == len(c.blockSeries), "Wrong number of blocks [before compact].")
+
+		// Vertical Query Merging
+		querier, err := db.Querier(0, 100)
+		testutil.Ok(t, err)
+		seriesSet := query(t, querier, labels.NewEqualMatcher("a", "b"))
+		testutil.Equals(t, c.exp, seriesSet)
+		querier.Close()
+
+		// Vertical compaction.
+		changed, err := db.compact()
+		testutil.Ok(t, err)
+		testutil.Assert(t, changed, "Compaction did not change anything.")
+
+		testutil.Assert(t, len(db.blocks) == 1, "Wrong number of blocks [after compact].")
+
+		// When there is only 1 blocks, vertical query merging is not applied.
+		// Hence this tests compaction.
+		querier, err = db.Querier(0, 100)
+		testutil.Ok(t, err)
+		seriesSet = query(t, querier, labels.NewEqualMatcher("a", "b"))
+		testutil.Equals(t, c.exp, seriesSet)
+		querier.Close()
+
+		testutil.Ok(t, db.Close())
+		testutil.Ok(t, os.RemoveAll(tmpdir))
+	}
+}
+
+func createNewBlock(t *testing.T, dest string, mint, maxt int64, set ChunkSeriesSet, symbols map[string]struct{}) *BlockMeta {
+	entropy := rand.New(rand.NewSource(time.Now().UnixNano()))
+	uid := ulid.MustNew(ulid.Now(), entropy)
+	meta := &BlockMeta{
+		ULID:    uid,
+		MinTime: mint,
+		MaxTime: maxt,
+	}
+	meta.Compaction.Sources = []ulid.ULID{uid}
+
+	dir := filepath.Join(dest, meta.ULID.String())
+	tmp := dir + ".tmp"
+
+	chunkw, err := chunks.NewWriter(chunkDir(tmp))
+	testutil.Ok(t, err)
+	indexw, err := index.NewWriter(filepath.Join(tmp, indexFilename))
+	testutil.Ok(t, err)
+
+	err = populateBlock(set, meta, indexw, chunkw, symbols)
+	testutil.Ok(t, err)
+	testutil.Ok(t, writeMetaFile(tmp, meta))
+	testutil.Ok(t, errors.Wrap(chunkw.Close(), "close chunk writer"))
+	testutil.Ok(t, errors.Wrap(indexw.Close(), "close index writer"))
+	testutil.Ok(t, errors.Wrap(writeTombstoneFile(tmp, NewMemTombstones()), "write new tombstones file"))
+
+	df, err := fileutil.OpenDir(tmp)
+	testutil.Ok(t, errors.Wrap(err, "open temporary block dir"))
+	defer func() {
+		if df != nil {
+			df.Close()
+		}
+	}()
+
+	testutil.Ok(t, errors.Wrap(fileutil.Fsync(df), "sync temporary dir file"))
+	testutil.Ok(t, errors.Wrap(errors.Wrap(df.Close(), "close temporary dir"), "sync temporary dir file"))
+	df = nil
+	testutil.Ok(t, errors.Wrap(renameFile(tmp, dir), "rename block dir"))
+	return meta
+}
+
+// All the logic is taken from compact.go.
+func populateBlock(set ChunkSeriesSet, meta *BlockMeta, indexw IndexWriter, chunkw ChunkWriter, symbols map[string]struct{}) error {
+	if err := indexw.AddSymbols(symbols); err != nil {
+		return errors.Wrap(err, "add symbols")
+	}
+
+	var (
+		postings = index.NewMemPostings()
+		values   = map[string]stringset{}
+		i        = uint64(0)
+	)
+
+	for set.Next() {
+		lset, chks, _ := set.At() // The chunks here are not fully deleted.
+
+		// Skip the series with all deleted chunks.
+		if len(chks) == 0 {
+			continue
+		}
+
+		var err error
+		if chks, err = chunkw.WriteChunks(chks...); err != nil {
+			return errors.Wrap(err, "write chunks")
+		}
+
+		if err := indexw.AddSeries(i, lset, chks...); err != nil {
+			return errors.Wrap(err, "add series")
+		}
+
+		meta.Stats.NumChunks += uint64(len(chks))
+		meta.Stats.NumSeries++
+		for _, chk := range chks {
+			meta.Stats.NumSamples += uint64(chk.Chunk.NumSamples())
+		}
+
+		for _, l := range lset {
+			valset, ok := values[l.Name]
+			if !ok {
+				valset = stringset{}
+				values[l.Name] = valset
+			}
+			valset.set(l.Value)
+		}
+		postings.Add(i, lset)
+
+		i++
+	}
+	if set.Err() != nil {
+		return errors.Wrap(set.Err(), "iterate compaction set")
+	}
+
+	s := make([]string, 0, 256)
+	for n, v := range values {
+		s = s[:0]
+
+		for x := range v {
+			s = append(s, x)
+		}
+		if err := indexw.WriteLabelIndex([]string{n}, s); err != nil {
+			return errors.Wrap(err, "write label index")
+		}
+	}
+
+	for _, l := range postings.SortedKeys() {
+		if err := indexw.WritePostings(l.Name, l.Value, postings.Get(l.Name, l.Value)); err != nil {
+			return errors.Wrap(err, "write postings")
+		}
+	}
+	return nil
+}
+
+// MockChunkSeriesSet mocks a SeriesSet as a ChunkSeriesSet.
+// This is helpful in creating blocks from SeriesSet.
+type MockChunkSeriesSet struct {
+	ss  SeriesSet
+	cur int
+
+	l     labels.Labels
+	metas []chunks.Meta
+
+	err error
+}
+
+func (ctcs *MockChunkSeriesSet) At() (labels.Labels, []chunks.Meta, Intervals) {
+	return ctcs.l, ctcs.metas, nil
+}
+
+func (ctcs *MockChunkSeriesSet) Next() bool {
+	if ctcs.err != nil || !ctcs.ss.Next() {
+		return false
+	}
+
+	s := ctcs.ss.At()
+
+	newChunk := chunkenc.NewXORChunk()
+	app, err := newChunk.Appender()
+	if err != nil {
+		ctcs.err = err
+		return false
+	}
+	it := s.Iterator()
+	mint := int64(math.MaxInt64)
+	maxt := int64(0)
+	for it.Next() {
+		ts, v := it.At()
+		if mint > ts {
+			mint = ts
+		}
+		maxt = ts
+		app.Append(ts, v)
+	}
+
+	ctcs.metas = []chunks.Meta{chunks.Meta{
+		Chunk:   newChunk,
+		MinTime: mint,
+		MaxTime: maxt,
+	}}
+	ctcs.l = s.Labels()
+
+	ctcs.cur++
+	return true
+}
+
+func (ctcs *MockChunkSeriesSet) Err() error {
+	return ctcs.err
 }
