@@ -334,7 +334,7 @@ func TestLeveledCompactor_plan(t *testing.T) {
 				metaRange("7", 360, 420, nil),
 				metaRange("8", 420, 540, nil),
 			},
-			expected: []string{"5", "6", "7"},
+			expected: []string{"5", "6", "7", "8"},
 		},
 	}
 

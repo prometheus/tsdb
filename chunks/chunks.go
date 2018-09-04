@@ -204,10 +204,14 @@ func (w *Writer) mergeOverlappingChunks(chks []Meta) ([]Meta, error) {
 	if len(chks) < 2 {
 		return chks, nil
 	}
-	var newChks []Meta
+	var newChks []Meta // Will contain the merged chunks.
 	newChks = append(newChks, chks[0])
 	last := 0
 	for _, c := range chks[1:] {
+		// We need to check only the last chunk in newChks.
+		// Reason: (1) newChks[last-1].MaxTime < newChks[last].MinTime (non overlapping)
+		//         (2) As chks are sorted w.r.t. MinTime, newChks[last].MinTime < c.MinTime.
+		// So never overlaps with newChks[last-1] or anything before that.
 		if c.MinTime > newChks[last].MaxTime {
 			newChks = append(newChks, c)
 			continue

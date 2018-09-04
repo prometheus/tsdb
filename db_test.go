@@ -1305,7 +1305,6 @@ func TestInitializeHeadTimestamp(t *testing.T) {
 }
 
 func TestVerticalCompaction(t *testing.T) {
-
 	cases := []struct {
 		blockSeries [][]Series
 		exp         map[string][]sample
@@ -1320,48 +1319,23 @@ func TestVerticalCompaction(t *testing.T) {
 			blockSeries: [][]Series{
 				[]Series{
 					newSeries(map[string]string{"a": "b"}, []sample{
-						sample{0, 0},
-						sample{1, 0},
-						sample{2, 0},
-						sample{4, 0},
-						sample{5, 0},
-						sample{7, 0},
-						sample{8, 0},
-						sample{9, 0},
+						sample{0, 0}, sample{1, 0}, sample{2, 0}, sample{4, 0},
+						sample{5, 0}, sample{7, 0}, sample{8, 0}, sample{9, 0},
 					}),
 				},
 				[]Series{
 					newSeries(map[string]string{"a": "b"}, []sample{
-						sample{3, 99},
-						sample{5, 99},
-						sample{6, 99},
-						sample{7, 99},
-						sample{8, 99},
-						sample{9, 99},
-						sample{10, 99},
-						sample{11, 99},
-						sample{12, 99},
-						sample{13, 99},
-						sample{14, 99},
+						sample{3, 99}, sample{5, 99}, sample{6, 99}, sample{7, 99},
+						sample{8, 99}, sample{9, 99}, sample{10, 99}, sample{11, 99},
+						sample{12, 99}, sample{13, 99}, sample{14, 99},
 					}),
 				},
 			},
 			exp: map[string][]sample{`{a="b"}`: {
-				sample{0, 0},
-				sample{1, 0},
-				sample{2, 0},
-				sample{3, 99},
-				sample{4, 0},
-				sample{5, 99},
-				sample{6, 99},
-				sample{7, 99},
-				sample{8, 99},
-				sample{9, 99},
-				sample{10, 99},
-				sample{11, 99},
-				sample{12, 99},
-				sample{13, 99},
-				sample{14, 99},
+				sample{0, 0}, sample{1, 0}, sample{2, 0}, sample{3, 99},
+				sample{4, 0}, sample{5, 99}, sample{6, 99}, sample{7, 99},
+				sample{8, 99}, sample{9, 99}, sample{10, 99}, sample{11, 99},
+				sample{12, 99}, sample{13, 99}, sample{14, 99},
 			}},
 		},
 		// Case 2
@@ -1373,46 +1347,23 @@ func TestVerticalCompaction(t *testing.T) {
 			blockSeries: [][]Series{
 				[]Series{
 					newSeries(map[string]string{"a": "b"}, []sample{
-						sample{0, 0},
-						sample{1, 0},
-						sample{2, 0},
-						sample{4, 0},
-						sample{5, 0},
-						sample{7, 0},
-						sample{8, 0},
-						sample{9, 0},
-						sample{11, 0},
-						sample{13, 0},
-						sample{17, 0},
+						sample{0, 0}, sample{1, 0}, sample{2, 0}, sample{4, 0},
+						sample{5, 0}, sample{7, 0}, sample{8, 0}, sample{9, 0},
+						sample{11, 0}, sample{13, 0}, sample{17, 0},
 					}),
 				},
 				[]Series{
 					newSeries(map[string]string{"a": "b"}, []sample{
-						sample{3, 99},
-						sample{5, 99},
-						sample{6, 99},
-						sample{7, 99},
-						sample{8, 99},
-						sample{9, 99},
-						sample{10, 99},
+						sample{3, 99}, sample{5, 99}, sample{6, 99}, sample{7, 99},
+						sample{8, 99}, sample{9, 99}, sample{10, 99},
 					}),
 				},
 			},
 			exp: map[string][]sample{`{a="b"}`: {
-				sample{0, 0},
-				sample{1, 0},
-				sample{2, 0},
-				sample{3, 99},
-				sample{4, 0},
-				sample{5, 99},
-				sample{6, 99},
-				sample{7, 99},
-				sample{8, 99},
-				sample{9, 99},
-				sample{10, 99},
-				sample{11, 0},
-				sample{13, 0},
-				sample{17, 0},
+				sample{0, 0}, sample{1, 0}, sample{2, 0}, sample{3, 99},
+				sample{4, 0}, sample{5, 99}, sample{6, 99}, sample{7, 99},
+				sample{8, 99}, sample{9, 99}, sample{10, 99}, sample{11, 0},
+				sample{13, 0}, sample{17, 0},
 			}},
 		},
 		// Case 3
@@ -1425,59 +1376,30 @@ func TestVerticalCompaction(t *testing.T) {
 			blockSeries: [][]Series{
 				[]Series{
 					newSeries(map[string]string{"a": "b"}, []sample{
-						sample{0, 0},
-						sample{1, 0},
-						sample{2, 0},
-						sample{4, 0},
-						sample{5, 0},
-						sample{7, 0},
-						sample{8, 0},
-						sample{9, 0},
-						sample{11, 0},
-						sample{13, 0},
-						sample{17, 0},
+						sample{0, 0}, sample{1, 0}, sample{2, 0}, sample{4, 0},
+						sample{5, 0}, sample{7, 0}, sample{8, 0}, sample{9, 0},
+						sample{11, 0}, sample{13, 0}, sample{17, 0},
 					}),
 				},
 				[]Series{
 					newSeries(map[string]string{"a": "b"}, []sample{
-						sample{3, 99},
-						sample{5, 99},
-						sample{6, 99},
-						sample{7, 99},
-						sample{8, 99},
-						sample{9, 99},
+						sample{3, 99}, sample{5, 99}, sample{6, 99}, sample{7, 99},
+						sample{8, 99}, sample{9, 99},
 					}),
 				},
 				[]Series{
 					newSeries(map[string]string{"a": "b"}, []sample{
-						sample{14, 59},
-						sample{15, 59},
-						sample{17, 59},
-						sample{20, 59},
-						sample{21, 59},
-						sample{22, 59},
+						sample{14, 59}, sample{15, 59}, sample{17, 59}, sample{20, 59},
+						sample{21, 59}, sample{22, 59},
 					}),
 				},
 			},
 			exp: map[string][]sample{`{a="b"}`: {
-				sample{0, 0},
-				sample{1, 0},
-				sample{2, 0},
-				sample{3, 99},
-				sample{4, 0},
-				sample{5, 99},
-				sample{6, 99},
-				sample{7, 99},
-				sample{8, 99},
-				sample{9, 99},
-				sample{11, 0},
-				sample{13, 0},
-				sample{14, 59},
-				sample{15, 59},
-				sample{17, 59},
-				sample{20, 59},
-				sample{21, 59},
-				sample{22, 59},
+				sample{0, 0}, sample{1, 0}, sample{2, 0}, sample{3, 99},
+				sample{4, 0}, sample{5, 99}, sample{6, 99}, sample{7, 99},
+				sample{8, 99}, sample{9, 99}, sample{11, 0}, sample{13, 0},
+				sample{14, 59}, sample{15, 59}, sample{17, 59}, sample{20, 59},
+				sample{21, 59}, sample{22, 59},
 			}},
 		},
 		// Case 4
@@ -1490,59 +1412,30 @@ func TestVerticalCompaction(t *testing.T) {
 			blockSeries: [][]Series{
 				[]Series{
 					newSeries(map[string]string{"a": "b"}, []sample{
-						sample{0, 0},
-						sample{1, 0},
-						sample{2, 0},
-						sample{4, 0},
-						sample{5, 0},
-						sample{8, 0},
-						sample{9, 0},
+						sample{0, 0}, sample{1, 0}, sample{2, 0}, sample{4, 0},
+						sample{5, 0}, sample{8, 0}, sample{9, 0},
 					}),
 				},
 				[]Series{
 					newSeries(map[string]string{"a": "b"}, []sample{
-						sample{14, 59},
-						sample{15, 59},
-						sample{17, 59},
-						sample{20, 59},
-						sample{21, 59},
-						sample{22, 59},
+						sample{14, 59}, sample{15, 59}, sample{17, 59}, sample{20, 59},
+						sample{21, 59}, sample{22, 59},
 					}),
 				},
 				[]Series{
 					newSeries(map[string]string{"a": "b"}, []sample{
-						sample{5, 99},
-						sample{6, 99},
-						sample{7, 99},
-						sample{8, 99},
-						sample{9, 99},
-						sample{10, 99},
-						sample{13, 99},
-						sample{15, 99},
-						sample{16, 99},
-						sample{17, 99},
+						sample{5, 99}, sample{6, 99}, sample{7, 99}, sample{8, 99},
+						sample{9, 99}, sample{10, 99}, sample{13, 99}, sample{15, 99},
+						sample{16, 99}, sample{17, 99},
 					}),
 				},
 			},
 			exp: map[string][]sample{`{a="b"}`: {
-				sample{0, 0},
-				sample{1, 0},
-				sample{2, 0},
-				sample{4, 0},
-				sample{5, 99},
-				sample{6, 99},
-				sample{7, 99},
-				sample{8, 99},
-				sample{9, 99},
-				sample{10, 99},
-				sample{13, 99},
-				sample{14, 59},
-				sample{15, 59},
-				sample{16, 99},
-				sample{17, 59},
-				sample{20, 59},
-				sample{21, 59},
-				sample{22, 59},
+				sample{0, 0}, sample{1, 0}, sample{2, 0}, sample{4, 0},
+				sample{5, 99}, sample{6, 99}, sample{7, 99}, sample{8, 99},
+				sample{9, 99}, sample{10, 99}, sample{13, 99}, sample{14, 59},
+				sample{15, 59}, sample{16, 99}, sample{17, 59}, sample{20, 59},
+				sample{21, 59}, sample{22, 59},
 			}},
 		},
 		// Case 5
@@ -1555,65 +1448,32 @@ func TestVerticalCompaction(t *testing.T) {
 			blockSeries: [][]Series{
 				[]Series{
 					newSeries(map[string]string{"a": "b"}, []sample{
-						sample{0, 0},
-						sample{1, 0},
-						sample{2, 0},
-						sample{4, 0},
-						sample{5, 0},
-						sample{8, 0},
-						sample{9, 0},
-						sample{10, 0},
-						sample{13, 0},
-						sample{15, 0},
-						sample{16, 0},
-						sample{17, 0},
-						sample{20, 0},
-						sample{22, 0},
+						sample{0, 0}, sample{1, 0}, sample{2, 0}, sample{4, 0},
+						sample{5, 0}, sample{8, 0}, sample{9, 0}, sample{10, 0},
+						sample{13, 0}, sample{15, 0}, sample{16, 0}, sample{17, 0},
+						sample{20, 0}, sample{22, 0},
 					}),
 				},
 				[]Series{
 					newSeries(map[string]string{"a": "b"}, []sample{
-						sample{7, 59},
-						sample{8, 59},
-						sample{9, 59},
-						sample{10, 59},
+						sample{7, 59}, sample{8, 59}, sample{9, 59}, sample{10, 59},
 						sample{11, 59},
 					}),
 				},
 				[]Series{
 					newSeries(map[string]string{"a": "b"}, []sample{
-						sample{3, 99},
-						sample{5, 99},
-						sample{6, 99},
-						sample{8, 99},
-						sample{9, 99},
-						sample{10, 99},
-						sample{13, 99},
-						sample{15, 99},
-						sample{16, 99},
-						sample{17, 99},
+						sample{3, 99}, sample{5, 99}, sample{6, 99}, sample{8, 99},
+						sample{9, 99}, sample{10, 99}, sample{13, 99}, sample{15, 99},
+						sample{16, 99}, sample{17, 99},
 					}),
 				},
 			},
 			exp: map[string][]sample{`{a="b"}`: {
-				sample{0, 0},
-				sample{1, 0},
-				sample{2, 0},
-				sample{3, 99},
-				sample{4, 0},
-				sample{5, 99},
-				sample{6, 99},
-				sample{7, 59},
-				sample{8, 59},
-				sample{9, 59},
-				sample{10, 59},
-				sample{11, 59},
-				sample{13, 99},
-				sample{15, 99},
-				sample{16, 99},
-				sample{17, 99},
-				sample{20, 0},
-				sample{22, 0},
+				sample{0, 0}, sample{1, 0}, sample{2, 0}, sample{3, 99},
+				sample{4, 0}, sample{5, 99}, sample{6, 99}, sample{7, 59},
+				sample{8, 59}, sample{9, 59}, sample{10, 59}, sample{11, 59},
+				sample{13, 99}, sample{15, 99}, sample{16, 99}, sample{17, 99},
+				sample{20, 0}, sample{22, 0},
 			}},
 		},
 	}
@@ -1637,11 +1497,12 @@ func TestVerticalCompaction(t *testing.T) {
 			createNewBlock(t, tmpdir, c.mint[i], c.maxt[i], css, symbols)
 		}
 
+		// Open database.
 		db, err := Open(tmpdir, nil, nil, nil)
 		testutil.Ok(t, err)
 		testutil.Assert(t, len(db.blocks) == len(c.blockSeries), "Wrong number of blocks [before compact].")
 
-		// Vertical Query Merging
+		// Vertical Query Merging test.
 		querier, err := db.Querier(0, 100)
 		testutil.Ok(t, err)
 		seriesSet := query(t, querier, labels.NewEqualMatcher("a", "b"))
@@ -1655,6 +1516,7 @@ func TestVerticalCompaction(t *testing.T) {
 
 		testutil.Assert(t, len(db.blocks) == 1, "Wrong number of blocks [after compact].")
 
+		// Vertical compaction test.
 		// When there is only 1 blocks, vertical query merging is not applied.
 		// Hence this tests compaction.
 		querier, err = db.Querier(0, 100)
@@ -1681,11 +1543,13 @@ func createNewBlock(t *testing.T, dest string, mint, maxt int64, set ChunkSeries
 	dir := filepath.Join(dest, meta.ULID.String())
 	tmp := dir + ".tmp"
 
+	// Writers.
 	chunkw, err := chunks.NewWriter(chunkDir(tmp))
 	testutil.Ok(t, err)
 	indexw, err := index.NewWriter(filepath.Join(tmp, indexFilename))
 	testutil.Ok(t, err)
 
+	// Writing the block.
 	err = populateBlock(set, meta, indexw, chunkw, symbols)
 	testutil.Ok(t, err)
 	testutil.Ok(t, writeMetaFile(tmp, meta))
@@ -1700,7 +1564,6 @@ func createNewBlock(t *testing.T, dest string, mint, maxt int64, set ChunkSeries
 			df.Close()
 		}
 	}()
-
 	testutil.Ok(t, errors.Wrap(fileutil.Fsync(df), "sync temporary dir file"))
 	testutil.Ok(t, errors.Wrap(errors.Wrap(df.Close(), "close temporary dir"), "sync temporary dir file"))
 	df = nil
@@ -1782,9 +1645,9 @@ func populateBlock(set ChunkSeriesSet, meta *BlockMeta, indexw IndexWriter, chun
 // MockChunkSeriesSet mocks a SeriesSet as a ChunkSeriesSet.
 // This is helpful in creating blocks from SeriesSet.
 type MockChunkSeriesSet struct {
-	ss  SeriesSet
-	cur int
+	ss SeriesSet
 
+	cur   int
 	l     labels.Labels
 	metas []chunks.Meta
 
@@ -1801,7 +1664,6 @@ func (ctcs *MockChunkSeriesSet) Next() bool {
 	}
 
 	s := ctcs.ss.At()
-
 	newChunk := chunkenc.NewXORChunk()
 	app, err := newChunk.Appender()
 	if err != nil {

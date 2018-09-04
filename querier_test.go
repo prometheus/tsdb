@@ -1069,7 +1069,7 @@ func TestSeriesIterator(t *testing.T) {
 				},
 
 				exp: []sample{
-					{1, 2}, {2, 3}, {3, 5}, {4, 44}, {5, 49}, {6, 1}, {7, 89}, {9, 8}, {10, 3},
+					{1, 2}, {2, 33}, {3, 5}, {4, 44}, {5, 49}, {6, 1}, {7, 89}, {9, 8}, {10, 3},
 				},
 				mint: math.MinInt64,
 				maxt: math.MaxInt64,
@@ -1084,7 +1084,7 @@ func TestSeriesIterator(t *testing.T) {
 				},
 
 				exp: []sample{
-					{1, 2}, {2, 3}, {3, 25}, {6, 11}, {9, 5}, {13, 1},
+					{1, 23}, {2, 342}, {3, 25}, {6, 11}, {9, 5}, {13, 1},
 				},
 				mint: math.MinInt64,
 				maxt: math.MaxInt64,

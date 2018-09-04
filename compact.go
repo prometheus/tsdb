@@ -180,12 +180,12 @@ func (c *LeveledCompactor) plan(dms []dirMeta) ([]string, error) {
 	if len(res) > 0 {
 		return res, nil
 	}
+	// No overlapping blocks, do compaction the usual way.
 
 	// We do not include a recently created block with max(minTime), so the block which was just created from WAL.
 	// This gives users a window of a full block size to piece-wise backup new data without having to care about data overlap.
 	dms = dms[:len(dms)-1]
 
-	// No overlapping blocks, do compaction the usual way.
 	for _, dm := range c.selectDirs(dms) {
 		res = append(res, dm.dir)
 	}
@@ -247,7 +247,7 @@ func (c *LeveledCompactor) selectDirs(ds []dirMeta) []dirMeta {
 	return nil
 }
 
-// selectOverlappingDirs returns the dir metas of the blocks whose ranges are overlapping,
+// selectOverlappingDirs returns one set of dir metas of the blocks whose ranges are overlapping,
 // that should be compacted into a single new block.
 func (c *LeveledCompactor) selectOverlappingDirs(ds []dirMeta) []dirMeta {
 	if len(ds) < 2 {
