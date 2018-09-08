@@ -471,15 +471,22 @@ func (c *LeveledCompactor) write(dest string, meta *BlockMeta, blocks ...BlockRe
 		return errors.Wrap(err, "write compaction")
 	}
 
-	if err = writeMetaFile(tmp, meta); err != nil {
-		return errors.Wrap(err, "write merged meta")
-	}
-
 	if err = chunkw.Close(); err != nil {
 		return errors.Wrap(err, "close chunk writer")
 	}
 	if err = indexw.Close(); err != nil {
 		return errors.Wrap(err, "close index writer")
+	}
+
+	if meta.Stats.NumSamples == 0 {
+		if err := os.RemoveAll(tmp); err != nil {
+			return errors.Wrap(err, "remove tmp folder after empty block failed")
+		}
+		return nil
+	}
+
+	if err = writeMetaFile(tmp, meta); err != nil {
+		return errors.Wrap(err, "write merged meta")
 	}
 
 	// Create an empty tombstones file.
