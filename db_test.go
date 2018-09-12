@@ -1301,3 +1301,53 @@ func TestInitializeHeadTimestamp(t *testing.T) {
 		testutil.Equals(t, int64(15000), db.head.MaxTime())
 	})
 }
+
+func TestNoEmptyBlock(t *testing.T) {
+	db, close := openTestDB(t, nil)
+	defer close()
+	defer db.Close()
+
+	// Test no blocks after compact with empty head.
+	_, err := db.compact()
+	testutil.Ok(t, err)
+	testutil.Equals(t, 0, len(db.blocks))
+
+	blockRange := DefaultOptions.BlockRanges[0]
+	label := labels.FromStrings("foo", "bar")
+
+	app := db.Appender()
+	for i := int64(0); i < 3; i++ {
+		_, err := app.Add(label, i*blockRange, 0)
+		testutil.Ok(t, err)
+		_, err = app.Add(label, i*blockRange+1000, 0)
+		testutil.Ok(t, err)
+	}
+	err = app.Commit()
+	testutil.Ok(t, err)
+
+	// Test no blocks after deleting all samples from head.
+	testutil.Ok(t, db.Delete(math.MinInt64, math.MaxInt64, labels.NewEqualMatcher("foo", "bar")))
+	_, err = db.compact()
+	testutil.Ok(t, err)
+	testutil.Equals(t, 0, len(db.blocks))
+
+	app = db.Appender()
+	for i := int64(3); i < 6; i++ {
+		_, err := app.Add(label, i*blockRange, 0)
+		testutil.Ok(t, err)
+		_, err = app.Add(label, i*blockRange+1000, 0)
+		testutil.Ok(t, err)
+	}
+	err = app.Commit()
+	testutil.Ok(t, err)
+
+	_, err = db.compact()
+	testutil.Ok(t, err)
+	testutil.Equals(t, 1, len(db.blocks))
+
+	// No blocks after deleting all samples from disk.
+	testutil.Ok(t, db.Delete(math.MinInt64, math.MaxInt64, labels.NewEqualMatcher("foo", "bar")))
+	_, err = db.compact()
+	testutil.Ok(t, err)
+	testutil.Equals(t, 0, len(db.blocks))
+}
