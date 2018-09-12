@@ -868,9 +868,9 @@ func (r *Reader) LabelValues(names ...string) (StringTuples, error) {
 		return nil, errors.Wrap(d.err(), "read label value index")
 	}
 	st := &serializedStringTuples{
-		l:      nc,
-		b:      d.get(),
-		lookup: r.lookupSymbol,
+		length:  nc,
+		breadth: d.get(),
+		lookup:  r.lookupSymbol,
 	}
 	return st, nil
 }
@@ -929,8 +929,8 @@ func (r *Reader) Postings(name, value string) (Postings, error) {
 
 // SortedPostings returns the given postings list reordered so that the backing series
 // are sorted.
-func (r *Reader) SortedPostings(p Postings) Postings {
-	return p
+func (r *Reader) SortedPostings(post Postings) Postings {
+	return post
 }
 
 type stringTuples struct {
@@ -973,23 +973,23 @@ func (t *stringTuples) Less(i, j int) bool {
 }
 
 type serializedStringTuples struct {
-	l      int
-	b      []byte
-	lookup func(uint32) (string, error)
+	length  int
+	breadth []byte
+	lookup  func(uint32) (string, error)
 }
 
 func (t *serializedStringTuples) Len() int {
-	return len(t.b) / (4 * t.l)
+	return len(t.breadth) / (4 * t.length)
 }
 
 func (t *serializedStringTuples) At(i int) ([]string, error) {
-	if len(t.b) < (i+t.l)*4 {
+	if len(t.breadth) < (i+t.length)*4 {
 		return nil, errInvalidSize
 	}
-	res := make([]string, 0, t.l)
+	res := make([]string, 0, t.length)
 
-	for k := 0; k < t.l; k++ {
-		offset := binary.BigEndian.Uint32(t.b[(i+k)*4:])
+	for k := 0; k < t.length; k++ {
+		offset := binary.BigEndian.Uint32(t.breadth[(i+k)*4:])
 
 		s, err := t.lookup(offset)
 		if err != nil {
