@@ -392,7 +392,7 @@ func (w *Writer) WriteLabelIndex(names []string, values []string) error {
 	w.buf2.putBE32int(valt.Len())
 
 	// here we have an index for the symbol file if v2, otherwise it's an offset
-	for _, v := range valt.s {
+	for _, v := range valt.entries {
 		index, ok := w.symbols[v]
 		if !ok {
 			return errors.Errorf("symbol entry for %q does not exist", v)
@@ -868,9 +868,9 @@ func (r *Reader) LabelValues(names ...string) (StringTuples, error) {
 		return nil, errors.Wrap(d.err(), "read label value index")
 	}
 	st := &serializedStringTuples{
-		length:  nc,
-		breadth: d.get(),
-		lookup:  r.lookupSymbol,
+		idsCount: nc,
+		idsBytes: d.get(),
+		lookup:   r.lookupSymbol,
 	}
 	return st, nil
 }
@@ -929,38 +929,38 @@ func (r *Reader) Postings(name, value string) (Postings, error) {
 
 // SortedPostings returns the given postings list reordered so that the backing series
 // are sorted.
-func (r *Reader) SortedPostings(post Postings) Postings {
-	return post
+func (r *Reader) SortedPostings(p Postings) Postings {
+	return p
 }
 
 type stringTuples struct {
-	l int      // tuple length
-	s []string // flattened tuple entries
+	length  int      // tuple length
+	entries []string // flattened tuple entries
 }
 
-func NewStringTuples(s []string, l int) (*stringTuples, error) {
-	if len(s)%l != 0 {
+func NewStringTuples(entries []string, length int) (*stringTuples, error) {
+	if len(entries)%length != 0 {
 		return nil, errors.Wrap(errInvalidSize, "string tuple list")
 	}
-	return &stringTuples{s: s, l: l}, nil
+	return &stringTuples{entries: entries, length: length}, nil
 }
 
-func (t *stringTuples) Len() int                   { return len(t.s) / t.l }
-func (t *stringTuples) At(i int) ([]string, error) { return t.s[i : i+t.l], nil }
+func (t *stringTuples) Len() int                   { return len(t.entries) / t.length }
+func (t *stringTuples) At(i int) ([]string, error) { return t.entries[i : i+t.length], nil }
 
 func (t *stringTuples) Swap(i, j int) {
-	c := make([]string, t.l)
-	copy(c, t.s[i:i+t.l])
+	c := make([]string, t.length)
+	copy(c, t.entries[i:i+t.length])
 
-	for k := 0; k < t.l; k++ {
-		t.s[i+k] = t.s[j+k]
-		t.s[j+k] = c[k]
+	for k := 0; k < t.length; k++ {
+		t.entries[i+k] = t.entries[j+k]
+		t.entries[j+k] = c[k]
 	}
 }
 
 func (t *stringTuples) Less(i, j int) bool {
-	for k := 0; k < t.l; k++ {
-		d := strings.Compare(t.s[i+k], t.s[j+k])
+	for k := 0; k < t.length; k++ {
+		d := strings.Compare(t.entries[i+k], t.entries[j+k])
 
 		if d < 0 {
 			return true
@@ -973,23 +973,23 @@ func (t *stringTuples) Less(i, j int) bool {
 }
 
 type serializedStringTuples struct {
-	length  int
-	breadth []byte
-	lookup  func(uint32) (string, error)
+	idsCount int
+	idsBytes []byte // bytes containing the ids pointing to the string in the lookup table.
+	lookup   func(uint32) (string, error)
 }
 
 func (t *serializedStringTuples) Len() int {
-	return len(t.breadth) / (4 * t.length)
+	return len(t.idsBytes) / (4 * t.idsCount)
 }
 
 func (t *serializedStringTuples) At(i int) ([]string, error) {
-	if len(t.breadth) < (i+t.length)*4 {
+	if len(t.idsBytes) < (i+t.idsCount)*4 {
 		return nil, errInvalidSize
 	}
-	res := make([]string, 0, t.length)
+	res := make([]string, 0, t.idsCount)
 
-	for k := 0; k < t.length; k++ {
-		offset := binary.BigEndian.Uint32(t.breadth[(i+k)*4:])
+	for k := 0; k < t.idsCount; k++ {
+		offset := binary.BigEndian.Uint32(t.idsBytes[(i+k)*4:])
 
 		s, err := t.lookup(offset)
 		if err != nil {
