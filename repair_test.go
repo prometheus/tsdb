@@ -1,3 +1,16 @@
+// Copyright 2018 The Prometheus Authors
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.package tsdb
+
 package tsdb
 
 import (
@@ -48,6 +61,7 @@ func TestRepairBadIndexVersion(t *testing.T) {
 
 	// In its current state, lookups should fail with the fixed code.
 	const dir = "testdata/repair_index_version/01BZJ9WJQPWHGNC2W4J9TA62KC/"
+	//lint:ignore SA4006 we expect error so no need to use result
 	meta, err := readMetaFile(dir)
 	if err == nil {
 		t.Fatal("error expected but got none")

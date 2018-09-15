@@ -287,6 +287,7 @@ func TestWALRestoreCorrupted_invalidSegment(t *testing.T) {
 
 	testutil.Ok(t, wal.Close())
 
+	//lint:ignore SA4006 we are checking only if there is no error
 	wal, err = OpenSegmentWAL(dir, log.NewLogfmtLogger(os.Stderr), 0, nil)
 	testutil.Ok(t, err)
 

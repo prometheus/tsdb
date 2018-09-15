@@ -338,6 +338,7 @@ func TestPersistence_index_e2e(t *testing.T) {
 		gotp, err := ir.Postings(p.Name, p.Value)
 		testutil.Ok(t, err)
 
+		//lint:ignore SA4006 don't need to check in tests
 		expp, err := mi.Postings(p.Name, p.Value)
 
 		var lset, explset labels.Labels
@@ -351,6 +352,7 @@ func TestPersistence_index_e2e(t *testing.T) {
 			err := ir.Series(ref, &lset, &chks)
 			testutil.Ok(t, err)
 
+			//lint:ignore SA4006 dont' need to check in tests
 			err = mi.Series(expp.At(), &explset, &expchks)
 			testutil.Equals(t, explset, lset)
 			testutil.Equals(t, expchks, chks)

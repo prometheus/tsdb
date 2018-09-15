@@ -31,6 +31,7 @@ func TestLastCheckpoint(t *testing.T) {
 	testutil.Ok(t, err)
 	defer os.RemoveAll(dir)
 
+	//lint:ignore SA4006 we don't need s and k values
 	s, k, err := LastCheckpoint(dir)
 	testutil.Equals(t, ErrNotFound, err)
 
