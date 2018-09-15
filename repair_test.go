@@ -61,6 +61,7 @@ func TestRepairBadIndexVersion(t *testing.T) {
 
 	// In its current state, lookups should fail with the fixed code.
 	const dir = "testdata/repair_index_version/01BZJ9WJQPWHGNC2W4J9TA62KC/"
+	//lint:ignore SA4006 we expect error so no need to use result
 	meta, err := readMetaFile(dir)
 	if err == nil {
 		t.Fatal("error expected but got none")

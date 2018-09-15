@@ -700,6 +700,7 @@ func TestMemSeries_append(t *testing.T) {
 	testutil.Assert(t, ok, "append failed")
 	testutil.Assert(t, !chunkCreated, "second sample should use same chunk")
 
+	//lint:ignore SA4006 we need to check only result not the chunk
 	ok, chunkCreated = s.append(1000, 3)
 	testutil.Assert(t, ok, "append failed")
 	testutil.Assert(t, ok, "expected new chunk on boundary")
