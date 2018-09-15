@@ -1,12 +1,21 @@
 sudo: false
-
 language: go
 
 go:
-- 1.9.x
-- 1.10.x
+  - 1.9.x
+  - 1.10.x
+
+env:
+  - COMPONENT_PATH="./"
+  - COMPONENT_PATH="./cmd/tsdb"
 
 go_import_path: github.com/prometheus/tsdb
 
+before_install:
+  - cd $COMPONENT_PATH
+
+install:
+  - go get -v -t ./...
+
 script:
-- go test -timeout 5m ./...
+  - make check_license style unused test staticcheck
