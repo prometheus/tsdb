@@ -11,13 +11,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-TSDB_CLI_DIR="./cmd/tsdb"
+TSDB_PROJECT_DIR = "."
+TSDB_CLI_DIR="$(TSDB_PROJECT_DIR)/cmd/tsdb"
 TSDB_BIN = "$(TSDB_CLI_DIR)/tsdb"
 TSDB_BENCHMARK_NUM_METRICS ?= 1000
-TSDB_PROJECT_DIR = "."
 TSDB_BENCHMARK_DATASET ?= "$(TSDB_PROJECT_DIR)/testdata/20kseries.json"
 TSDB_BENCHMARK_OUTPUT_DIR ?= "$(TSDB_CLI_DIR)/benchout"
-GO = "go"
+
+STATICCHECK_IGNORE =
+include Makefile.common
 
 build:
 	@$(GO) build -o $(TSDB_BIN) $(TSDB_CLI_DIR)
