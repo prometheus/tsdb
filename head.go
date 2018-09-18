@@ -634,6 +634,7 @@ func (a *headAppender) AddFast(ref uint64, t int64, v float64) error {
 		return err
 	}
 	s.pendingCommit = true
+	s.lastTime = t
 	s.Unlock()
 
 	if t < a.mint {
@@ -1265,6 +1266,7 @@ type memSeries struct {
 
 	nextAt        int64 // Timestamp at which to cut the next chunk.
 	lastValue     float64
+	lastTime      int64
 	sampleBuf     [4]sample
 	pendingCommit bool // Whether there are samples waiting to be committed to this series.
 
@@ -1318,6 +1320,9 @@ func newMemSeries(lset labels.Labels, id uint64, chunkRange int64) *memSeries {
 
 // appendable checks whether the given sample is valid for appending to the series.
 func (s *memSeries) appendable(t int64, v float64) error {
+	if t <= s.lastTime {
+		return ErrOutOfOrderSample
+	}
 	c := s.head()
 	if c == nil {
 		return nil
