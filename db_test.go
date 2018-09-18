@@ -293,7 +293,25 @@ func TestAmendDatapointCausesError(t *testing.T) {
 	testutil.Ok(t, app.Rollback())
 }
 
-func TestOutOfOrderDatapointCausesError(t *testing.T) {
+// TestNoOutOfOrderErrorAfterRollback ensures that a rollback resets the timestampl
+// so samples with smaller timestamp can be added after a rollback.
+func TestNoOutOfOrderErrorAfterRollback(t *testing.T) {
+	db, close := openTestDB(t, nil)
+	defer close()
+	defer db.Close()
+
+	app := db.Appender()
+	_, err := app.Add(labels.Labels{}, 1, 0)
+	testutil.Ok(t, err)
+	testutil.Ok(t, app.Rollback())
+	_, err = app.Add(labels.Labels{}, 0, 0)
+	testutil.Ok(t, err)
+}
+
+// TestOutOfOrderCausesError ensures that adding a sample with a
+// timestamp lower than the last one returns an error.
+// Tests accross different appenders.
+func TestOutOfOrderCausesError(t *testing.T) {
 	db, close := openTestDB(t, nil)
 	defer close()
 	defer db.Close()
