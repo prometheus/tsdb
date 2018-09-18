@@ -484,7 +484,6 @@ Outer:
 	err = pb.tombstones.Iter(func(id uint64, ivs Intervals) error {
 		for _, iv := range ivs {
 			stones.addInterval(id, iv)
-			pb.meta.Stats.NumTombstones++
 		}
 		return nil
 	})
@@ -492,6 +491,7 @@ Outer:
 		return err
 	}
 	pb.tombstones = stones
+	pb.meta.Stats.NumTombstones = pb.tombstones.Total()
 
 	if err := writeTombstoneFile(pb.dir, pb.tombstones); err != nil {
 		return err
