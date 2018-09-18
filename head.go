@@ -719,6 +719,7 @@ func (a *headAppender) Rollback() error {
 	for _, s := range a.samples {
 		s.series.Lock()
 		s.series.pendingCommit = false
+		s.series.lastTime = math.MinInt64
 		s.series.Unlock()
 	}
 	a.head.putAppendBuffer(a.samples)
@@ -1314,15 +1315,17 @@ func newMemSeries(lset labels.Labels, id uint64, chunkRange int64) *memSeries {
 		ref:        id,
 		chunkRange: chunkRange,
 		nextAt:     math.MinInt64,
+		lastTime:   math.MinInt64,
 	}
 	return s
 }
 
 // appendable checks whether the given sample is valid for appending to the series.
 func (s *memSeries) appendable(t int64, v float64) error {
-	if t <= s.lastTime {
+	if t < s.lastTime {
 		return ErrOutOfOrderSample
 	}
+
 	c := s.head()
 	if c == nil {
 		return nil

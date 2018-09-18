@@ -301,14 +301,14 @@ func TestOutOfOrderDatapointCausesError(t *testing.T) {
 	app := db.Appender()
 	_, err := app.Add(labels.Labels{}, 1, 0)
 	testutil.Ok(t, err)
-	_, err = app.Add(labels.Labels{}, 1, 0)
+	_, err = app.Add(labels.Labels{}, 0, 0)
 	testutil.Equals(t, ErrOutOfOrderSample, err)
 
 	testutil.Ok(t, app.Commit())
 
 	// Also test that it errors on a new appender as well.
 	app = db.Appender()
-	_, err = app.Add(labels.Labels{}, 1, 0)
+	_, err = app.Add(labels.Labels{}, 0, 0)
 	testutil.Equals(t, ErrOutOfOrderSample, err)
 	testutil.Ok(t, app.Rollback())
 }
