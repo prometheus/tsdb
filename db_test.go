@@ -1312,6 +1312,7 @@ func TestNoEmptyBlock(t *testing.T) {
 	testutil.Ok(t, err)
 	testutil.Equals(t, 0, len(db.blocks))
 
+	// Test no blocks after deleting all samples from head.
 	blockRange := DefaultOptions.BlockRanges[0]
 	label := labels.FromStrings("foo", "bar")
 
@@ -1325,29 +1326,37 @@ func TestNoEmptyBlock(t *testing.T) {
 	err = app.Commit()
 	testutil.Ok(t, err)
 
-	// Test no blocks after deleting all samples from head.
 	testutil.Ok(t, db.Delete(math.MinInt64, math.MaxInt64, labels.NewEqualMatcher("foo", "bar")))
 	_, err = db.compact()
 	testutil.Ok(t, err)
+	// No blocks created.
 	testutil.Equals(t, 0, len(db.blocks))
 
+	// Test no blocks remaining after small samples are deleted from disk.
 	app = db.Appender()
-	for i := int64(3); i < 6; i++ {
-		_, err := app.Add(label, i*blockRange, 0)
-		testutil.Ok(t, err)
-		_, err = app.Add(label, i*blockRange+1000, 0)
-		testutil.Ok(t, err)
+	for i := int64(3); i < 20; i++ {
+		for j := int64(0); j < 10; j++ {
+			_, err := app.Add(label, i*blockRange+j, 0)
+			testutil.Ok(t, err)
+		}
 	}
 	err = app.Commit()
 	testutil.Ok(t, err)
 
 	_, err = db.compact()
 	testutil.Ok(t, err)
-	testutil.Equals(t, 1, len(db.blocks))
+	testutil.Assert(t, len(db.blocks) > 0, "No blocks created")
 
-	// No blocks after deleting all samples from disk.
 	testutil.Ok(t, db.Delete(math.MinInt64, math.MaxInt64, labels.NewEqualMatcher("foo", "bar")))
-	_, err = db.compact()
+
+	// Mimicking small part of compaction.
+	plan := []string{}
+	for _, b := range db.blocks {
+		plan = append(plan, b.Dir())
+	}
+	_, err = db.compactor.Compact(db.dir, plan...)
 	testutil.Ok(t, err)
+	testutil.Ok(t, db.reload())
+	// All samples are deleted. No blocks should be remeianing after compact.
 	testutil.Equals(t, 0, len(db.blocks))
 }

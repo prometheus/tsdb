@@ -349,14 +349,29 @@ func (c *LeveledCompactor) Compact(dest string, dirs ...string) (uid ulid.ULID, 
 	meta := compactBlockMetas(uid, metas...)
 	err = c.write(dest, meta, blocks...)
 	if err == nil {
-		level.Info(c.logger).Log(
-			"msg", "compact blocks",
-			"count", len(blocks),
-			"mint", meta.MinTime,
-			"maxt", meta.MaxTime,
-			"ulid", meta.ULID,
-			"sources", fmt.Sprintf("%v", uids),
-		)
+
+		if meta.Stats.NumSamples == 0 {
+			level.Info(c.logger).Log(
+				"msg", "compact blocks [resulted in empty block]",
+				"count", len(blocks),
+				"sources", fmt.Sprintf("%v", uids),
+			)
+			for _, b := range bs {
+				b.meta.Compaction.Deletable = true
+				writeMetaFile(b.dir, &b.meta)
+			}
+			uid = ulid.ULID{}
+		} else {
+			level.Info(c.logger).Log(
+				"msg", "compact blocks",
+				"count", len(blocks),
+				"mint", meta.MinTime,
+				"maxt", meta.MaxTime,
+				"ulid", meta.ULID,
+				"sources", fmt.Sprintf("%v", uids),
+			)
+		}
+
 		return uid, nil
 	}
 

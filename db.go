@@ -484,6 +484,9 @@ func (db *DB) reload() (err error) {
 			corrupted[ulid] = err
 			continue
 		}
+		if meta.Compaction.Deletable {
+			deleteable[meta.ULID] = struct{}{}
+		}
 		if db.beyondRetention(meta) {
 			deleteable[meta.ULID] = struct{}{}
 			continue
