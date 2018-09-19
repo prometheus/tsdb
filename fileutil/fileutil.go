@@ -1,108 +1,137 @@
-package tsdb
+// Package fileutil provides utility methods used when dealing with the filesystem in tsdb.
+// It is largely copied from github.com/coreos/etcd/pkg/fileutil to avoid the
+// dependency chain it brings with it.
+// Please check github.com/coreos/etcd for licensing information.
+package fileutil
 
 import (
+	"io/ioutil"
 	"os"
-	"testing"
-
-	"github.com/prometheus/tsdb/chunks"
-	"github.com/prometheus/tsdb/fileutil"
-	"github.com/prometheus/tsdb/index"
-	"github.com/prometheus/tsdb/labels"
-	"github.com/prometheus/tsdb/testutil"
+	"path/filepath"
+	"sort"
+	"strings"
 )
 
-func TestRepairBadIndexVersion(t *testing.T) {
-	// The broken index used in this test was written by the following script
-	// at a broken revision.
-	//
-	// func main() {
-	// 	w, err := index.NewWriter("index")
-	// 	if err != nil {
-	// 		panic(err)
-	// 	}
-	// 	err = w.AddSymbols(map[string]struct{}{
-	// 		"a": struct{}{},
-	// 		"b": struct{}{},
-	// 		"1": struct{}{},
-	// 		"2": struct{}{},
-	// 	})
-	// 	if err != nil {
-	// 		panic(err)
-	// 	}
-	// 	err = w.AddSeries(1, labels.FromStrings("a", "1", "b", "1"))
-	// 	if err != nil {
-	// 		panic(err)
-	// 	}
-	// 	err = w.AddSeries(2, labels.FromStrings("a", "2", "b", "1"))
-	// 	if err != nil {
-	// 		panic(err)
-	// 	}
-	// 	err = w.WritePostings("b", "1", index.NewListPostings([]uint64{1, 2}))
-	// 	if err != nil {
-	// 		panic(err)
-	// 	}
-	// 	if err := w.Close(); err != nil {
-	// 		panic(err)
-	// 	}
-	// }
-	const dbDir = "testdata/repair_index_version/01BZJ9WJQPWHGNC2W4J9TA62KC"
-	tmpDir := "testdata/repair_index_version/copy"
-	tmpDbDir := tmpDir + "/3MCNSQ8S31EHGJYWK5E1GPJWJZ"
-
-	// Check the current db.
-	// In its current state, lookups should fail with the fixed code.
-	meta, err := readMetaFile(dbDir)
-	testutil.NotOk(t, err)
-
-	// Touch chunks dir in block.
-	os.MkdirAll(dbDir+"/chunks", 0777)
-	defer os.RemoveAll(dbDir + "/chunks")
-
-	r, err := index.NewFileReader(dbDir + "/index")
-	testutil.Ok(t, err)
-	p, err := r.Postings("b", "1")
-	testutil.Ok(t, err)
-	for p.Next() {
-		t.Logf("next ID %d", p.At())
-
-		var lset labels.Labels
-		testutil.NotOk(t, r.Series(p.At(), &lset, nil))
+// CopyDirs copies all directories, subdirectories and files recursively including the empty folders.
+// Source and destination must be full paths.
+func CopyDirs(src, dest string) error {
+	if err := os.MkdirAll(dest, 0777); err != nil {
+		return err
 	}
-	testutil.Ok(t, p.Err())
-	testutil.Ok(t, r.Close())
-
-	// Create a copy DB to run test against.
-	if err = fileutil.CopyDirs(dbDir, tmpDbDir); err != nil {
-		t.Fatal(err)
-	}
-	// defer os.RemoveAll(tmpDir)
-	// On DB opening all blocks in the base dir should be repaired.
-	db, err := Open(tmpDir, nil, nil, nil)
-	testutil.Ok(t, err)
-	db.Close()
-
-	r, err = index.NewFileReader(tmpDbDir + "/index")
-	testutil.Ok(t, err)
-	p, err = r.Postings("b", "1")
-	testutil.Ok(t, err)
-	res := []labels.Labels{}
-
-	for p.Next() {
-		t.Logf("next ID %d", p.At())
-
-		var lset labels.Labels
-		var chks []chunks.Meta
-		testutil.Ok(t, r.Series(p.At(), &lset, &chks))
-		res = append(res, lset)
+	files, err := readDirs(src)
+	if err != nil {
+		return err
 	}
 
-	testutil.Ok(t, p.Err())
-	testutil.Equals(t, []labels.Labels{
-		{{"a", "1"}, {"b", "1"}},
-		{{"a", "2"}, {"b", "1"}},
-	}, res)
+	for _, f := range files {
+		dp := filepath.Join(dest, f)
+		sp := filepath.Join(src, f)
 
-	meta, err = readMetaFile(tmpDbDir)
-	testutil.Ok(t, err)
-	testutil.Assert(t, meta.Version == 1, "unexpected meta version %d", meta.Version)
+		stat, err := os.Stat(sp)
+		if err != nil {
+			return err
+		}
+
+		// Empty directories are also created.
+		if stat.IsDir() {
+			if err := os.MkdirAll(dp, 0777); err != nil {
+				return err
+			}
+			continue
+		}
+
+		if err := copyFile(sp, dp); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func copyFile(src, dest string) error {
+	data, err := ioutil.ReadFile(src)
+	if err != nil {
+		return err
+	}
+
+	err = ioutil.WriteFile(dest, data, 0644)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// readDirs reads the source directory recursively and
+// returns relative paths to all files and empty directories.
+func readDirs(src string) ([]string, error) {
+	var files []string
+	var err error
+
+	err = filepath.Walk(src, func(path string, f os.FileInfo, err error) error {
+		relativePath := strings.TrimPrefix(path, src)
+		if len(relativePath) > 0 {
+			files = append(files, relativePath)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return files, nil
+}
+
+// ReadDir returns the filenames in the given directory in sorted order.
+func ReadDir(dirpath string) ([]string, error) {
+	dir, err := os.Open(dirpath)
+	if err != nil {
+		return nil, err
+	}
+	defer dir.Close()
+	names, err := dir.Readdirnames(-1)
+	if err != nil {
+		return nil, err
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
+// Rename safely renames a file.
+func Rename(from, to string) error {
+	if err := os.Rename(from, to); err != nil {
+		return err
+	}
+
+	// Directory was renamed; sync parent dir to persist rename.
+	pdir, err := OpenDir(filepath.Dir(to))
+	if err != nil {
+		return err
+	}
+
+	if err = Fsync(pdir); err != nil {
+		pdir.Close()
+		return err
+	}
+	return pdir.Close()
+}
+
+// Replace moves a file or directory to a new location and deletes any previous data.
+// It is not atomic.
+func Replace(from, to string) error {
+	if err := os.RemoveAll(to); err != nil {
+		return err
+	}
+	if err := os.Rename(from, to); err != nil {
+		return err
+	}
+
+	// Directory was renamed; sync parent dir to persist rename.
+	pdir, err := OpenDir(filepath.Dir(to))
+	if err != nil {
+		return err
+	}
+
+	if err = Fsync(pdir); err != nil {
+		pdir.Close()
+		return err
+	}
+	return pdir.Close()
 }
