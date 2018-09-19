@@ -70,7 +70,6 @@ func TestRepairBadIndexVersion(t *testing.T) {
 	}
 	testutil.Ok(t, p.Err())
 	testutil.Ok(t, r.Close())
-	// asdf
 
 	// Create a copy DB to run test against.
 	if err = fileutil.CopyDirs(dbDir, tmpDbDir); err != nil {
