@@ -111,6 +111,7 @@ func Rename(from, to string) error {
 		return err
 	}
 	return pdir.Close()
+	//
 }
 
 // Replace moves a file or directory to a new location and deletes any previous data.
