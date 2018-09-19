@@ -383,16 +383,18 @@ func (db *DB) compact() (changes bool, err error) {
 		if err := db.reload(); err != nil {
 			return changes, errors.Wrap(err, "reload blocks")
 		}
-		// After this is fixed https://github.com/prometheus/tsdb/issues/309,
-		// if the compaction of head did not create any new blocks (possible
-		// if the samples were deleted in that range), and if number of
-		// blocks are 0, db.reload() does not truncate head. Hence MinTime
-		// of head is not set properly. So only for that situation, we need
-		// to call db.head.Truncate(..) manually.
 		db.mtx.RLock()
 		l := len(db.blocks)
 		db.mtx.RUnlock()
 		if l == 0 {
+			// After this was fixed https://github.com/prometheus/tsdb/issues/309,
+			// if the compaction of head did not create any new blocks (if all samples
+			// were deleted), it is possible to have 0 blocks after compaction.
+			//
+			// db.reload() doesn't truncate the head when the block count is zero.
+			//
+			// In this case we have 0 blocks because all data has been deleted
+			// so the head needs to be reset.
 			err = db.head.Truncate(maxt)
 			if err != nil {
 				return changes, errors.Wrap(err, "head truncate failed (in compact)")

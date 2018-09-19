@@ -59,6 +59,8 @@ type Compactor interface {
 
 	// Compact runs compaction against the provided directories. Must
 	// only be called concurrently with results of Plan().
+	// Compaction resulting in an empty block are not written to the disk
+	// and marks all parents as deletable in its meta data.
 	Compact(dest string, dirs ...string) (ulid.ULID, error)
 }
 
@@ -493,6 +495,7 @@ func (c *LeveledCompactor) write(dest string, meta *BlockMeta, blocks ...BlockRe
 		return errors.Wrap(err, "close index writer")
 	}
 
+	// Populated block is empty, so cleanup and exit.
 	if meta.Stats.NumSamples == 0 {
 		if err := os.RemoveAll(tmp); err != nil {
 			return errors.Wrap(err, "remove tmp folder after empty block failed")
