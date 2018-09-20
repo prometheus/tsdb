@@ -106,5 +106,3 @@ func TestRepairBadIndexVersion(t *testing.T) {
 	testutil.Ok(t, err)
 	testutil.Assert(t, meta.Version == 1, "unexpected meta version %d", meta.Version)
 }
-
-//
