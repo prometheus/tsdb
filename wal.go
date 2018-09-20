@@ -735,10 +735,12 @@ func (w *SegmentWAL) Close() error {
 	// On opening, a WAL must be fully consumed once. Afterwards
 	// only the current segment will still be open.
 	if hf := w.head(); hf != nil {
-		return errors.Wrapf(hf.Close(), "closing WAL head %s", hf.Name())
+		if err := hf.Close(); err != nil {
+			return errors.Wrapf(hf.Close(), "closing WAL head %s", hf.Name())
+		}
 	}
 
-	return w.dirFile.Close()
+	return errors.Wrapf(w.dirFile.Close(), "closing WAL dir %s", w.dirFile.Name())
 }
 
 const (
