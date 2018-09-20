@@ -75,7 +75,7 @@ func TestRepairBadIndexVersion(t *testing.T) {
 	if err = fileutil.CopyDirs(dbDir, tmpDbDir); err != nil {
 		t.Fatal(err)
 	}
-	// defer os.RemoveAll(tmpDir)
+	defer os.RemoveAll(tmpDir)
 	// On DB opening all blocks in the base dir should be repaired.
 	db, err := Open(tmpDir, nil, nil, nil)
 	testutil.Ok(t, err)
