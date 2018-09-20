@@ -479,8 +479,8 @@ func (c *LeveledCompactor) write(dest string, meta *BlockMeta, blocks ...BlockRe
 
 	// We are explicitly closing them here to check for error even
 	// though these are covered under defer. This is because in Windows,
-	// you cannot delete these unless there is they are closed and we want to close them
-	// in case of any errors above.
+	// you cannot delete these unless they are closed and the defer is to
+	// make sure they are closed if the function exits due to an error above.
 	if err = chunkw.Close(); err != nil {
 		return errors.Wrap(err, "close chunk writer")
 	}

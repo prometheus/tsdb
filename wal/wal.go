@@ -320,6 +320,8 @@ func (w *WAL) Repair(origErr error) error {
 	if err != nil {
 		return errors.Wrap(err, "open segment")
 	}
+	defer f.Close()
+
 	r := NewReader(bufio.NewReader(f))
 
 	for r.Next() {
@@ -329,6 +331,9 @@ func (w *WAL) Repair(origErr error) error {
 	}
 	// We expect an error here from r.Err(), so nothing to handle.
 
+	// We explicitly close even when there is a defer for Windows to be
+	// able to delete it. The defer is in place to close it in-case there
+	// are errors above.
 	if err := f.Close(); err != nil {
 		return errors.Wrap(err, "close corrupted file")
 	}
