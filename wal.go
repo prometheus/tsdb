@@ -741,15 +741,6 @@ func (w *SegmentWAL) Close() error {
 	return w.dirFile.Close()
 }
 
-const (
-	minSectorSize = 512
-
-	// walPageBytes is the alignment for flushing records to the backing Writer.
-	// It should be a multiple of the minimum sector size so that WAL can safely
-	// distinguish between torn writes and ordinary data corruption.
-	walPageBytes = 16 * minSectorSize
-)
-
 func (w *SegmentWAL) write(t WALEntryType, flag uint8, buf []byte) error {
 	// Cut to the next segment if the entry exceeds the file size unless it would also
 	// exceed the size of a new segment.
