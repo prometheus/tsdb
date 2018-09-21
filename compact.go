@@ -99,7 +99,7 @@ func newCompactorMetrics(r prometheus.Registerer) *compactorMetrics {
 		Buckets: prometheus.ExponentialBuckets(1, 2, 10),
 	})
 	m.chunkSize = prometheus.NewHistogram(prometheus.HistogramOpts{
-		Name:    "prometheus_tsdb_compaction_chunk_size",
+		Name:    "prometheus_tsdb_compaction_chunk_size_bytes",
 		Help:    "Final size of chunks on their first compaction",
 		Buckets: prometheus.ExponentialBuckets(32, 1.5, 12),
 	})
@@ -109,7 +109,7 @@ func newCompactorMetrics(r prometheus.Registerer) *compactorMetrics {
 		Buckets: prometheus.ExponentialBuckets(4, 1.5, 12),
 	})
 	m.chunkRange = prometheus.NewHistogram(prometheus.HistogramOpts{
-		Name:    "prometheus_tsdb_compaction_chunk_range",
+		Name:    "prometheus_tsdb_compaction_chunk_range_seconds",
 		Help:    "Final time range of chunks on their first compaction",
 		Buckets: prometheus.ExponentialBuckets(100, 4, 10),
 	})
@@ -469,6 +469,7 @@ func (c *LeveledCompactor) write(dest string, meta *BlockMeta, blocks ...BlockRe
 	if err != nil {
 		return errors.Wrap(err, "open chunk writer")
 	}
+	defer chunkw.Close()
 	// Record written chunk sizes on level 1 compactions.
 	if meta.Compaction.Level == 1 {
 		chunkw = &instrumentedChunkWriter{
@@ -483,11 +484,15 @@ func (c *LeveledCompactor) write(dest string, meta *BlockMeta, blocks ...BlockRe
 	if err != nil {
 		return errors.Wrap(err, "open index writer")
 	}
+	defer indexw.Close()
 
 	if err := c.populateBlock(blocks, meta, indexw, chunkw); err != nil {
 		return errors.Wrap(err, "write compaction")
 	}
-
+	// We are explicitly closing them here to check for error even
+	// though these are covered under defer. This is because in Windows,
+	// you cannot delete these unless they are closed and the defer is to
+	// make sure they are closed if the function exits due to an error above.
 	if err = chunkw.Close(); err != nil {
 		return errors.Wrap(err, "close chunk writer")
 	}
@@ -651,7 +656,9 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 		}
 
 		for _, chk := range chks {
-			c.chunkPool.Put(chk.Chunk)
+			if err := c.chunkPool.Put(chk.Chunk); err != nil {
+				return errors.Wrap(err, "put chunk")
+			}
 		}
 
 		for _, l := range lset {
