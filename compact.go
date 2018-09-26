@@ -64,11 +64,12 @@ type Compactor interface {
 
 // LeveledCompactor implements the Compactor interface.
 type LeveledCompactor struct {
-	dir       string
-	metrics   *compactorMetrics
-	logger    log.Logger
-	ranges    []int64
-	chunkPool chunkenc.Pool
+	dir         string
+	metrics     *compactorMetrics
+	logger      log.Logger
+	ranges      []int64
+	chunkPool   chunkenc.Pool
+	mergeChunks bool
 }
 
 type compactorMetrics struct {
@@ -134,10 +135,11 @@ func NewLeveledCompactor(r prometheus.Registerer, l log.Logger, ranges []int64, 
 		pool = chunkenc.NewPool()
 	}
 	return &LeveledCompactor{
-		ranges:    ranges,
-		chunkPool: pool,
-		logger:    l,
-		metrics:   newCompactorMetrics(r),
+		ranges:      ranges,
+		chunkPool:   pool,
+		logger:      l,
+		metrics:     newCompactorMetrics(r),
+		mergeChunks: true,
 	}, nil
 }
 
@@ -626,6 +628,10 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 			}
 		}
 
+		if c.mergeChunks {
+			chks = mergeChunks(chks)
+		}
+
 		if err := chunkw.WriteChunks(chks...); err != nil {
 			return errors.Wrap(err, "write chunks")
 		}
@@ -680,6 +686,50 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 		}
 	}
 	return nil
+}
+
+func mergeChunks(chks []chunks.Meta) []chunks.Meta {
+	newChks := make([]chunks.Meta, 0, len(chks))
+	for i := 0; i < len(chks); i++ {
+		if i < len(chks)-1 && chks[i].Chunk.NumSamples()+chks[i+1].Chunk.NumSamples() <= 480 {
+			newChunk := chunkenc.NewXORChunk()
+			app, err := newChunk.Appender()
+			if err != nil {
+				return chks
+			}
+			it := chks[i].Chunk.Iterator()
+			for it.Next() {
+				app.Append(it.At())
+			}
+			if it.Err() != nil {
+				return chks
+			}
+			minTime := chks[i].MinTime
+			maxTime := chks[i].MaxTime
+			ref := chks[i].Ref
+
+			for i < len(chks)-1 && newChunk.NumSamples()+chks[i+1].Chunk.NumSamples() <= 480 {
+				it = chks[i+1].Chunk.Iterator()
+				for it.Next() {
+					app.Append(it.At())
+				}
+				if it.Err() != nil {
+					return chks
+				}
+				maxTime = chks[i+1].MaxTime
+				i++
+			}
+			newChks = append(newChks, chunks.Meta{
+				MinTime: minTime,
+				MaxTime: maxTime,
+				Ref:     ref,
+				Chunk:   newChunk,
+			})
+		} else {
+			newChks = append(newChks, chks[i])
+		}
+	}
+	return newChks
 }
 
 type compactionSeriesSet struct {
