@@ -293,6 +293,22 @@ func TestAmendDatapointCausesError(t *testing.T) {
 	testutil.Ok(t, app.Rollback())
 }
 
+func TestOutOfOrderDatapointCausesError(t *testing.T) {
+	db, close := openTestDB(t, nil)
+	defer close()
+	defer db.Close()
+
+	app := db.Appender()
+	_, err := app.Add(labels.Labels{}, 1, 0)
+	testutil.Ok(t, err)
+	testutil.Ok(t, app.Commit())
+
+	app = db.Appender()
+	_, err = app.Add(labels.Labels{}, 0, 0)
+	testutil.Equals(t, ErrOutOfOrderSample, err)
+	testutil.Ok(t, app.Rollback())
+}
+
 func TestDuplicateNaNDatapointNoAmendError(t *testing.T) {
 	db, close := openTestDB(t, nil)
 	defer close()
