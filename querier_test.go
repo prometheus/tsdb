@@ -1361,7 +1361,7 @@ func createBlock(nSeries, nSamples int) (*Block, error) {
 		}
 	}
 
-	compactor, err := NewLeveledCompactor(nil, log.NewNopLogger(), []int64{1000000}, nil)
+	compactor, err := NewLeveledCompactor(nil, log.NewNopLogger(), []int64{1000000}, nil, true)
 	if err != nil {
 		return nil, err
 	}

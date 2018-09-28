@@ -127,7 +127,7 @@ func newCompactorMetrics(r prometheus.Registerer) *compactorMetrics {
 }
 
 // NewLeveledCompactor returns a LeveledCompactor.
-func NewLeveledCompactor(r prometheus.Registerer, l log.Logger, ranges []int64, pool chunkenc.Pool) (*LeveledCompactor, error) {
+func NewLeveledCompactor(r prometheus.Registerer, l log.Logger, ranges []int64, pool chunkenc.Pool, mergeSmallChunks bool) (*LeveledCompactor, error) {
 	if len(ranges) == 0 {
 		return nil, errors.Errorf("at least one range must be provided")
 	}
@@ -139,7 +139,7 @@ func NewLeveledCompactor(r prometheus.Registerer, l log.Logger, ranges []int64, 
 		chunkPool:        pool,
 		logger:           l,
 		metrics:          newCompactorMetrics(r),
-		mergeSmallChunks: true,
+		mergeSmallChunks: mergeSmallChunks,
 	}, nil
 }
 

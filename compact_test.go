@@ -148,7 +148,7 @@ func TestNoPanicFor0Tombstones(t *testing.T) {
 		},
 	}
 
-	c, err := NewLeveledCompactor(nil, nil, []int64{50}, nil)
+	c, err := NewLeveledCompactor(nil, nil, []int64{50}, nil, false)
 	testutil.Ok(t, err)
 
 	c.plan(metas)
@@ -162,7 +162,7 @@ func TestLeveledCompactor_plan(t *testing.T) {
 		180,
 		540,
 		1620,
-	}, nil)
+	}, nil, false)
 	testutil.Ok(t, err)
 
 	cases := []struct {
@@ -325,7 +325,7 @@ func TestRangeWithFailedCompactionWontGetSelected(t *testing.T) {
 		240,
 		720,
 		2160,
-	}, nil)
+	}, nil, false)
 	testutil.Ok(t, err)
 
 	cases := []struct {
@@ -375,7 +375,7 @@ func TestCompactionFailWillCleanUpTempDir(t *testing.T) {
 		240,
 		720,
 		2160,
-	}, nil)
+	}, nil, false)
 	testutil.Ok(t, err)
 
 	tmpdir, err := ioutil.TempDir("", "test")
