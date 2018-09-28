@@ -247,7 +247,7 @@ Outer:
 			expSamples = append(expSamples, sample{ts, smpls[ts]})
 		}
 
-		expss := newListSeriesSet([]Series{
+		expss := newMockSeriesSet([]Series{
 			newSeries(map[string]string{"a": "b"}, expSamples),
 		})
 
@@ -474,7 +474,7 @@ Outer:
 			expSamples = append(expSamples, sample{ts, smpls[ts]})
 		}
 
-		expss := newListSeriesSet([]Series{
+		expss := newMockSeriesSet([]Series{
 			newSeries(map[string]string{"a": "b"}, expSamples),
 		})
 
@@ -753,7 +753,7 @@ func TestTombstoneClean(t *testing.T) {
 			expSamples = append(expSamples, sample{ts, smpls[ts]})
 		}
 
-		expss := newListSeriesSet([]Series{
+		expss := newMockSeriesSet([]Series{
 			newSeries(map[string]string{"a": "b"}, expSamples),
 		})
 
@@ -1385,4 +1385,39 @@ func TestNoEmptyBlocks(t *testing.T) {
 	testutil.Ok(t, db.reload())
 	// All samples are deleted. No blocks should be remeianing after compact.
 	testutil.Equals(t, 0, len(db.blocks))
+}
+
+func TestCorrectNumTombstones(t *testing.T) {
+	db, close := openTestDB(t, nil)
+	defer close()
+	defer db.Close()
+
+	blockRange := DefaultOptions.BlockRanges[0]
+	label := labels.FromStrings("foo", "bar")
+
+	app := db.Appender()
+	for i := int64(0); i < 3; i++ {
+		for j := int64(0); j < 15; j++ {
+			_, err := app.Add(label, i*blockRange+j, 0)
+			testutil.Ok(t, err)
+		}
+	}
+	testutil.Ok(t, app.Commit())
+
+	err := db.compact()
+	testutil.Ok(t, err)
+	testutil.Equals(t, 1, len(db.blocks))
+
+	testutil.Ok(t, db.Delete(0, 1, labels.NewEqualMatcher("foo", "bar")))
+	testutil.Equals(t, uint64(1), db.blocks[0].meta.Stats.NumTombstones)
+
+	// {0, 1} and {2, 3} are merged to form 1 tombstone.
+	testutil.Ok(t, db.Delete(2, 3, labels.NewEqualMatcher("foo", "bar")))
+	testutil.Equals(t, uint64(1), db.blocks[0].meta.Stats.NumTombstones)
+
+	testutil.Ok(t, db.Delete(5, 6, labels.NewEqualMatcher("foo", "bar")))
+	testutil.Equals(t, uint64(2), db.blocks[0].meta.Stats.NumTombstones)
+
+	testutil.Ok(t, db.Delete(9, 11, labels.NewEqualMatcher("foo", "bar")))
+	testutil.Equals(t, uint64(3), db.blocks[0].meta.Stats.NumTombstones)
 }
