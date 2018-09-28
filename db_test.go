@@ -110,7 +110,7 @@ func TestDataAvailableOnlyAfterCommit(t *testing.T) {
 	testutil.Ok(t, err)
 	seriesSet := query(t, querier, labels.NewEqualMatcher("foo", "bar"))
 
-	testutil.Equals(t, seriesSet, map[string][]sample{})
+	testutil.Equals(t, map[string][]sample{}, seriesSet)
 	testutil.Ok(t, querier.Close())
 
 	err = app.Commit()
@@ -122,7 +122,7 @@ func TestDataAvailableOnlyAfterCommit(t *testing.T) {
 
 	seriesSet = query(t, querier, labels.NewEqualMatcher("foo", "bar"))
 
-	testutil.Equals(t, seriesSet, map[string][]sample{`{foo="bar"}`: {{t: 0, v: 0}}})
+	testutil.Equals(t, map[string][]sample{`{foo="bar"}`: {{t: 0, v: 0}}}, seriesSet)
 }
 
 func TestDataNotAvailableAfterRollback(t *testing.T) {
@@ -143,7 +143,7 @@ func TestDataNotAvailableAfterRollback(t *testing.T) {
 
 	seriesSet := query(t, querier, labels.NewEqualMatcher("foo", "bar"))
 
-	testutil.Equals(t, seriesSet, map[string][]sample{})
+	testutil.Equals(t, map[string][]sample{}, seriesSet)
 }
 
 func TestDBAppenderAddRef(t *testing.T) {
@@ -179,7 +179,7 @@ func TestDBAppenderAddRef(t *testing.T) {
 	testutil.Ok(t, err)
 
 	err = app2.AddFast(9999999, 1, 1)
-	testutil.Equals(t, errors.Cause(err), ErrNotFound)
+	testutil.Equals(t, ErrNotFound, errors.Cause(err))
 
 	testutil.Ok(t, app2.Commit())
 
@@ -247,7 +247,7 @@ Outer:
 			expSamples = append(expSamples, sample{ts, smpls[ts]})
 		}
 
-		expss := newListSeriesSet([]Series{
+		expss := newMockSeriesSet([]Series{
 			newSeries(map[string]string{"a": "b"}, expSamples),
 		})
 
@@ -412,7 +412,7 @@ func TestDB_Snapshot(t *testing.T) {
 		testutil.Ok(t, series.Err())
 	}
 	testutil.Ok(t, seriesSet.Err())
-	testutil.Equals(t, sum, 1000.0)
+	testutil.Equals(t, 1000.0, sum)
 }
 
 func TestDB_SnapshotWithDelete(t *testing.T) {
@@ -474,7 +474,7 @@ Outer:
 			expSamples = append(expSamples, sample{ts, smpls[ts]})
 		}
 
-		expss := newListSeriesSet([]Series{
+		expss := newMockSeriesSet([]Series{
 			newSeries(map[string]string{"a": "b"}, expSamples),
 		})
 
@@ -689,7 +689,7 @@ func TestWALFlushedOnDBClose(t *testing.T) {
 
 	values, err := q.LabelValues("labelname")
 	testutil.Ok(t, err)
-	testutil.Equals(t, values, []string{"labelvalue"})
+	testutil.Equals(t, []string{"labelvalue"}, values)
 }
 
 func TestTombstoneClean(t *testing.T) {
@@ -753,7 +753,7 @@ func TestTombstoneClean(t *testing.T) {
 			expSamples = append(expSamples, sample{ts, smpls[ts]})
 		}
 
-		expss := newListSeriesSet([]Series{
+		expss := newMockSeriesSet([]Series{
 			newSeries(map[string]string{"a": "b"}, expSamples),
 		})
 
@@ -859,6 +859,7 @@ func (c *mockCompactorFailing) Write(dest string, b BlockReader, mint, maxt int6
 	}
 
 	block := createEmptyBlock(c.t, filepath.Join(dest, meta.ULID.String()), meta)
+	testutil.Ok(c.t, block.Close()) // Close block as we won't be using anywhere.
 	c.blocks = append(c.blocks, block)
 
 	// Now check that all expected blocks are actually persisted on disk.
@@ -1130,7 +1131,7 @@ func TestChunkAtBlockBoundary(t *testing.T) {
 	err := app.Commit()
 	testutil.Ok(t, err)
 
-	_, err = db.compact()
+	err = db.compact()
 	testutil.Ok(t, err)
 
 	for _, block := range db.blocks {
@@ -1182,7 +1183,7 @@ func TestQuerierWithBoundaryChunks(t *testing.T) {
 	err := app.Commit()
 	testutil.Ok(t, err)
 
-	_, err = db.compact()
+	err = db.compact()
 	testutil.Ok(t, err)
 
 	testutil.Assert(t, len(db.blocks) >= 3, "invalid test, less than three blocks in DB")
@@ -1369,7 +1370,7 @@ func TestDB_LabelNames(t *testing.T) {
 		testutil.Ok(t, headIndexr.Close())
 
 		// Testing disk.
-		_, err = db.compact()
+		err = db.compact()
 		testutil.Ok(t, err)
 		// All blocks have same label names, hence check them individually.
 		// No need to aggregrate and check.
@@ -1391,4 +1392,39 @@ func TestDB_LabelNames(t *testing.T) {
 		testutil.Ok(t, err)
 		testutil.Equals(t, tst.exp2, labelNames)
 	}
+}
+
+func TestCorrectNumTombstones(t *testing.T) {
+	db, close := openTestDB(t, nil)
+	defer close()
+	defer db.Close()
+
+	blockRange := DefaultOptions.BlockRanges[0]
+	label := labels.FromStrings("foo", "bar")
+
+	app := db.Appender()
+	for i := int64(0); i < 3; i++ {
+		for j := int64(0); j < 15; j++ {
+			_, err := app.Add(label, i*blockRange+j, 0)
+			testutil.Ok(t, err)
+		}
+	}
+	testutil.Ok(t, app.Commit())
+
+	err := db.compact()
+	testutil.Ok(t, err)
+	testutil.Equals(t, 1, len(db.blocks))
+
+	testutil.Ok(t, db.Delete(0, 1, labels.NewEqualMatcher("foo", "bar")))
+	testutil.Equals(t, uint64(1), db.blocks[0].meta.Stats.NumTombstones)
+
+	// {0, 1} and {2, 3} are merged to form 1 tombstone.
+	testutil.Ok(t, db.Delete(2, 3, labels.NewEqualMatcher("foo", "bar")))
+	testutil.Equals(t, uint64(1), db.blocks[0].meta.Stats.NumTombstones)
+
+	testutil.Ok(t, db.Delete(5, 6, labels.NewEqualMatcher("foo", "bar")))
+	testutil.Equals(t, uint64(2), db.blocks[0].meta.Stats.NumTombstones)
+
+	testutil.Ok(t, db.Delete(9, 11, labels.NewEqualMatcher("foo", "bar")))
+	testutil.Equals(t, uint64(3), db.blocks[0].meta.Stats.NumTombstones)
 }

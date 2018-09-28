@@ -2,13 +2,13 @@ package tsdb
 
 import (
 	"os"
-	"reflect"
 	"testing"
 
 	"github.com/prometheus/tsdb/chunks"
-
+	"github.com/prometheus/tsdb/fileutil"
 	"github.com/prometheus/tsdb/index"
 	"github.com/prometheus/tsdb/labels"
+	"github.com/prometheus/tsdb/testutil"
 )
 
 func TestRepairBadIndexVersion(t *testing.T) {
@@ -45,51 +45,46 @@ func TestRepairBadIndexVersion(t *testing.T) {
 	// 		panic(err)
 	// 	}
 	// }
+	const dbDir = "testdata/repair_index_version/01BZJ9WJQPWHGNC2W4J9TA62KC"
+	tmpDir := "testdata/repair_index_version/copy"
+	tmpDbDir := tmpDir + "/3MCNSQ8S31EHGJYWK5E1GPJWJZ"
 
+	// Check the current db.
 	// In its current state, lookups should fail with the fixed code.
-	const dir = "testdata/repair_index_version/01BZJ9WJQPWHGNC2W4J9TA62KC/"
-	meta, err := readMetaFile(dir)
-	if err == nil {
-		t.Fatal("error expected but got none")
-	}
-	// Touch chunks dir in block.
-	os.MkdirAll(dir+"chunks", 0777)
+	meta, err := readMetaFile(dbDir)
+	testutil.NotOk(t, err)
 
-	r, err := index.NewFileReader(dir + "index")
-	if err != nil {
-		t.Fatal(err)
-	}
+	// Touch chunks dir in block.
+	os.MkdirAll(dbDir+"/chunks", 0777)
+	defer os.RemoveAll(dbDir + "/chunks")
+
+	r, err := index.NewFileReader(dbDir + "/index")
+	testutil.Ok(t, err)
 	p, err := r.Postings("b", "1")
-	if err != nil {
-		t.Fatal(err)
-	}
+	testutil.Ok(t, err)
 	for p.Next() {
 		t.Logf("next ID %d", p.At())
 
 		var lset labels.Labels
-		if err := r.Series(p.At(), &lset, nil); err == nil {
-			t.Fatal("expected error but got none")
-		}
+		testutil.NotOk(t, r.Series(p.At(), &lset, nil))
 	}
-	if p.Err() != nil {
-		t.Fatal(err)
-	}
+	testutil.Ok(t, p.Err())
+	testutil.Ok(t, r.Close())
 
-	// On DB opening all blocks in the base dir should be repaired.
-	db, err := Open("testdata/repair_index_version", nil, nil, nil)
-	if err != nil {
+	// Create a copy DB to run test against.
+	if err = fileutil.CopyDirs(dbDir, tmpDbDir); err != nil {
 		t.Fatal(err)
 	}
+	defer os.RemoveAll(tmpDir)
+	// On DB opening all blocks in the base dir should be repaired.
+	db, err := Open(tmpDir, nil, nil, nil)
+	testutil.Ok(t, err)
 	db.Close()
 
-	r, err = index.NewFileReader(dir + "index")
-	if err != nil {
-		t.Fatal(err)
-	}
+	r, err = index.NewFileReader(tmpDbDir + "/index")
+	testutil.Ok(t, err)
 	p, err = r.Postings("b", "1")
-	if err != nil {
-		t.Fatal(err)
-	}
+	testutil.Ok(t, err)
 	res := []labels.Labels{}
 
 	for p.Next() {
@@ -97,26 +92,17 @@ func TestRepairBadIndexVersion(t *testing.T) {
 
 		var lset labels.Labels
 		var chks []chunks.Meta
-		if err := r.Series(p.At(), &lset, &chks); err != nil {
-			t.Fatal(err)
-		}
+		testutil.Ok(t, r.Series(p.At(), &lset, &chks))
 		res = append(res, lset)
 	}
-	if p.Err() != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(res, []labels.Labels{
+
+	testutil.Ok(t, p.Err())
+	testutil.Equals(t, []labels.Labels{
 		{{"a", "1"}, {"b", "1"}},
 		{{"a", "2"}, {"b", "1"}},
-	}) {
-		t.Fatalf("unexpected result %v", res)
-	}
+	}, res)
 
-	meta, err = readMetaFile(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if meta.Version != 1 {
-		t.Fatalf("unexpected meta version %d", meta.Version)
-	}
+	meta, err = readMetaFile(tmpDbDir)
+	testutil.Ok(t, err)
+	testutil.Assert(t, meta.Version == 1, "unexpected meta version %d", meta.Version)
 }
