@@ -401,7 +401,8 @@ func (db *DB) compact() (err error) {
 			// from the block interval here.
 			maxt: maxt - 1,
 		}
-		if _, err = db.compactor.Write(db.dir, head, mint, maxt, nil); err != nil {
+		uid, err := db.compactor.Write(db.dir, head, mint, maxt, nil)
+		if err != nil {
 			return errors.Wrap(err, "persist head block")
 		}
 
@@ -410,22 +411,15 @@ func (db *DB) compact() (err error) {
 		if err := db.reload(); err != nil {
 			return errors.Wrap(err, "reload blocks")
 		}
-		db.mtx.RLock()
-		l := len(db.blocks)
-		db.mtx.RUnlock()
-		if l == 0 {
+		if (uid == ulid.ULID{}) { // No block created.
 			// After this was fixed https://github.com/prometheus/tsdb/issues/309,
-			// if the compaction of head did not create any new blocks (if all samples
-			// were deleted), it is possible to have 0 blocks after compaction.
-			//
-			// db.reload() doesn't truncate the head when the block count is zero.
-			//
-			// In this case we have 0 blocks because all data has been deleted
-			// so the head needs to be reset.
-			err = db.head.Truncate(maxt)
-			if err != nil {
+			// Case 1: It is possible to have 0 blocks after compaction.
+			//         db.reload() doesn't truncate the head when the block count is zero.
+			// Case 2: If there were blocks on disk, head will be truncated to a
+			//         wrong value based on old blocks.
+			// Hence we need to truncate manually.
+			if err = db.head.Truncate(maxt); err != nil {
 				return errors.Wrap(err, "head truncate failed (in compact)")
-
 			}
 		}
 		runtime.GC()

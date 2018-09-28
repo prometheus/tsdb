@@ -1309,8 +1309,7 @@ func TestNoEmptyBlocks(t *testing.T) {
 	defer db.Close()
 
 	// Test no blocks after compact with empty head.
-	err := db.compact()
-	testutil.Ok(t, err)
+	testutil.Ok(t, db.compact())
 	testutil.Equals(t, 0, len(db.blocks))
 
 	// Test no blocks after deleting all samples from head.
@@ -1324,19 +1323,16 @@ func TestNoEmptyBlocks(t *testing.T) {
 		_, err = app.Add(label, i*blockRange+1000, 0)
 		testutil.Ok(t, err)
 	}
-	err = app.Commit()
-	testutil.Ok(t, err)
+	testutil.Ok(t, app.Commit())
 
 	oldHeadMinT := db.head.MinTime()
 	testutil.Ok(t, db.Delete(math.MinInt64, math.MaxInt64, labels.NewEqualMatcher("foo", "bar")))
-	err = db.compact()
-	testutil.Ok(t, err)
+	testutil.Ok(t, db.compact())
 	// Making sure that head was modified.
 	testutil.Assert(t, oldHeadMinT < db.head.MinTime(), "Head was not changed after compaction.")
 	// No blocks created.
 	testutil.Equals(t, 0, len(db.blocks))
 
-	// Test no blocks remaining after deleting all samples from disk.
 	app = db.Appender()
 	for i := int64(7); i < 25; i++ {
 		for j := int64(0); j < 10; j++ {
@@ -1344,13 +1340,23 @@ func TestNoEmptyBlocks(t *testing.T) {
 			testutil.Ok(t, err)
 		}
 	}
-	err = app.Commit()
-	testutil.Ok(t, err)
+	testutil.Ok(t, app.Commit())
 
-	err = db.compact()
-	testutil.Ok(t, err)
+	testutil.Ok(t, db.compact())
 	testutil.Assert(t, len(db.blocks) > 0, "No blocks created when compacting with >0 samples")
 
+	// When no new block is created from head, and there are some blocks on disk,
+	// compaction should not run into infinite loop (was seen during development).
+	app = db.Appender()
+	for i := int64(26); i < 30; i++ {
+		_, err := app.Add(label, i*blockRange, 0)
+		testutil.Ok(t, err)
+	}
+	testutil.Ok(t, app.Commit())
+	testutil.Ok(t, db.head.Delete(math.MinInt64, math.MaxInt64, labels.NewEqualMatcher("foo", "bar")))
+	testutil.Ok(t, db.compact())
+
+	// Test no blocks remaining after deleting all samples from disk.
 	testutil.Ok(t, db.Delete(math.MinInt64, math.MaxInt64, labels.NewEqualMatcher("foo", "bar")))
 
 	// Mimicking Plan() of compactor and getting list
@@ -1369,7 +1375,7 @@ func TestNoEmptyBlocks(t *testing.T) {
 
 	// No new blocks are created by Compact, and marks all old blocks as deletable.
 	oldLen := len(db.blocks)
-	_, err = db.compactor.Compact(db.dir, plan...)
+	_, err := db.compactor.Compact(db.dir, plan...)
 	testutil.Ok(t, err)
 	// Number of blocks are the same.
 	testutil.Equals(t, oldLen, len(db.blocks))
