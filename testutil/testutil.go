@@ -58,10 +58,20 @@ func NotOk(tb testing.TB, err error) {
 }
 
 // Equals fails the test if exp is not equal to act.
-func Equals(tb testing.TB, exp, act interface{}) {
+func Equals(tb testing.TB, exp, act interface{}, msgAndArgs ...interface{}) {
 	if !reflect.DeepEqual(exp, act) {
 		_, file, line, _ := runtime.Caller(1)
-		fmt.Printf("\033[31m%s:%d:\n\n\texp: %#v\n\n\tgot: %#v\033[39m\n\n", filepath.Base(file), line, exp, act)
+		fmt.Printf("\033[31m%s:%d:\n\n\texp: %#v\n\n\tgot: %#v%s\033[39m\n\n", filepath.Base(file), line, exp, act, formatMessage(msgAndArgs))
 		tb.FailNow()
 	}
+}
+
+func formatMessage(msgAndArgs []interface{}) string {
+	if len(msgAndArgs) == 0 {
+		return ""
+	}
+	if _, ok := msgAndArgs[0].(string); !ok {
+		return ""
+	}
+	return fmt.Sprintf(fmt.Sprintf("\n\nmsg: %s", msgAndArgs[0]), msgAndArgs[1:]...)
 }
