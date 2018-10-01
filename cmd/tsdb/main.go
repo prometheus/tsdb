@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -31,9 +32,12 @@ import (
 	"time"
 
 	"github.com/go-kit/kit/log"
+	"github.com/go-kit/kit/log/level"
+	"github.com/oklog/ulid"
 	"github.com/pkg/errors"
 	"github.com/prometheus/tsdb"
 	"github.com/prometheus/tsdb/labels"
+	"github.com/prometheus/tsdb/wal"
 	"gopkg.in/alecthomas/kingpin.v2"
 )
 
@@ -48,6 +52,10 @@ func main() {
 		listCmd              = cli.Command("ls", "list db blocks")
 		listCmdHumanReadable = listCmd.Flag("human-readable", "print human readable values").Short('h').Bool()
 		listPath             = listCmd.Arg("db path", "database path (default is benchout/storage)").Default("benchout/storage").String()
+		walBlockCmd          = cli.Command("wal-block", "write a block from the wal file")
+		walPath              = walBlockCmd.Arg("wal path", "wal path (default is ./wal)").Default("./wal").String()
+		walMint              = walBlockCmd.Flag("mint", "the timestamp from which to start loading samples from the wal (if not provided it will load all)").Default("-1").Int64()
+		logger               = level.NewFilter(log.NewLogfmtLogger(log.NewSyncWriter(os.Stderr)), level.AllowInfo())
 	)
 
 	switch kingpin.MustParse(cli.Parse(os.Args[1:])) {
@@ -63,7 +71,15 @@ func main() {
 		if err != nil {
 			exitWithError(err)
 		}
-		printBlocks(db.Blocks(), listCmdHumanReadable)
+		printBlocks(db.Blocks(), *listCmdHumanReadable)
+	case walBlockCmd.FullCommand():
+		block, err := walBlock(logger, *walPath, *walMint)
+		if err != nil {
+			exitWithError(err)
+		}
+
+		logger.Log("path", block.Dir())
+		printBlocks([]*tsdb.Block{block}, true)
 	}
 	flag.CommandLine.Set("log.level", "debug")
 }
@@ -80,6 +96,73 @@ type writeBenchmark struct {
 	memprof   *os.File
 	blockprof *os.File
 	mtxprof   *os.File
+}
+
+func walBlock(logger log.Logger, walPath string, mint int64) (*tsdb.Block, error) {
+	if err := tsdb.MigrateWAL(logger, walPath); err != nil {
+		return nil, errors.Wrap(err, "migrate WAL")
+	}
+	wal, err := wal.New(logger, nil, walPath)
+	if err != nil {
+		return nil, err
+	}
+	head, err := tsdb.NewHead(nil, logger, wal, tsdb.DefaultOptions.BlockRanges[0])
+	if err != nil {
+		return nil, err
+	}
+	// Closing the head shouldn't be needed, but just in case.
+	defer func() {
+		if err := head.Close(); err != nil {
+			level.Error(logger).Log("msg", "closing the head failed", "err", err)
+		}
+	}()
+	totalTime := measureTime("reading the wal files into memory", func() {
+		if mint > 0 {
+			errors.Wrap(head.Truncate(mint), "setting the minimum WAL timestamp")
+			level.Info(logger).Log("msg", "head start time", "mint", head.MinTime())
+
+		}
+		errors.Wrap(head.Init(), "reading the wal files into memory")
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// After head initialization if the max time hasn't changed than the wal doesn't contain any samples.
+	if (mint > 0 && head.MaxTime() == mint) || head.MaxTime() == math.MinInt64 {
+		return nil, fmt.Errorf("wal read error, head doesn't include any samples, dir:%s", walPath)
+	}
+
+	level.Info(logger).Log("msg", "wal loaded", "mint", getFormatedTime(head.MinTime(), true), "maxt", getFormatedTime(head.MaxTime(), true))
+
+	compactor, err := tsdb.NewLeveledCompactor(nil, logger, tsdb.DefaultOptions.BlockRanges, nil)
+	if err != nil {
+		return nil, errors.Wrap(err, "create leveled compactor")
+	}
+
+	var ulid ulid.ULID
+	totalTime += measureTime("read series from memory and write a block", func() {
+		ulid, err = compactor.Write(walPath, head, head.MinTime(), head.MaxTime(), nil)
+		if err != nil {
+			errors.Wrap(err, "read series from memory and write a block")
+		}
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	var b *tsdb.Block
+	totalTime += measureTime("opening new block", func() {
+		b, err = tsdb.OpenBlock(filepath.Join(walPath, ulid.String()), nil)
+		errors.Wrap(err, "opening new block")
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	fmt.Printf("\n>> total time for all stages:%v \n\n", totalTime)
+
+	return b, nil
 }
 
 func (b *writeBenchmark) run() {
@@ -357,7 +440,7 @@ func exitWithError(err error) {
 	os.Exit(1)
 }
 
-func printBlocks(blocks []*tsdb.Block, humanReadable *bool) {
+func printBlocks(blocks []*tsdb.Block, humanReadable bool) {
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	defer tw.Flush()
 
@@ -377,8 +460,8 @@ func printBlocks(blocks []*tsdb.Block, humanReadable *bool) {
 	}
 }
 
-func getFormatedTime(timestamp int64, humanReadable *bool) string {
-	if *humanReadable {
+func getFormatedTime(timestamp int64, humanReadable bool) string {
+	if humanReadable {
 		return time.Unix(timestamp/1000, 0).String()
 	}
 	return strconv.FormatInt(timestamp, 10)
