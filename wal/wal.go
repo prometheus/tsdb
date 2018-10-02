@@ -164,6 +164,7 @@ type WAL struct {
 	pageCompletions prometheus.Counter
 	truncateFail    prometheus.Counter
 	truncateTotal   prometheus.Counter
+	lastLog         prometheus.Gauge
 }
 
 // New returns a new WAL over the given directory.
@@ -211,8 +212,12 @@ func NewSize(logger log.Logger, reg prometheus.Registerer, dir string, segmentSi
 		Name: "prometheus_tsdb_wal_truncations_total",
 		Help: "Total number of WAL truncations attempted.",
 	})
+	w.lastLog = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "prometheus_tsdb_wal_last_log_timestamp",
+		Help: "Timestamp of the last time samples were logged to the WAL.",
+	})
 	if reg != nil {
-		reg.MustRegister(w.fsyncDuration, w.pageFlushes, w.pageCompletions, w.truncateFail, w.truncateTotal)
+		reg.MustRegister(w.fsyncDuration, w.pageFlushes, w.pageCompletions, w.truncateFail, w.truncateTotal, w.lastLog)
 	}
 
 	_, j, err := w.Segments()
@@ -461,6 +466,7 @@ func (w *WAL) Log(recs ...[]byte) error {
 			return err
 		}
 	}
+	w.lastLog.SetToCurrentTime()
 	return nil
 }
 
