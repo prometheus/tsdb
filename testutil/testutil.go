@@ -61,7 +61,7 @@ func NotOk(tb testing.TB, err error) {
 func Equals(tb testing.TB, exp, act interface{}, msgAndArgs ...interface{}) {
 	if !reflect.DeepEqual(exp, act) {
 		_, file, line, _ := runtime.Caller(1)
-		fmt.Printf("\033[31m%s:%d:\n\n\texp: %#v\n\n\tgot: %#v%s\033[39m\n\n", filepath.Base(file), line, exp, act, formatMessage(msgAndArgs))
+		fmt.Printf("\033[31m%s:%d:%s\n\n\texp: %#v\n\n\tgot: %#v\033[39m\n\n", filepath.Base(file), line, formatMessage(msgAndArgs), exp, act)
 		tb.FailNow()
 	}
 }
@@ -70,8 +70,9 @@ func formatMessage(msgAndArgs []interface{}) string {
 	if len(msgAndArgs) == 0 {
 		return ""
 	}
-	if _, ok := msgAndArgs[0].(string); !ok {
-		return ""
+
+	if msg, ok := msgAndArgs[0].(string); ok {
+		return fmt.Sprintf("\n\nmsg: "+msg, msgAndArgs[1:]...)
 	}
-	return fmt.Sprintf(fmt.Sprintf("\n\nmsg: %s", msgAndArgs[0]), msgAndArgs[1:]...)
+	return ""
 }
