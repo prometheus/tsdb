@@ -1325,11 +1325,12 @@ func TestNoEmptyBlocks(t *testing.T) {
 	}
 	testutil.Ok(t, app.Commit())
 
-	oldHeadMinT := db.head.MinTime()
 	testutil.Ok(t, db.Delete(math.MinInt64, math.MaxInt64, labels.NewEqualMatcher("foo", "bar")))
-	testutil.Ok(t, db.compact())
-	// Making sure that head was modified.
-	testutil.Assert(t, oldHeadMinT < db.head.MinTime(), "Head was not changed after compaction.")
+	uid, err := db.compactor.Write(db.dir, db.head, db.head.MinTime(), db.head.MaxTime(), nil)
+	testutil.Ok(t, err)
+	testutil.Equals(t, ulid.ULID{}, uid)
+	testutil.Ok(t, db.reload())
+	testutil.Ok(t, db.head.Truncate(db.head.MaxTime()))
 	// No blocks created.
 	testutil.Equals(t, 0, len(db.blocks))
 
@@ -1375,7 +1376,7 @@ func TestNoEmptyBlocks(t *testing.T) {
 
 	// No new blocks are created by Compact, and marks all old blocks as deletable.
 	oldLen := len(db.blocks)
-	_, err := db.compactor.Compact(db.dir, plan...)
+	_, err = db.compactor.Compact(db.dir, plan...)
 	testutil.Ok(t, err)
 	// Number of blocks are the same.
 	testutil.Equals(t, oldLen, len(db.blocks))
