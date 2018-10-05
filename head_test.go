@@ -224,6 +224,41 @@ func TestHead_Truncate(t *testing.T) {
 	}, h.values)
 }
 
+func TestHead_AllSeriesIDs(t *testing.T) {
+	h, err := NewHead(nil, nil, nil, 1000)
+	testutil.Ok(t, err)
+	defer h.Close()
+
+	h.initTime(0)
+
+	s1, _ := h.getOrCreate(1, labels.FromStrings("a", "1", "b", "1"))
+	s2, _ := h.getOrCreate(2, labels.FromStrings("a", "2", "b", "1"))
+	s3, _ := h.getOrCreate(3, labels.FromStrings("a", "1", "b", "2"))
+	s4, _ := h.getOrCreate(4, labels.FromStrings("a", "2", "b", "2", "c", "1"))
+	testutil.Equals(t, len(h.allSeriesIDs()), 4, "wrong number of series ref ID's returned")
+
+	s1.chunks = []*memChunk{
+		{minTime: 0, maxTime: 999},
+		{minTime: 1000, maxTime: 1999},
+		{minTime: 2000, maxTime: 2999},
+	}
+	s2.chunks = []*memChunk{
+		{minTime: 1000, maxTime: 1999},
+		{minTime: 2000, maxTime: 2999},
+		{minTime: 3000, maxTime: 3999},
+	}
+	s3.chunks = []*memChunk{
+		{minTime: 0, maxTime: 999},
+		{minTime: 1000, maxTime: 1999},
+	}
+	s4.chunks = []*memChunk{}
+
+	testutil.Equals(t, len(h.allSeriesIDs()), 4, "wrong number of series ref ID's returned")
+	// Truncation need not be aligned.
+	testutil.Ok(t, h.Truncate(1))
+	testutil.Equals(t, len(h.allSeriesIDs()), 3, "wrong number of series ref ID's returned")
+}
+
 // Validate various behaviors brought on by firstChunkID accounting for
 // garbage collected chunks.
 func TestMemSeries_truncateChunks(t *testing.T) {

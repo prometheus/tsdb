@@ -829,6 +829,17 @@ func (h *Head) Delete(mint, maxt int64, ms ...labels.Matcher) error {
 	return nil
 }
 
+// allSeriesIDs returns a list of all the series reference ID's currently in Head.
+func (h *Head) allSeriesIDs() []uint64 {
+	var series []uint64
+	for _, s := range h.series.series {
+		for k := range s {
+			series = append(series, k)
+		}
+	}
+	return series
+}
+
 // gc removes data before the minimum timestamp from the head.
 func (h *Head) gc() {
 	// Only data strictly lower than this timestamp must be deleted.

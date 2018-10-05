@@ -279,6 +279,11 @@ func (db *DB) Dir() string {
 	return db.dir
 }
 
+// AllSeriesIDs returns a slice of all the series ID's currently in Head.
+func (db *DB) AllSeriesIDs() []uint64 {
+	return db.head.allSeriesIDs()
+}
+
 func (db *DB) run() {
 	defer close(db.donec)
 
