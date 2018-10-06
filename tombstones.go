@@ -16,12 +16,13 @@ package tsdb
 import (
 	"encoding/binary"
 	"fmt"
-	"github.com/pkg/errors"
 	"io"
 	"io/ioutil"
 	"os"
 	"path/filepath"
 	"sync"
+
+	"github.com/pkg/errors"
 )
 
 const tombstoneFilename = "tombstones"
@@ -40,6 +41,9 @@ type TombstoneReader interface {
 
 	// Iter calls the given function for each encountered interval.
 	Iter(func(uint64, Intervals) error) error
+
+	// Total returns the total count of tombstones.
+	Total() uint64
 
 	// Close any underlying resources
 	Close() error
@@ -72,7 +76,7 @@ func writeTombstoneFile(dir string, tr TombstoneReader) error {
 
 	mw := io.MultiWriter(f, hash)
 
-	tr.Iter(func(ref uint64, ivs Intervals) error {
+	if err := tr.Iter(func(ref uint64, ivs Intervals) error {
 		for _, iv := range ivs {
 			buf.reset()
 
@@ -86,7 +90,9 @@ func writeTombstoneFile(dir string, tr TombstoneReader) error {
 			}
 		}
 		return nil
-	})
+	}); err != nil {
+		return fmt.Errorf("error writing tombstones: %v", err)
+	}
 
 	_, err = f.Write(hash.Sum(nil))
 	if err != nil {
@@ -180,6 +186,17 @@ func (t *memTombstones) Iter(f func(uint64, Intervals) error) error {
 		}
 	}
 	return nil
+}
+
+func (t *memTombstones) Total() uint64 {
+	t.mtx.RLock()
+	defer t.mtx.RUnlock()
+
+	total := uint64(0)
+	for _, ivs := range t.intvlGroups {
+		total += uint64(len(ivs))
+	}
+	return total
 }
 
 // addInterval to an existing memTombstones
