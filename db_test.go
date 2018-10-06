@@ -1591,8 +1591,7 @@ func populateBlock(set ChunkSeriesSet, meta *BlockMeta, indexw IndexWriter, chun
 			continue
 		}
 
-		var err error
-		if chks, err = chunkw.WriteChunks(chks...); err != nil {
+		if err := chunkw.WriteChunks(chks...); err != nil {
 			return errors.Wrap(err, "write chunks")
 		}
 
