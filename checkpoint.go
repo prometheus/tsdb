@@ -64,8 +64,8 @@ func LastCheckpoint(dir string) (string, int, error) {
 	return "", 0, ErrNotFound
 }
 
-// DeleteCheckpoints deletes all checkpoints in dir below the provided index.
-func DeleteCheckpoints(dir string, index int) error {
+// DeleteCheckpoints deletes all checkpoints in a directory below a given index.
+func DeleteCheckpoints(dir string, maxIndex int) error {
 	var errs MultiError
 
 	files, err := ioutil.ReadDir(dir)
@@ -76,8 +76,8 @@ func DeleteCheckpoints(dir string, index int) error {
 		if !strings.HasPrefix(fi.Name(), checkpointPrefix) {
 			continue
 		}
-		cpIdx, err := strconv.Atoi(fi.Name()[len(checkpointPrefix):])
-		if err != nil || cpIdx >= index {
+		index, err := strconv.Atoi(fi.Name()[len(checkpointPrefix):])
+		if err != nil || index >= maxIndex {
 			continue
 		}
 		if err := os.RemoveAll(filepath.Join(dir, fi.Name())); err != nil {
@@ -97,7 +97,7 @@ const checkpointPrefix = "checkpoint."
 // segmented format as the original WAL itself.
 // This makes it easy to read it through the WAL package and concatenate
 // it with the original WAL.
-func Checkpoint(w *wal.WAL, first, last int, keep func(id uint64) bool, mint int64) (*CheckpointStats, error) {
+func Checkpoint(w *wal.WAL, from, to int, keep func(id uint64) bool, mint int64) (*CheckpointStats, error) {
 	stats := &CheckpointStats{}
 
 	var sr io.Reader
@@ -106,18 +106,19 @@ func Checkpoint(w *wal.WAL, first, last int, keep func(id uint64) bool, mint int
 	// files if there is an error somewhere.
 	var closers []io.Closer
 	{
-		cpDir, cpIdx, err := LastCheckpoint(w.Dir())
+		dir, idx, err := LastCheckpoint(w.Dir())
 		if err != nil && err != ErrNotFound {
 			return nil, errors.Wrap(err, "find last checkpoint")
 		}
+		last := idx + 1
 		if err == nil {
-			if first > cpIdx+1 {
-				return nil, fmt.Errorf("unexpected gap to last checkpoint. expected:%v, got:%v", cpIdx+1, first)
+			if from > last {
+				return nil, fmt.Errorf("unexpected gap to last checkpoint. expected:%v, requested:%v", last, from)
 			}
 			// Ignore WAL files below the checkpoint. They shouldn't exist to begin with.
-			first = cpIdx + 1
+			from = last
 
-			r, err := wal.NewSegmentsReader(filepath.Join(w.Dir(), cpDir))
+			r, err := wal.NewSegmentsReader(filepath.Join(w.Dir(), dir))
 			if err != nil {
 				return nil, errors.Wrap(err, "open last checkpoint")
 			}
@@ -126,7 +127,7 @@ func Checkpoint(w *wal.WAL, first, last int, keep func(id uint64) bool, mint int
 			sr = r
 		}
 
-		segsr, err := wal.NewSegmentsRangeReader(w.Dir(), first, last)
+		segsr, err := wal.NewSegmentsRangeReader(w.Dir(), from, to)
 		if err != nil {
 			return nil, errors.Wrap(err, "create segment reader")
 		}
@@ -140,7 +141,7 @@ func Checkpoint(w *wal.WAL, first, last int, keep func(id uint64) bool, mint int
 		}
 	}
 
-	cpdir := filepath.Join(w.Dir(), fmt.Sprintf("checkpoint.%06d", last))
+	cpdir := filepath.Join(w.Dir(), fmt.Sprintf("checkpoint.%06d", to))
 	cpdirtmp := cpdir + ".tmp"
 
 	if err := os.MkdirAll(cpdirtmp, 0777); err != nil {

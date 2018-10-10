@@ -418,12 +418,12 @@ func (h *Head) Init() error {
 	}
 
 	// Backfill the checkpoint first if it exists.
-	cpDir, cpIndex, err := LastCheckpoint(h.wal.Dir())
+	dir, startFrom, err := LastCheckpoint(h.wal.Dir())
 	if err != nil && err != ErrNotFound {
 		return errors.Wrap(err, "find last checkpoint")
 	}
 	if err == nil {
-		sr, err := wal.NewSegmentsReader(filepath.Join(h.wal.Dir(), cpDir))
+		sr, err := wal.NewSegmentsReader(filepath.Join(h.wal.Dir(), dir))
 		if err != nil {
 			return errors.Wrap(err, "open checkpoint")
 		}
@@ -434,11 +434,11 @@ func (h *Head) Init() error {
 		if err := h.loadWAL(wal.NewReader(sr)); err != nil {
 			return errors.Wrap(err, "backfill checkpoint")
 		}
-		cpIndex++
+		startFrom++
 	}
 
 	// Backfill segments from the last checkpoint onwards
-	sr, err := wal.NewSegmentsRangeReader(h.wal.Dir(), cpIndex, -1)
+	sr, err := wal.NewSegmentsRangeReader(h.wal.Dir(), startFrom, -1)
 	if err != nil {
 		return errors.Wrap(err, "open WAL segments")
 	}
