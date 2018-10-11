@@ -112,9 +112,6 @@ func Checkpoint(w *wal.WAL, from, to int, keep func(id uint64) bool, mint int64)
 		}
 		last := idx + 1
 		if err == nil {
-			if from > last {
-				return nil, fmt.Errorf("unexpected gap to last checkpoint. expected:%v, requested:%v", last, from)
-			}
 			// Ignore WAL files below the checkpoint. They shouldn't exist to begin with.
 			from = last
 

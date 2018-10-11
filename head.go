@@ -507,6 +507,11 @@ func (h *Head) Truncate(mint int64) (err error) {
 	if last <= first {
 		return nil
 	}
+	_, idx, err := LastCheckpoint(h.wal.Dir())
+	expFirst := idx + 1
+	if err == nil && first != expFirst {
+		level.Error(h.logger).Log("msg", "unexpected wal segment gap to last checkpoint", "expected", expFirst, "actual", first)
+	}
 
 	keep := func(id uint64) bool {
 		return h.series.getByID(id) != nil
