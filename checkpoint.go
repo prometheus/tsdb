@@ -23,7 +23,10 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/go-kit/kit/log"
+	"github.com/go-kit/kit/log/level"
 	"github.com/pkg/errors"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/tsdb/fileutil"
 	"github.com/prometheus/tsdb/wal"
 )
@@ -98,7 +101,9 @@ const checkpointPrefix = "checkpoint."
 // segmented format as the original WAL itself.
 // This makes it easy to read it through the WAL package and concatenate
 // it with the original WAL.
-func Checkpoint(w *wal.WAL, m, n int, keep func(id uint64) bool, mint int64) (*CheckpointStats, error) {
+//
+// Non-critical errors are logged and not returned.
+func Checkpoint(logger log.Logger, w *wal.WAL, m, n int, keep func(id uint64) bool, mint int64, checkpointDeleteTotal, checkpointDeleteFail prometheus.Counter) (*CheckpointStats, error) {
 	stats := &CheckpointStats{}
 
 	var sr io.Reader
@@ -264,6 +269,24 @@ func Checkpoint(w *wal.WAL, m, n int, keep func(id uint64) bool, mint int64) (*C
 	}
 	if err := closeAll(closers...); err != nil {
 		return stats, errors.Wrap(err, "close opened files")
+	}
+	if err := w.Truncate(n + 1); err != nil {
+		// If truncating fails, we'll just try again at the next checkpoint.
+		// Leftover segments will just be ignored in the future if there's a checkpoint
+		// that supersedes them.
+		level.Error(logger).Log("msg", "truncating segments failed", "err", err)
+	}
+	if checkpointDeleteTotal != nil {
+		checkpointDeleteTotal.Inc()
+	}
+	if err := DeleteCheckpoints(w.Dir(), n); err != nil {
+		// Leftover old checkpoints do not cause problems down the line beyond
+		// occupying disk space.
+		// They will just be ignored since a higher checkpoint exists.
+		level.Error(logger).Log("msg", "delete old checkpoints", "err", err)
+		if checkpointDeleteFail != nil {
+			checkpointDeleteFail.Inc()
+		}
 	}
 	return stats, nil
 }

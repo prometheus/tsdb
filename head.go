@@ -512,24 +512,13 @@ func (h *Head) Truncate(mint int64) (err error) {
 		return h.series.getByID(id) != nil
 	}
 	h.metrics.checkpointCreationTotal.Inc()
-	if _, err = Checkpoint(h.wal, m, n, keep, mint); err != nil {
+	_, err = Checkpoint(h.logger, h.wal, m, n, keep, mint,
+		h.metrics.checkpointDeleteTotal, h.metrics.checkpointDeleteFail)
+	if err != nil {
 		h.metrics.checkpointCreationFail.Inc()
 		return errors.Wrap(err, "create checkpoint")
 	}
-	if err := h.wal.Truncate(n + 1); err != nil {
-		// If truncating fails, we'll just try again at the next checkpoint.
-		// Leftover segments will just be ignored in the future if there's a checkpoint
-		// that supersedes them.
-		level.Error(h.logger).Log("msg", "truncating segments failed", "err", err)
-	}
-	h.metrics.checkpointDeleteTotal.Inc()
-	if err := DeleteCheckpoints(h.wal.Dir(), n); err != nil {
-		// Leftover old checkpoints do not cause problems down the line beyond
-		// occupying disk space.
-		// They will just be ignored since a higher checkpoint exists.
-		level.Error(h.logger).Log("msg", "delete old checkpoints", "err", err)
-		h.metrics.checkpointDeleteFail.Inc()
-	}
+
 	h.metrics.walTruncateDuration.Observe(time.Since(start).Seconds())
 
 	level.Info(h.logger).Log("msg", "WAL checkpoint complete",

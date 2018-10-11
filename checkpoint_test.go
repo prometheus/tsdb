@@ -137,9 +137,9 @@ func TestCheckpoint(t *testing.T) {
 	}
 	testutil.Ok(t, w.Close())
 
-	_, err = Checkpoint(w, 100, 106, func(x uint64) bool {
+	_, err = Checkpoint(nil, w, 100, 106, func(x uint64) bool {
 		return x%2 == 0
-	}, last/2)
+	}, last/2, nil, nil)
 	testutil.Ok(t, err)
 	testutil.Ok(t, w.Truncate(107))
 	testutil.Ok(t, DeleteCheckpoints(w.Dir(), 106))
