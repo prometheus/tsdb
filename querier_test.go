@@ -1501,9 +1501,15 @@ func (m mockIndex) LabelIndices() ([][]string, error) {
 	return res, nil
 }
 
-func (m mockIndex) LabelNames() ([]string, error) {
+func (m mockIndex) LabelNames(ms ...labels.Matcher) ([]string, error) {
 	labelNames := make([]string, 0, len(m.labelIndex))
+Outer:
 	for name := range m.labelIndex {
+		for _, m := range ms {
+			if !m.Matches(name) {
+				continue Outer
+			}
+		}
 		labelNames = append(labelNames, name)
 	}
 	return labelNames, nil

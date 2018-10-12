@@ -1310,6 +1310,9 @@ func TestDB_LabelNames(t *testing.T) {
 		sampleLabels2 [][2]string // For check head+disk.
 		exp1          []string    // after adding sampleLabels1.
 		exp2          []string    // after adding sampleLabels1 and sampleLabels2.
+
+		ms    []labels.Matcher
+		expMs []string // after adding sampleLabels1 and sampleLabels2.
 	}{
 		{
 			sampleLabels1: [][2]string{
@@ -1321,8 +1324,10 @@ func TestDB_LabelNames(t *testing.T) {
 				[2]string{"name4", ""},
 				[2]string{"name1", ""},
 			},
-			exp1: []string{"name1", "name2", "name3"},
-			exp2: []string{"name1", "name2", "name3", "name4"},
+			exp1:  []string{"name1", "name2", "name3"},
+			exp2:  []string{"name1", "name2", "name3", "name4"},
+			ms:    []labels.Matcher{labels.NewEqualMatcher("", "name2")},
+			expMs: []string{"name2"},
 		},
 		{
 			sampleLabels1: [][2]string{
@@ -1334,8 +1339,10 @@ func TestDB_LabelNames(t *testing.T) {
 				[2]string{"name6", ""},
 				[2]string{"name0", ""},
 			},
-			exp1: []string{"name1", "name2"},
-			exp2: []string{"name0", "name1", "name2", "name6"},
+			exp1:  []string{"name1", "name2"},
+			exp2:  []string{"name0", "name1", "name2", "name6"},
+			ms:    []labels.Matcher{labels.NewMustRegexpMatcher("", ".*2|.*6")},
+			expMs: []string{"name2", "name6"},
 		},
 	}
 
@@ -1391,6 +1398,13 @@ func TestDB_LabelNames(t *testing.T) {
 		labelNames, err = db.LabelNames()
 		testutil.Ok(t, err)
 		testutil.Equals(t, tst.exp2, labelNames)
+
+		// Testing with matcher.
+		if len(tst.ms) > 0 {
+			labelNames, err = db.LabelNames(tst.ms...)
+			testutil.Ok(t, err)
+			testutil.Equals(t, tst.expMs, labelNames)
+		}
 	}
 }
 

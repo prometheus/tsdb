@@ -970,13 +970,19 @@ func (h *headIndexReader) LabelValues(names ...string) (index.StringTuples, erro
 }
 
 // LabelNames returns all the unique label names present in the head.
-func (h *headIndexReader) LabelNames() ([]string, error) {
+func (h *headIndexReader) LabelNames(ms ...labels.Matcher) ([]string, error) {
 	h.head.symMtx.RLock()
 	defer h.head.symMtx.RUnlock()
-	var labelNames []string
+	labelNames := make([]string, 0, len(h.head.values))
+Outer:
 	for name := range h.head.values {
 		if name == "" {
 			continue
+		}
+		for _, m := range ms {
+			if !m.Matches(name) {
+				continue Outer
+			}
 		}
 		labelNames = append(labelNames, name)
 	}

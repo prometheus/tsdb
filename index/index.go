@@ -935,21 +935,34 @@ func (r *Reader) SortedPostings(p Postings) Postings {
 }
 
 // LabelNames returns all the unique label names present in the index.
-func (r *Reader) LabelNames() ([]string, error) {
-	labelNamesMap := make(map[string]struct{})
+func (r *Reader) LabelNames(ms ...labels.Matcher) ([]string, error) {
+	labelNamesMap := make(map[string]struct{}, len(r.labels))
 	for key := range r.labels {
+		// 'key' contains the label names concatenated with the
+		// delimiter 'labelNameSeperator'.
 		names := strings.Split(key, labelNameSeperator)
 		for _, name := range names {
 			if name == allPostingsKey.Name {
+				// This is not from any metric.
+				// It is basically an empty label name.
 				continue
 			}
 			labelNamesMap[name] = struct{}{}
 		}
 	}
 	labelNames := make([]string, 0, len(labelNamesMap))
+Outer:
 	for name := range labelNamesMap {
+		for _, m := range ms {
+			if !m.Matches(name) {
+				continue Outer
+			}
+		}
 		labelNames = append(labelNames, name)
 	}
+	sort.Slice(labelNames, func(i, j int) bool {
+		return labelNames[i] < labelNames[j]
+	})
 	sort.Slice(labelNames, func(i, j int) bool {
 		return labelNames[i] < labelNames[j]
 	})
