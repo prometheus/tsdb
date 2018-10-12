@@ -628,8 +628,12 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 			}
 		}
 
+		// Scale the goal chunk size to be 60 samples per hour in the block.
+		// So a 6 hour block will try to have 360 samples per chunk
+		goalChunkSize := 60 * (meta.MaxTime - meta.MinTime) / 1000 / 60 / 60
+		goalChunkSize = clampInt64(goalChunkSize, 120, 12000)
 		if c.mergeSmallChunks {
-			chks = c.mergeChunks(chks)
+			chks = c.mergeChunks(chks, int(goalChunkSize))
 		}
 
 		if err := chunkw.WriteChunks(chks...); err != nil {
@@ -688,10 +692,10 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 	return nil
 }
 
-func (c *LeveledCompactor) mergeChunks(chks []chunks.Meta) []chunks.Meta {
+func (c *LeveledCompactor) mergeChunks(chks []chunks.Meta, numSamples int) []chunks.Meta {
 	newChks := make([]chunks.Meta, 0, len(chks))
 	for i := 0; i < len(chks); i++ {
-		if i >= len(chks)-1 || chks[i].Chunk.NumSamples()+chks[i+1].Chunk.NumSamples() > 480 {
+		if i >= len(chks)-1 || chks[i].Chunk.NumSamples()+chks[i+1].Chunk.NumSamples() > numSamples {
 			newChks = append(newChks, chks[i])
 			continue
 		}
@@ -708,7 +712,7 @@ func (c *LeveledCompactor) mergeChunks(chks []chunks.Meta) []chunks.Meta {
 		minTime := chks[i].MinTime
 		maxTime := chks[i].MaxTime
 
-		for i < len(chks)-1 && newChunk.NumSamples()+chks[i+1].Chunk.NumSamples() <= 480 {
+		for i < len(chks)-1 && newChunk.NumSamples()+chks[i+1].Chunk.NumSamples() <= numSamples {
 			if err := appendChunk(app, chks[i+1].Chunk); err != nil {
 				level.Warn(c.logger).Log("msg", "failed to merge chunks", "err", err)
 				return chks
@@ -723,6 +727,16 @@ func (c *LeveledCompactor) mergeChunks(chks []chunks.Meta) []chunks.Meta {
 		})
 	}
 	return newChks
+}
+
+func clampInt64(n, min, max int64) int64 {
+	if n < min {
+		return min
+	}
+	if n > max {
+		return max
+	}
+	return n
 }
 
 func appendChunk(app chunkenc.Appender, chunk chunkenc.Chunk) error {

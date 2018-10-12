@@ -644,7 +644,7 @@ func TestCompaction_populateBlock(t *testing.T) {
 				blocks = append(blocks, &mockBReader{ir: ir, cr: cr})
 			}
 
-			c, err := NewLeveledCompactor(nil, nil, []int64{0}, nil)
+			c, err := NewLeveledCompactor(nil, nil, []int64{0}, nil, false)
 			testutil.Ok(t, err)
 
 			meta := &BlockMeta{
