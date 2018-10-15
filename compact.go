@@ -407,6 +407,8 @@ func (c *LeveledCompactor) Write(dest string, b BlockReader, mint, maxt int64, p
 		}
 	}
 
+	fmt.Printf("%+v \n", meta)
+
 	err := c.write(dest, meta, b)
 	if err != nil {
 		return uid, err

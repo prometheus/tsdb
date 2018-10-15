@@ -781,7 +781,7 @@ func TestTombstoneClean(t *testing.T) {
 			testutil.Equals(t, smplExp, smplRes)
 		}
 
-		for _, b := range db.blocks {
+		for _, b := range db.Blocks() {
 			testutil.Equals(t, NewMemTombstones(), b.tombstones)
 		}
 	}
@@ -823,7 +823,7 @@ func TestTombstoneCleanFail(t *testing.T) {
 	// mockCompactorFailing will fail on the second iteration so we can check if the cleanup works as expected.
 	db.compactor = &mockCompactorFailing{
 		t:      t,
-		blocks: db.blocks,
+		blocks: db.Blocks(),
 		max:    totalBlocks + 1,
 	}
 
@@ -905,7 +905,7 @@ func TestDB_Retention(t *testing.T) {
 	db, err = Open(snap, nil, nil, nil)
 	testutil.Ok(t, err)
 
-	testutil.Equals(t, 1, len(db.blocks))
+	testutil.Equals(t, 1, len(db.Blocks()))
 
 	app = db.Appender()
 	_, err = app.Add(lbls, 100, 1)
@@ -928,12 +928,12 @@ func TestDB_Retention(t *testing.T) {
 	testutil.Ok(t, err)
 	defer db.Close()
 
-	testutil.Equals(t, 2, len(db.blocks))
+	testutil.Equals(t, 2, len(db.Blocks()))
 
 	// Reload blocks, which should drop blocks beyond the retention boundary.
 	testutil.Ok(t, db.reload())
-	testutil.Equals(t, 1, len(db.blocks))
-	testutil.Equals(t, int64(100), db.blocks[0].meta.MaxTime) // To verify its the right block.
+	testutil.Equals(t, 1, len(db.Blocks()))
+	testutil.Equals(t, int64(100), db.Blocks()[0].meta.MaxTime) // To verify its the right block.
 }
 
 func TestNotMatcherSelectsLabelsUnsetSeries(t *testing.T) {
@@ -1134,7 +1134,7 @@ func TestChunkAtBlockBoundary(t *testing.T) {
 	err = db.compact()
 	testutil.Ok(t, err)
 
-	for _, block := range db.blocks {
+	for _, block := range db.Blocks() {
 		r, err := block.Index()
 		testutil.Ok(t, err)
 		defer r.Close()
@@ -1186,7 +1186,7 @@ func TestQuerierWithBoundaryChunks(t *testing.T) {
 	err = db.compact()
 	testutil.Ok(t, err)
 
-	testutil.Assert(t, len(db.blocks) >= 3, "invalid test, less than three blocks in DB")
+	testutil.Assert(t, len(db.Blocks()) >= 3, "invalid test, less than three blocks in DB")
 
 	q, err := db.Querier(blockRange, 2*blockRange)
 	testutil.Ok(t, err)
@@ -1305,12 +1305,13 @@ func TestInitializeHeadTimestamp(t *testing.T) {
 
 func TestNoEmptyBlocks(t *testing.T) {
 	db, close := openTestDB(t, nil)
+	db.DisableCompactions()
 	defer close()
 	defer db.Close()
 
 	// Test no blocks after compact with empty head.
 	testutil.Ok(t, db.compact())
-	testutil.Equals(t, 0, len(db.blocks))
+	testutil.Equals(t, 0, len(db.Blocks()))
 
 	// Test no blocks after deleting all samples from head.
 	blockRange := DefaultOptions.BlockRanges[0]
@@ -1332,7 +1333,7 @@ func TestNoEmptyBlocks(t *testing.T) {
 	testutil.Ok(t, db.reload())
 	testutil.Ok(t, db.head.Truncate(db.head.MaxTime()))
 	// No blocks created.
-	testutil.Equals(t, 0, len(db.blocks))
+	testutil.Equals(t, 0, len(db.Blocks()))
 
 	app = db.Appender()
 	for i := int64(7); i < 25; i++ {
@@ -1344,7 +1345,7 @@ func TestNoEmptyBlocks(t *testing.T) {
 	testutil.Ok(t, app.Commit())
 
 	testutil.Ok(t, db.compact())
-	testutil.Assert(t, len(db.blocks) > 0, "No blocks created when compacting with >0 samples")
+	testutil.Assert(t, len(db.Blocks()) > 0, "No blocks created when compacting with >0 samples")
 
 	// When no new block is created from head, and there are some blocks on disk,
 	// compaction should not run into infinite loop (was seen during development).
@@ -1363,26 +1364,26 @@ func TestNoEmptyBlocks(t *testing.T) {
 	// Mimicking Plan() of compactor and getting list
 	// of all block directories to pass for compaction.
 	plan := []string{}
-	for _, b := range db.blocks {
+	for _, b := range db.Blocks() {
 		plan = append(plan, b.Dir())
 	}
 
 	// Blocks are not set deletable before compaction.
-	for _, b := range db.blocks {
+	for _, b := range db.Blocks() {
 		meta, err := readMetaFile(b.dir)
 		testutil.Ok(t, err)
 		testutil.Assert(t, !meta.Compaction.Deletable, "Block was marked deletable before compaction")
 	}
 
 	// No new blocks are created by Compact, and marks all old blocks as deletable.
-	oldLen := len(db.blocks)
+	oldLen := len(db.Blocks())
 	_, err = db.compactor.Compact(db.dir, plan...)
 	testutil.Ok(t, err)
 	// Number of blocks are the same.
-	testutil.Equals(t, oldLen, len(db.blocks))
+	testutil.Equals(t, oldLen, len(db.Blocks()))
 
 	// Marked as deletable.
-	for _, b := range db.blocks {
+	for _, b := range db.Blocks() {
 		meta, err := readMetaFile(b.dir)
 		testutil.Ok(t, err)
 		testutil.Assert(t, meta.Compaction.Deletable, "Block was not marked deletable after compaction")
@@ -1391,7 +1392,7 @@ func TestNoEmptyBlocks(t *testing.T) {
 	// Deletes the deletable blocks.
 	testutil.Ok(t, db.reload())
 	// All samples are deleted. No blocks should be remeianing after compact.
-	testutil.Equals(t, 0, len(db.blocks))
+	testutil.Equals(t, 0, len(db.Blocks()))
 }
 
 func TestCorrectNumTombstones(t *testing.T) {
@@ -1413,18 +1414,18 @@ func TestCorrectNumTombstones(t *testing.T) {
 
 	err := db.compact()
 	testutil.Ok(t, err)
-	testutil.Equals(t, 1, len(db.blocks))
+	testutil.Equals(t, 1, len(db.Blocks()))
 
 	testutil.Ok(t, db.Delete(0, 1, labels.NewEqualMatcher("foo", "bar")))
-	testutil.Equals(t, uint64(1), db.blocks[0].meta.Stats.NumTombstones)
+	testutil.Equals(t, uint64(1), db.Blocks()[0].meta.Stats.NumTombstones)
 
 	// {0, 1} and {2, 3} are merged to form 1 tombstone.
 	testutil.Ok(t, db.Delete(2, 3, labels.NewEqualMatcher("foo", "bar")))
-	testutil.Equals(t, uint64(1), db.blocks[0].meta.Stats.NumTombstones)
+	testutil.Equals(t, uint64(1), db.Blocks()[0].meta.Stats.NumTombstones)
 
 	testutil.Ok(t, db.Delete(5, 6, labels.NewEqualMatcher("foo", "bar")))
-	testutil.Equals(t, uint64(2), db.blocks[0].meta.Stats.NumTombstones)
+	testutil.Equals(t, uint64(2), db.Blocks()[0].meta.Stats.NumTombstones)
 
 	testutil.Ok(t, db.Delete(9, 11, labels.NewEqualMatcher("foo", "bar")))
-	testutil.Equals(t, uint64(3), db.blocks[0].meta.Stats.NumTombstones)
+	testutil.Equals(t, uint64(3), db.Blocks()[0].meta.Stats.NumTombstones)
 }

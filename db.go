@@ -298,6 +298,10 @@ func (db *DB) run() {
 			default:
 			}
 		case <-db.compactc:
+			if !db.compactionsEnabled {
+				continue
+			}
+
 			db.metrics.compactionsTriggered.Inc()
 
 			err := db.compact()
@@ -369,10 +373,6 @@ func (a dbAppender) Commit() error {
 func (db *DB) compact() (err error) {
 	db.cmtx.Lock()
 	defer db.cmtx.Unlock()
-
-	if !db.compactionsEnabled {
-		return nil
-	}
 
 	// Check whether we have pending head blocks that are ready to be persisted.
 	// They have the highest priority.
