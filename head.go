@@ -914,6 +914,11 @@ func (h *Head) MaxTime() int64 {
 	return atomic.LoadInt64(&h.maxTime)
 }
 
+// GetAllLabels returns all the labels currently in the data of the head by series reference ID.
+func (h *Head) getAllLabels() map[uint64]labels.Labels {
+	return h.series.getAllLabels()
+}
+
 // Close flushes the WAL and closes the head.
 func (h *Head) Close() error {
 	if h.wal == nil {
@@ -1265,6 +1270,18 @@ func (s *stripeSeries) gc(mint int64) (map[uint64]struct{}, int) {
 	}
 
 	return deleted, rmChunks
+}
+
+func (s *stripeSeries) getAllLabels() map[uint64]labels.Labels {
+	out := make(map[uint64]labels.Labels)
+	for i, sm := range s.series {
+		s.locks[i].RLock()
+		for k, v := range sm {
+			out[k] = v.lset
+		}
+		s.locks[i].RUnlock()
+	}
+	return out
 }
 
 func (s *stripeSeries) getByID(id uint64) *memSeries {

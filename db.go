@@ -279,6 +279,11 @@ func (db *DB) Dir() string {
 	return db.dir
 }
 
+// GetAllLabels returns all the labels currently in the data of the head by series reference ID.
+func (db *DB) GetAllLabels() map[uint64]labels.Labels {
+	return db.head.getAllLabels()
+}
+
 func (db *DB) run() {
 	defer close(db.donec)
 

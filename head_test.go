@@ -17,6 +17,7 @@ import (
 	"io/ioutil"
 	"math/rand"
 	"os"
+	"reflect"
 	"sort"
 	"testing"
 
@@ -88,6 +89,51 @@ func readTestWAL(t testing.TB, dir string) (recs []interface{}) {
 	}
 	testutil.Ok(t, r.Err())
 	return recs
+}
+
+func TestHead_GetAllLabels(t *testing.T) {
+	l := make(map[uint64]labels.Labels)
+	l[10] = labels.FromStrings("a", "1")
+	l[11] = labels.FromStrings("a", "2")
+	l[50] = labels.FromStrings("a", "4")
+	l[100] = labels.FromStrings("a", "3")
+
+	entries := []interface{}{
+		[]RefSeries{
+			{Ref: 10, Labels: l[10]},
+			{Ref: 11, Labels: l[11]},
+			{Ref: 100, Labels: l[100]},
+		},
+		[]RefSample{
+			{Ref: 10, T: 100, V: 2},
+			{Ref: 100, T: 100, V: 3},
+		},
+		[]RefSeries{
+			{Ref: 50, Labels: l[50]},
+		},
+		[]RefSample{
+			{Ref: 10, T: 101, V: 5},
+			{Ref: 50, T: 101, V: 6},
+		},
+	}
+	dir, err := ioutil.TempDir("", "test_read_wal")
+	testutil.Ok(t, err)
+	defer os.RemoveAll(dir)
+
+	w, err := wal.New(nil, nil, dir)
+	testutil.Ok(t, err)
+	populateTestWAL(t, w, entries)
+
+	head, err := NewHead(nil, nil, w, 1000)
+	testutil.Ok(t, err)
+	defer head.Close()
+
+	testutil.Ok(t, head.Init())
+	ret := head.getAllLabels()
+	eq := reflect.DeepEqual(l, ret)
+	if !eq {
+		t.Errorf("getAllLabels did not return the expected labels\n\texpected: %+v\n\tactual: %+v", l, ret)
+	}
 }
 
 func TestHead_ReadWAL(t *testing.T) {
