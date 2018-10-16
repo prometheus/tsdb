@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/prometheus/tsdb/labels"
+	"github.com/prometheus/tsdb/testutil"
 )
 
 func BenchmarkBlockQuerier(b *testing.B) {
@@ -82,34 +83,72 @@ func benchmarkBlockQuerier(b *testing.B, numSeries int, timeout time.Duration) {
 		},
 	}
 
-	ir, cr := createIdxChkReaders(data)
-	baseCtx := context.Background()
+	b.Run("block", func(b *testing.B) {
+		baseCtx := context.Background()
+		ir, cr := createIdxChkReaders(data)
 
-	for name, q := range queries {
-		b.Run(name, func(b *testing.B) {
-			for i := 0; i < b.N; i++ {
-				ctx, _ := context.WithTimeout(baseCtx, timeout)
-				querier := &blockQuerier{
-					ctx:        ctx,
-					index:      ir,
-					chunks:     cr,
-					tombstones: NewMemTombstones(),
+		for name, q := range queries {
+			b.Run(name, func(b *testing.B) {
+				for i := 0; i < b.N; i++ {
+					ctx, _ := context.WithTimeout(baseCtx, timeout)
+					querier := &blockQuerier{
+						ctx:        ctx,
+						index:      ir,
+						chunks:     cr,
+						tombstones: NewMemTombstones(),
 
-					mint: q.mint,
-					maxt: q.maxt,
+						mint: q.mint,
+						maxt: q.maxt,
+					}
+
+					start := time.Now()
+					_, err := querier.Select(q.ms...)
+					if err != nil && err != ctx.Err() {
+						b.Fatalf("Unexpected Error: %v", err)
+					}
+					took := time.Now().Sub(start)
+					// if it took >1m over the timeout, then it didn't properly timeout
+					if took > (timeout + time.Millisecond) {
+						b.Fatalf("didn't timeout")
+					}
 				}
+			})
+		}
+	})
 
-				start := time.Now()
-				_, err := querier.Select(q.ms...)
-				if err != nil && err != ctx.Err() {
-					b.Fatalf("Unexpected Error: %v", err)
-				}
-				took := time.Now().Sub(start)
-				// if it took >1m over the timeout, then it didn't properly timeout
-				if took > (timeout + time.Millisecond) {
-					b.Fatalf("didn't timeout")
+	b.Run("head", func(b *testing.B) {
+		baseCtx := context.Background()
+
+		hb, err := NewHead(nil, nil, nil, 1000000)
+		testutil.Ok(b, err)
+		app := hb.Appender()
+		for _, seriesSample := range data {
+			for _, chunk := range seriesSample.chunks {
+				for _, sample := range chunk {
+					app.Add(labels.FromMap(seriesSample.lset), sample.t, sample.v)
 				}
 			}
-		})
-	}
+		}
+		testutil.Ok(b, app.Commit())
+
+		for name, q := range queries {
+			b.Run(name, func(b *testing.B) {
+				for i := 0; i < b.N; i++ {
+					ctx, _ := context.WithTimeout(baseCtx, timeout)
+					querier, err := NewBlockQuerier(ctx, hb, q.mint, q.maxt)
+					testutil.Ok(b, err)
+					start := time.Now()
+					_, err = querier.Select(q.ms...)
+					if err != nil && err != ctx.Err() {
+						b.Fatalf("Unexpected Error: %v", err)
+					}
+					took := time.Now().Sub(start)
+					// if it took >1m over the timeout, then it didn't properly timeout
+					if took > (timeout + time.Millisecond) {
+						b.Fatalf("didn't timeout")
+					}
+				}
+			})
+		}
+	})
 }
