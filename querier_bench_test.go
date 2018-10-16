@@ -2,13 +2,23 @@ package tsdb
 
 import (
 	"context"
+	"log"
 	"strconv"
 	"testing"
 	"time"
 
 	"github.com/prometheus/tsdb/labels"
 	"github.com/prometheus/tsdb/testutil"
+
+	"net/http"
+	_ "net/http/pprof"
 )
+
+func init() {
+	go func() {
+		log.Println(http.ListenAndServe("localhost:6060", nil))
+	}()
+}
 
 func BenchmarkBlockQuerier(b *testing.B) {
 	//counts := []int{10, 100, 1000, 10000, 100000, 1000000}
