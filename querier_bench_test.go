@@ -104,7 +104,8 @@ func benchmarkBlockQuerier(b *testing.B, numSeries int, timeout time.Duration) {
 				_, err := querier.Select(q.ms...)
 				testutil.Ok(b, err)
 				took := time.Now().Sub(start)
-				if took > timeout {
+				// if it took >1m over the timeout, then it didn't properly timeout
+				if took > (timeout + time.Millisecond) {
 					b.Fatalf("didn't timeout")
 				}
 			}

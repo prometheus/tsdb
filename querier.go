@@ -223,8 +223,9 @@ func PostingsForMatchers(ctx context.Context, ix IndexReader, ms ...labels.Match
 		its = append(its, it)
 	}
 	start := time.Now()
+	sTook := start.Sub(s)
 	defer func() {
-		fmt.Println("sorting postings", time.Now().Sub(start))
+		fmt.Println("sorting postings", sTook, time.Now().Sub(start))
 	}()
 	return ix.SortedPostings(ctx, index.Intersect(its...)), nil
 }
