@@ -707,7 +707,7 @@ type Reader struct {
 	rdr   io.Reader
 	err   error
 	rec   []byte
-	buf   [recordHeaderSize+pageSize]byte
+	buf   [recordHeaderSize + pageSize]byte
 	total int64 // total bytes processed.
 }
 
