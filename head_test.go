@@ -14,6 +14,7 @@
 package tsdb
 
 import (
+	"context"
 	"io/ioutil"
 	"math/rand"
 	"os"
@@ -345,7 +346,7 @@ Outer:
 		}
 
 		// Compare the result.
-		q, err := NewBlockQuerier(head, head.MinTime(), head.MaxTime())
+		q, err := NewBlockQuerier(context.Background(), head, head.MinTime(), head.MaxTime())
 		testutil.Ok(t, err)
 		res, err := q.Select(labels.NewEqualMatcher("a", "b"))
 		testutil.Ok(t, err)
@@ -400,7 +401,7 @@ func TestDeleteUntilCurMax(t *testing.T) {
 	testutil.Ok(t, hb.Delete(0, 10000, labels.NewEqualMatcher("a", "b")))
 
 	// Test the series have been deleted.
-	q, err := NewBlockQuerier(hb, 0, 100000)
+	q, err := NewBlockQuerier(context.Background(), hb, 0, 100000)
 	testutil.Ok(t, err)
 	res, err := q.Select(labels.NewEqualMatcher("a", "b"))
 	testutil.Ok(t, err)
@@ -411,7 +412,7 @@ func TestDeleteUntilCurMax(t *testing.T) {
 	_, err = app.Add(labels.Labels{{"a", "b"}}, 11, 1)
 	testutil.Ok(t, err)
 	testutil.Ok(t, app.Commit())
-	q, err = NewBlockQuerier(hb, 0, 100000)
+	q, err = NewBlockQuerier(context.Background(), hb, 0, 100000)
 	testutil.Ok(t, err)
 	res, err = q.Select(labels.NewEqualMatcher("a", "b"))
 	testutil.Ok(t, err)
@@ -533,7 +534,7 @@ func TestDelete_e2e(t *testing.T) {
 		}
 		sort.Sort(matched)
 		for i := 0; i < numRanges; i++ {
-			q, err := NewBlockQuerier(hb, 0, 100000)
+			q, err := NewBlockQuerier(context.Background(), hb, 0, 100000)
 			testutil.Ok(t, err)
 			defer q.Close()
 			ss, err := q.Select(del.ms...)
@@ -796,7 +797,7 @@ func TestUncommittedSamplesNotLostOnTruncate(t *testing.T) {
 
 	testutil.Ok(t, app.Commit())
 
-	q, err := NewBlockQuerier(h, 1500, 2500)
+	q, err := NewBlockQuerier(context.Background(), h, 1500, 2500)
 	testutil.Ok(t, err)
 	defer q.Close()
 
@@ -823,7 +824,7 @@ func TestRemoveSeriesAfterRollbackAndTruncate(t *testing.T) {
 
 	testutil.Ok(t, app.Rollback())
 
-	q, err := NewBlockQuerier(h, 1500, 2500)
+	q, err := NewBlockQuerier(context.Background(), h, 1500, 2500)
 	testutil.Ok(t, err)
 	defer q.Close()
 

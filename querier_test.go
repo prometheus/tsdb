@@ -14,6 +14,7 @@
 package tsdb
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"math/rand"
@@ -475,6 +476,7 @@ Outer:
 	for _, c := range cases.queries {
 		ir, cr := createIdxChkReaders(cases.data)
 		querier := &blockQuerier{
+			ctx:        context.TODO(),
 			index:      ir,
 			chunks:     cr,
 			tombstones: NewMemTombstones(),
@@ -639,6 +641,7 @@ Outer:
 	for _, c := range cases.queries {
 		ir, cr := createIdxChkReaders(cases.data)
 		querier := &blockQuerier{
+			ctx:        context.TODO(),
 			index:      ir,
 			chunks:     cr,
 			tombstones: cases.tombstones,
@@ -1458,13 +1461,18 @@ func (m mockIndex) Postings(name, value string) (index.Postings, error) {
 	return index.NewListPostings(m.postings[l]), nil
 }
 
-func (m mockIndex) SortedPostings(p index.Postings) index.Postings {
+func (m mockIndex) SortedPostings(ctx context.Context, p index.Postings) index.Postings {
 	ep, err := index.ExpandPostings(p)
 	if err != nil {
 		return index.ErrPostings(errors.Wrap(err, "expand postings"))
 	}
 
 	sort.Slice(ep, func(i, j int) bool {
+	    select {
+	        case <-ctx.Done():
+	            return false
+            default:
+	    }
 		return labels.Compare(m.series[ep[i]].l, m.series[ep[j]].l) < 0
 	})
 	return index.NewListPostings(ep)

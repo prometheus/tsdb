@@ -14,9 +14,11 @@
 package tsdb
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/pkg/errors"
 	"github.com/prometheus/tsdb/chunkenc"
@@ -118,7 +120,7 @@ func (q *querier) Close() error {
 }
 
 // NewBlockQuerier returns a querier against the reader.
-func NewBlockQuerier(b BlockReader, mint, maxt int64) (Querier, error) {
+func NewBlockQuerier(ctx context.Context, b BlockReader, mint, maxt int64) (Querier, error) {
 	indexr, err := b.Index()
 	if err != nil {
 		return nil, errors.Wrapf(err, "open index reader")
@@ -135,6 +137,7 @@ func NewBlockQuerier(b BlockReader, mint, maxt int64) (Querier, error) {
 		return nil, errors.Wrapf(err, "open tombstone reader")
 	}
 	return &blockQuerier{
+		ctx:        ctx,
 		mint:       mint,
 		maxt:       maxt,
 		index:      indexr,
@@ -145,6 +148,7 @@ func NewBlockQuerier(b BlockReader, mint, maxt int64) (Querier, error) {
 
 // blockQuerier provides querying access to a single block database.
 type blockQuerier struct {
+	ctx        context.Context
 	index      IndexReader
 	chunks     ChunkReader
 	tombstones TombstoneReader
@@ -153,7 +157,7 @@ type blockQuerier struct {
 }
 
 func (q *blockQuerier) Select(ms ...labels.Matcher) (SeriesSet, error) {
-	base, err := LookupChunkSeries(q.index, q.tombstones, ms...)
+	base, err := LookupChunkSeries(q.ctx, q.index, q.tombstones, ms...)
 	if err != nil {
 		return nil, err
 	}
@@ -204,17 +208,25 @@ func (q *blockQuerier) Close() error {
 // PostingsForMatchers assembles a single postings iterator against the index reader
 // based on the given matchers. It returns a list of label names that must be manually
 // checked to not exist in series the postings list points to.
-func PostingsForMatchers(ix IndexReader, ms ...labels.Matcher) (index.Postings, error) {
+func PostingsForMatchers(ctx context.Context, ix IndexReader, ms ...labels.Matcher) (index.Postings, error) {
+	s := time.Now()
+	defer func() {
+		fmt.Println("PostingsForMatchers took", time.Now().Sub(s))
+	}()
 	var its []index.Postings
 
 	for _, m := range ms {
-		it, err := postingsForMatcher(ix, m)
+		it, err := postingsForMatcher(ctx, ix, m)
 		if err != nil {
 			return nil, err
 		}
 		its = append(its, it)
 	}
-	return ix.SortedPostings(index.Intersect(its...)), nil
+	start := time.Now()
+	defer func() {
+		fmt.Println("sorting postings", time.Now().Sub(start))
+	}()
+	return ix.SortedPostings(ctx, index.Intersect(its...)), nil
 }
 
 // tuplesByPrefix uses binary search to find prefix matches within ts.
@@ -248,7 +260,11 @@ func tuplesByPrefix(m *labels.PrefixMatcher, ts StringTuples) ([]string, error) 
 	return matches, nil
 }
 
-func postingsForMatcher(ix IndexReader, m labels.Matcher) (index.Postings, error) {
+func postingsForMatcher(ctx context.Context, ix IndexReader, m labels.Matcher) (index.Postings, error) {
+	s := time.Now()
+	defer func() {
+		fmt.Println("postingsForMatcher took", time.Now().Sub(s))
+	}()
 	// If the matcher selects an empty value, it selects all the series which dont
 	// have the label name set too. See: https://github.com/prometheus/prometheus/issues/3575
 	// and https://github.com/prometheus/prometheus/pull/3578#issuecomment-351653555
@@ -296,12 +312,22 @@ func postingsForMatcher(ix IndexReader, m labels.Matcher) (index.Postings, error
 	var rit []index.Postings
 
 	for _, v := range res {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
 		it, err := ix.Postings(m.Name(), v)
 		if err != nil {
 			return nil, err
 		}
 		rit = append(rit, it)
 	}
+	fmt.Println("starting merge")
+	start := time.Now()
+	defer func() {
+		fmt.Println("done with merge", time.Now().Sub(start))
+	}()
 
 	return index.Merge(rit...), nil
 }
@@ -476,11 +502,11 @@ type baseChunkSeries struct {
 
 // LookupChunkSeries retrieves all series for the given matchers and returns a ChunkSeriesSet
 // over them. It drops chunks based on tombstones in the given reader.
-func LookupChunkSeries(ir IndexReader, tr TombstoneReader, ms ...labels.Matcher) (ChunkSeriesSet, error) {
+func LookupChunkSeries(ctx context.Context, ir IndexReader, tr TombstoneReader, ms ...labels.Matcher) (ChunkSeriesSet, error) {
 	if tr == nil {
 		tr = NewMemTombstones()
 	}
-	p, err := PostingsForMatchers(ir, ms...)
+	p, err := PostingsForMatchers(ctx, ir, ms...)
 	if err != nil {
 		return nil, err
 	}

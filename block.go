@@ -15,6 +15,7 @@
 package tsdb
 
 import (
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"io/ioutil"
@@ -75,7 +76,7 @@ type IndexReader interface {
 
 	// SortedPostings returns a postings list that is reordered to be sorted
 	// by the label set of the underlying series.
-	SortedPostings(index.Postings) index.Postings
+	SortedPostings(context.Context, index.Postings) index.Postings
 
 	// Series populates the given labels and chunk metas for the series identified
 	// by the reference.
@@ -390,8 +391,8 @@ func (r blockIndexReader) Postings(name, value string) (index.Postings, error) {
 	return p, errors.Wrapf(err, "block: %s", r.b.Meta().ULID)
 }
 
-func (r blockIndexReader) SortedPostings(p index.Postings) index.Postings {
-	return r.ir.SortedPostings(p)
+func (r blockIndexReader) SortedPostings(ctx context.Context, p index.Postings) index.Postings {
+	return r.ir.SortedPostings(ctx, p)
 }
 
 func (r blockIndexReader) Series(ref uint64, lset *labels.Labels, chks *[]chunks.Meta) error {
@@ -441,7 +442,7 @@ func (pb *Block) Delete(mint, maxt int64, ms ...labels.Matcher) error {
 		return ErrClosing
 	}
 
-	p, err := PostingsForMatchers(pb.indexr, ms...)
+	p, err := PostingsForMatchers(context.Background(), pb.indexr, ms...)
 	if err != nil {
 		return errors.Wrap(err, "select series")
 	}

@@ -1,24 +1,35 @@
 package tsdb
 
 import (
+	"context"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/prometheus/tsdb/labels"
 	"github.com/prometheus/tsdb/testutil"
 )
 
 func BenchmarkBlockQuerier(b *testing.B) {
-	for _, count := range []int{10, 100, 1000, 10000, 100000, 1000000} {
-		b.Run(strconv.Itoa(count), func(b *testing.B) {
-			benchmarkBlockQuerier(b, count)
-		})
+	//counts := []int{10, 100, 1000, 10000, 100000, 1000000}
+	counts := []int{100000}
+	timeouts := []time.Duration{
+		time.Millisecond * 100,
+		//time.Second,
+		//time.Minute,
+	}
+	for _, timeout := range timeouts {
+		for _, count := range counts {
+			b.Run(strconv.Itoa(count)+"/"+timeout.String(), func(b *testing.B) {
+				benchmarkBlockQuerier(b, count, timeout)
+			})
+		}
 	}
 }
 
 // benchmarkBlockQuerier simply creates chunkreaders for the number of series and
 // then creates a querier that will match all of those same series
-func benchmarkBlockQuerier(b *testing.B, numSeries int) {
+func benchmarkBlockQuerier(b *testing.B, numSeries int, timeout time.Duration) {
 	type query struct {
 		mint, maxt int64
 		ms         []labels.Matcher
@@ -73,20 +84,29 @@ func benchmarkBlockQuerier(b *testing.B, numSeries int) {
 	}
 
 	ir, cr := createIdxChkReaders(data)
+	baseCtx := context.Background()
 
 	for name, q := range queries {
 		b.Run(name, func(b *testing.B) {
-			querier := &blockQuerier{
-				index:      ir,
-				chunks:     cr,
-				tombstones: NewMemTombstones(),
-
-				mint: q.mint,
-				maxt: q.maxt,
-			}
 			for i := 0; i < b.N; i++ {
+				ctx, _ := context.WithTimeout(baseCtx, timeout)
+				querier := &blockQuerier{
+					ctx:        ctx,
+					index:      ir,
+					chunks:     cr,
+					tombstones: NewMemTombstones(),
+
+					mint: q.mint,
+					maxt: q.maxt,
+				}
+
+				start := time.Now()
 				_, err := querier.Select(q.ms...)
 				testutil.Ok(b, err)
+				took := time.Now().Sub(start)
+				if took > timeout {
+					b.Fatalf("didn't timeout")
+				}
 			}
 		})
 	}

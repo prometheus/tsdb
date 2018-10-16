@@ -14,6 +14,7 @@
 package tsdb
 
 import (
+	"context"
 	"fmt"
 	"io/ioutil"
 	"math"
@@ -106,7 +107,7 @@ func TestDataAvailableOnlyAfterCommit(t *testing.T) {
 	_, err := app.Add(labels.FromStrings("foo", "bar"), 0, 0)
 	testutil.Ok(t, err)
 
-	querier, err := db.Querier(0, 1)
+	querier, err := db.Querier(context.TODO(), 0, 1)
 	testutil.Ok(t, err)
 	seriesSet := query(t, querier, labels.NewEqualMatcher("foo", "bar"))
 
@@ -116,7 +117,7 @@ func TestDataAvailableOnlyAfterCommit(t *testing.T) {
 	err = app.Commit()
 	testutil.Ok(t, err)
 
-	querier, err = db.Querier(0, 1)
+	querier, err = db.Querier(context.TODO(), 0, 1)
 	testutil.Ok(t, err)
 	defer querier.Close()
 
@@ -137,7 +138,7 @@ func TestDataNotAvailableAfterRollback(t *testing.T) {
 	err = app.Rollback()
 	testutil.Ok(t, err)
 
-	querier, err := db.Querier(0, 1)
+	querier, err := db.Querier(context.TODO(), 0, 1)
 	testutil.Ok(t, err)
 	defer querier.Close()
 
@@ -183,7 +184,7 @@ func TestDBAppenderAddRef(t *testing.T) {
 
 	testutil.Ok(t, app2.Commit())
 
-	q, err := db.Querier(0, 200)
+	q, err := db.Querier(context.TODO(), 0, 200)
 	testutil.Ok(t, err)
 
 	res := query(t, q, labels.NewEqualMatcher("a", "b"))
@@ -236,7 +237,7 @@ Outer:
 		}
 
 		// Compare the result.
-		q, err := db.Querier(0, numSamples)
+		q, err := db.Querier(context.TODO(), 0, numSamples)
 		testutil.Ok(t, err)
 
 		res, err := q.Select(labels.NewEqualMatcher("a", "b"))
@@ -337,7 +338,7 @@ func TestSkippingInvalidValuesInSameTxn(t *testing.T) {
 	testutil.Ok(t, app.Commit())
 
 	// Make sure the right value is stored.
-	q, err := db.Querier(0, 10)
+	q, err := db.Querier(context.TODO(), 0, 10)
 	testutil.Ok(t, err)
 
 	ssMap := query(t, q, labels.NewEqualMatcher("a", "b"))
@@ -356,7 +357,7 @@ func TestSkippingInvalidValuesInSameTxn(t *testing.T) {
 	testutil.Ok(t, err)
 	testutil.Ok(t, app.Commit())
 
-	q, err = db.Querier(0, 10)
+	q, err = db.Querier(context.TODO(), 0, 10)
 	testutil.Ok(t, err)
 
 	ssMap = query(t, q, labels.NewEqualMatcher("a", "b"))
@@ -394,7 +395,7 @@ func TestDB_Snapshot(t *testing.T) {
 	testutil.Ok(t, err)
 	defer db.Close()
 
-	querier, err := db.Querier(mint, mint+1000)
+	querier, err := db.Querier(context.TODO(), mint, mint+1000)
 	testutil.Ok(t, err)
 	defer querier.Close()
 
@@ -462,7 +463,7 @@ Outer:
 		defer db.Close()
 
 		// Compare the result.
-		q, err := db.Querier(0, numSamples)
+		q, err := db.Querier(context.TODO(), 0, numSamples)
 		testutil.Ok(t, err)
 		defer q.Close()
 
@@ -636,7 +637,7 @@ func TestDB_e2e(t *testing.T) {
 				}
 			}
 
-			q, err := db.Querier(mint, maxt)
+			q, err := db.Querier(context.TODO(), mint, maxt)
 			testutil.Ok(t, err)
 
 			ss, err := q.Select(qry.ms...)
@@ -684,7 +685,7 @@ func TestWALFlushedOnDBClose(t *testing.T) {
 	testutil.Ok(t, err)
 	defer db.Close()
 
-	q, err := db.Querier(0, 1)
+	q, err := db.Querier(context.TODO(), 0, 1)
 	testutil.Ok(t, err)
 
 	values, err := q.LabelValues("labelname")
@@ -741,7 +742,7 @@ func TestTombstoneClean(t *testing.T) {
 		testutil.Ok(t, db.CleanTombstones())
 
 		// Compare the result.
-		q, err := db.Querier(0, numSamples)
+		q, err := db.Querier(context.TODO(), 0, numSamples)
 		testutil.Ok(t, err)
 		defer q.Close()
 
@@ -994,7 +995,7 @@ func TestNotMatcherSelectsLabelsUnsetSeries(t *testing.T) {
 		series: labelpairs[:1],
 	}}
 
-	q, err := db.Querier(0, 10)
+	q, err := db.Querier(context.TODO(), 0, 10)
 	testutil.Ok(t, err)
 	defer q.Close()
 
@@ -1188,7 +1189,7 @@ func TestQuerierWithBoundaryChunks(t *testing.T) {
 
 	testutil.Assert(t, len(db.blocks) >= 3, "invalid test, less than three blocks in DB")
 
-	q, err := db.Querier(blockRange, 2*blockRange)
+	q, err := db.Querier(context.TODO(), blockRange, 2*blockRange)
 	testutil.Ok(t, err)
 	defer q.Close()
 

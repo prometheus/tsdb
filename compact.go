@@ -14,6 +14,7 @@
 package tsdb
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"math/rand"
@@ -566,7 +567,7 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 		if err != nil {
 			return err
 		}
-		all = indexr.SortedPostings(all)
+		all = indexr.SortedPostings(context.Background(), all)
 
 		s := newCompactionSeriesSet(indexr, chunkr, tombsr, all)
 

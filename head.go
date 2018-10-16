@@ -14,6 +14,7 @@
 package tsdb
 
 import (
+	"context"
 	"math"
 	"path/filepath"
 	"runtime"
@@ -794,7 +795,7 @@ func (h *Head) Delete(mint, maxt int64, ms ...labels.Matcher) error {
 
 	ir := h.indexRange(mint, maxt)
 
-	p, err := PostingsForMatchers(ir, ms...)
+	p, err := PostingsForMatchers(context.Background(), ir, ms...)
 	if err != nil {
 		return errors.Wrap(err, "select series")
 	}
@@ -1032,7 +1033,7 @@ func (h *headIndexReader) Postings(name, value string) (index.Postings, error) {
 	return h.head.postings.Get(name, value), nil
 }
 
-func (h *headIndexReader) SortedPostings(p index.Postings) index.Postings {
+func (h *headIndexReader) SortedPostings(ctx context.Context, p index.Postings) index.Postings {
 	ep := make([]uint64, 0, 128)
 
 	for p.Next() {
@@ -1043,6 +1044,11 @@ func (h *headIndexReader) SortedPostings(p index.Postings) index.Postings {
 	}
 
 	sort.Slice(ep, func(i, j int) bool {
+		select {
+		case <-ctx.Done():
+			return false
+		default:
+		}
 		a := h.head.series.getByID(ep[i])
 		b := h.head.series.getByID(ep[j])
 

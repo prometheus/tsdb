@@ -15,6 +15,7 @@ package index
 
 import (
 	"bufio"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"hash"
@@ -931,7 +932,7 @@ func (r *Reader) Postings(name, value string) (Postings, error) {
 
 // SortedPostings returns the given postings list reordered so that the backing series
 // are sorted.
-func (r *Reader) SortedPostings(p Postings) Postings {
+func (r *Reader) SortedPostings(_ context.Context, p Postings) Postings {
 	return p
 }
 
