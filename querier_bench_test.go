@@ -7,12 +7,11 @@ import (
 	"time"
 
 	"github.com/prometheus/tsdb/labels"
-	"github.com/prometheus/tsdb/testutil"
 )
 
 func BenchmarkBlockQuerier(b *testing.B) {
 	//counts := []int{10, 100, 1000, 10000, 100000, 1000000}
-	counts := []int{100000}
+	counts := []int{1000000}
 	timeouts := []time.Duration{
 		time.Millisecond * 100,
 		//time.Second,
@@ -102,7 +101,9 @@ func benchmarkBlockQuerier(b *testing.B, numSeries int, timeout time.Duration) {
 
 				start := time.Now()
 				_, err := querier.Select(q.ms...)
-				testutil.Ok(b, err)
+				if err != nil && err != ctx.Err() {
+					b.Fatalf("Unexpected Error: %v", err)
+				}
 				took := time.Now().Sub(start)
 				// if it took >1m over the timeout, then it didn't properly timeout
 				if took > (timeout + time.Millisecond) {

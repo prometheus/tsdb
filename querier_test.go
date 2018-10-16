@@ -1467,7 +1467,7 @@ func (m mockIndex) SortedPostings(ctx context.Context, p index.Postings) index.P
 		return index.ErrPostings(errors.Wrap(err, "expand postings"))
 	}
 
-    err = SortSliceContext(ctx, ep, func(i, j int) bool {
+	err = SortSliceContext(ctx, ep, func(i, j int) bool {
 		select {
 		case <-ctx.Done():
 			return false
@@ -1476,7 +1476,7 @@ func (m mockIndex) SortedPostings(ctx context.Context, p index.Postings) index.P
 		return labels.Compare(m.series[ep[i]].l, m.series[ep[j]].l) < 0
 	})
 	if err != nil {
-	    return index.ErrPostings(errors.Wrap(err, "sort postings"))
+		return index.ErrPostings(errors.Wrap(err, "sort postings"))
 	}
 	return index.NewListPostings(ep)
 }

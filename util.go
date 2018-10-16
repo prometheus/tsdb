@@ -18,7 +18,7 @@ func SortSliceContext(ctx context.Context, slice interface{}, less func(i, j int
 	sort.Slice(slice, func(i, j int) bool {
 		select {
 		case <-ctx.Done():
-		    // Use the panic to exit this without having to complete the sort
+			// Use the panic to exit this without having to complete the sort
 			panic(ctx.Err())
 		default:
 			return less(i, j)

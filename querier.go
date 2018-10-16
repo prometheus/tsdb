@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/pkg/errors"
 	"github.com/prometheus/tsdb/chunkenc"
@@ -209,10 +208,6 @@ func (q *blockQuerier) Close() error {
 // based on the given matchers. It returns a list of label names that must be manually
 // checked to not exist in series the postings list points to.
 func PostingsForMatchers(ctx context.Context, ix IndexReader, ms ...labels.Matcher) (index.Postings, error) {
-	s := time.Now()
-	defer func() {
-		fmt.Println("PostingsForMatchers took", time.Now().Sub(s))
-	}()
 	var its []index.Postings
 
 	for _, m := range ms {
@@ -222,11 +217,6 @@ func PostingsForMatchers(ctx context.Context, ix IndexReader, ms ...labels.Match
 		}
 		its = append(its, it)
 	}
-	start := time.Now()
-	sTook := start.Sub(s)
-	defer func() {
-		fmt.Println("sorting postings", sTook, time.Now().Sub(start))
-	}()
 	return ix.SortedPostings(ctx, index.Intersect(its...)), nil
 }
 
@@ -262,15 +252,17 @@ func tuplesByPrefix(m *labels.PrefixMatcher, ts StringTuples) ([]string, error) 
 }
 
 func postingsForMatcher(ctx context.Context, ix IndexReader, m labels.Matcher) (index.Postings, error) {
-	s := time.Now()
-	defer func() {
-		fmt.Println("postingsForMatcher took", time.Now().Sub(s))
-	}()
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+
 	// If the matcher selects an empty value, it selects all the series which dont
 	// have the label name set too. See: https://github.com/prometheus/prometheus/issues/3575
 	// and https://github.com/prometheus/prometheus/pull/3578#issuecomment-351653555
 	if m.Matches("") {
-		return postingsForUnsetLabelMatcher(ix, m)
+		return postingsForUnsetLabelMatcher(ctx, ix, m)
 	}
 
 	// Fast-path for equal matching.
@@ -324,16 +316,11 @@ func postingsForMatcher(ctx context.Context, ix IndexReader, m labels.Matcher) (
 		}
 		rit = append(rit, it)
 	}
-	fmt.Println("starting merge")
-	start := time.Now()
-	defer func() {
-		fmt.Println("done with merge", time.Now().Sub(start))
-	}()
 
 	return index.Merge(rit...), nil
 }
 
-func postingsForUnsetLabelMatcher(ix IndexReader, m labels.Matcher) (index.Postings, error) {
+func postingsForUnsetLabelMatcher(ctx context.Context, ix IndexReader, m labels.Matcher) (index.Postings, error) {
 	tpls, err := ix.LabelValues(m.Name())
 	if err != nil {
 		return nil, err
@@ -341,6 +328,11 @@ func postingsForUnsetLabelMatcher(ix IndexReader, m labels.Matcher) (index.Posti
 
 	var res []string
 	for i := 0; i < tpls.Len(); i++ {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
 		vals, err := tpls.At(i)
 		if err != nil {
 			return nil, err
