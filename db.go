@@ -298,6 +298,10 @@ func (db *DB) run() {
 			default:
 			}
 		case <-db.compactc:
+			if !db.compactionsEnabled {
+				continue
+			}
+
 			db.metrics.compactionsTriggered.Inc()
 
 			err := db.compact()
@@ -370,10 +374,6 @@ func (db *DB) compact() (err error) {
 	db.cmtx.Lock()
 	defer db.cmtx.Unlock()
 
-	if !db.compactionsEnabled {
-		return nil
-	}
-
 	// Check whether we have pending head blocks that are ready to be persisted.
 	// They have the highest priority.
 	for {
@@ -401,7 +401,8 @@ func (db *DB) compact() (err error) {
 			// from the block interval here.
 			maxt: maxt - 1,
 		}
-		if _, err = db.compactor.Write(db.dir, head, mint, maxt, nil); err != nil {
+		uid, err := db.compactor.Write(db.dir, head, mint, maxt, nil)
+		if err != nil {
 			return errors.Wrap(err, "persist head block")
 		}
 
@@ -409,6 +410,17 @@ func (db *DB) compact() (err error) {
 
 		if err := db.reload(); err != nil {
 			return errors.Wrap(err, "reload blocks")
+		}
+		if (uid == ulid.ULID{}) { // No block created.
+			// After this was fixed https://github.com/prometheus/tsdb/issues/309,
+			// Case 1: It is possible to have 0 blocks after compaction.
+			//         db.reload() doesn't truncate the head when the block count is zero.
+			// Case 2: If there were blocks on disk, head will be truncated to a
+			//         wrong value based on old blocks.
+			// Hence we need to truncate manually.
+			if err = db.head.Truncate(maxt); err != nil {
+				return errors.Wrap(err, "head truncate failed (in compact)")
+			}
 		}
 		runtime.GC()
 	}
@@ -493,6 +505,9 @@ func (db *DB) reload() (err error) {
 			}
 			corrupted[ulid] = err
 			continue
+		}
+		if meta.Compaction.Deletable {
+			deleteable[meta.ULID] = struct{}{}
 		}
 		if db.beyondRetention(meta) {
 			deleteable[meta.ULID] = struct{}{}
