@@ -96,39 +96,6 @@ func benchmarkBlockQuerier(b *testing.B, numSeries int, timeout time.Duration) {
 		},
 	}
 
-	b.Run("testblock", func(b *testing.B) {
-		baseCtx := context.Background()
-		ir, cr := createIdxChkReaders(data)
-
-		for name, q := range queries {
-			b.Run(name, func(b *testing.B) {
-				for i := 0; i < b.N; i++ {
-					ctx, _ := context.WithTimeout(baseCtx, timeout)
-					querier := &blockQuerier{
-						ctx:        ctx,
-						index:      ir,
-						chunks:     cr,
-						tombstones: NewMemTombstones(),
-
-						mint: q.mint,
-						maxt: q.maxt,
-					}
-
-					start := time.Now()
-					_, err := querier.Select(q.ms...)
-					if err != nil && err != ctx.Err() {
-						b.Fatalf("Unexpected Error: %v", err)
-					}
-					took := time.Now().Sub(start)
-					// if it took >1m over the timeout, then it didn't properly timeout
-					if took > (timeout + time.Millisecond) {
-						b.Fatalf("didn't timeout")
-					}
-				}
-			})
-		}
-	})
-
 	b.Run("head", func(b *testing.B) {
 		baseCtx := context.Background()
 
