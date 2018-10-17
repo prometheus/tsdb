@@ -148,7 +148,7 @@ func benchmarkBlockQuerier(b *testing.B, numSeries int, timeout time.Duration) {
 			b.Run(name, func(b *testing.B) {
 				for i := 0; i < b.N; i++ {
 					ctx, _ := context.WithTimeout(baseCtx, timeout)
-					querier, err := NewBlockQuerier(baseCtx, hb, q.mint, q.maxt)
+					querier, err := NewBlockQuerier(ctx, hb, q.mint, q.maxt)
 					testutil.Ok(b, err)
 					start := time.Now()
 					_, err = querier.Select(q.ms...)
@@ -196,7 +196,7 @@ func benchmarkBlockQuerier(b *testing.B, numSeries int, timeout time.Duration) {
 			b.Run(name, func(b *testing.B) {
 				for i := 0; i < b.N; i++ {
 					ctx, _ := context.WithTimeout(baseCtx, timeout)
-					querier, err := NewBlockQuerier(baseCtx, block, q.mint, q.maxt)
+					querier, err := NewBlockQuerier(ctx, block, q.mint, q.maxt)
 					testutil.Ok(b, err)
 					start := time.Now()
 					_, err = querier.Select(q.ms...)
