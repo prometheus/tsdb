@@ -113,8 +113,8 @@ type DB struct {
 	stopc    chan struct{}
 
 	// cmtx is used to control compactions and deletions.
-	cmtx               sync.Mutex
-	compactionsEnabled bool
+	cmtx            sync.Mutex
+	autoCompactions bool
 }
 
 type dbMetrics struct {
@@ -123,6 +123,7 @@ type dbMetrics struct {
 	reloads              prometheus.Counter
 	reloadsFailed        prometheus.Counter
 	compactionsTriggered prometheus.Counter
+	compactionsSkipped   prometheus.Counter
 	cutoffs              prometheus.Counter
 	cutoffsFailed        prometheus.Counter
 	startTime            prometheus.GaugeFunc
@@ -164,6 +165,10 @@ func newDBMetrics(db *DB, r prometheus.Registerer) *dbMetrics {
 	m.compactionsTriggered = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "prometheus_tsdb_compactions_triggered_total",
 		Help: "Total number of triggered compactions for the partition.",
+	})
+	m.compactionsSkipped = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "prometheus_tsdb_compactions_skipped_total",
+		Help: "Total number of skipped compactions due to disabled auto compaction.",
 	})
 	m.cutoffs = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "prometheus_tsdb_retention_cutoffs_total",
@@ -226,14 +231,14 @@ func Open(dir string, l log.Logger, r prometheus.Registerer, opts *Options) (db 
 	}
 
 	db = &DB{
-		dir:                dir,
-		logger:             l,
-		opts:               opts,
-		compactc:           make(chan struct{}, 1),
-		donec:              make(chan struct{}),
-		stopc:              make(chan struct{}),
-		compactionsEnabled: true,
-		chunkPool:          chunkenc.NewPool(),
+		dir:             dir,
+		logger:          l,
+		opts:            opts,
+		compactc:        make(chan struct{}, 1),
+		donec:           make(chan struct{}),
+		stopc:           make(chan struct{}),
+		autoCompactions: true,
+		chunkPool:       chunkenc.NewPool(),
 	}
 	db.metrics = newDBMetrics(db, r)
 
@@ -300,14 +305,19 @@ func (db *DB) run() {
 		case <-db.compactc:
 			db.metrics.compactionsTriggered.Inc()
 
-			err := db.compact()
-			if err != nil {
-				level.Error(db.logger).Log("msg", "compaction failed", "err", err)
-				backoff = exponential(backoff, 1*time.Second, 1*time.Minute)
+			db.cmtx.Lock()
+			enabled := db.autoCompactions
+			db.cmtx.Unlock()
+			if enabled {
+				if err := db.compact(); err != nil {
+					level.Error(db.logger).Log("msg", "compaction failed", "err", err)
+					backoff = exponential(backoff, 1*time.Second, 1*time.Minute)
+				} else {
+					backoff = 0
+				}
 			} else {
-				backoff = 0
+				db.metrics.compactionsSkipped.Inc()
 			}
-
 		case <-db.stopc:
 			return
 		}
@@ -369,11 +379,6 @@ func (a dbAppender) Commit() error {
 func (db *DB) compact() (err error) {
 	db.cmtx.Lock()
 	defer db.cmtx.Unlock()
-
-	if !db.compactionsEnabled {
-		return nil
-	}
-
 	// Check whether we have pending head blocks that are ready to be persisted.
 	// They have the highest priority.
 	for {
@@ -736,7 +741,7 @@ func (db *DB) DisableCompactions() {
 	db.cmtx.Lock()
 	defer db.cmtx.Unlock()
 
-	db.compactionsEnabled = false
+	db.autoCompactions = false
 	level.Info(db.logger).Log("msg", "compactions disabled")
 }
 
@@ -745,7 +750,7 @@ func (db *DB) EnableCompactions() {
 	db.cmtx.Lock()
 	defer db.cmtx.Unlock()
 
-	db.compactionsEnabled = true
+	db.autoCompactions = true
 	level.Info(db.logger).Log("msg", "compactions enabled")
 }
 
