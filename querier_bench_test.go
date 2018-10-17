@@ -2,8 +2,8 @@ package tsdb
 
 import (
 	"context"
+	"flag"
 	"io/ioutil"
-	"log"
 	"os"
 	"path"
 	"strconv"
@@ -12,15 +12,12 @@ import (
 
 	"github.com/prometheus/tsdb/labels"
 	"github.com/prometheus/tsdb/testutil"
-
-	"net/http"
-	_ "net/http/pprof"
 )
 
+var skipTimeout bool
+
 func init() {
-	go func() {
-		log.Println(http.ListenAndServe("localhost:6060", nil))
-	}()
+	flag.BoolVar(&skipTimeout, "querier-bench.skiptimeout", false, "Skip timeout enforcement")
 }
 
 func BenchmarkBlockQuerier(b *testing.B) {
@@ -114,7 +111,11 @@ func benchmarkBlockQuerier(b *testing.B, numSeries int, timeout time.Duration) {
 		for name, q := range queries {
 			b.Run(name, func(b *testing.B) {
 				for i := 0; i < b.N; i++ {
-					ctx, _ := context.WithTimeout(baseCtx, timeout)
+					ctx := baseCtx
+					if !skipTimeout {
+						ctx, _ = context.WithTimeout(baseCtx, timeout)
+					}
+
 					querier, err := NewBlockQuerier(ctx, hb, q.mint, q.maxt)
 					testutil.Ok(b, err)
 					start := time.Now()
@@ -122,10 +123,12 @@ func benchmarkBlockQuerier(b *testing.B, numSeries int, timeout time.Duration) {
 					if err != nil && err != ctx.Err() {
 						b.Fatalf("Unexpected Error: %v", err)
 					}
-					took := time.Now().Sub(start)
-					// if it took >1m over the timeout, then it didn't properly timeout
-					if took > (timeout + time.Millisecond) {
-						b.Fatalf("didn't timeout")
+					if !skipTimeout {
+						took := time.Now().Sub(start)
+						// if it took >1m over the timeout, then it didn't properly timeout
+						if took > (timeout + time.Millisecond) {
+							b.Fatalf("didn't timeout")
+						}
 					}
 				}
 			})
@@ -162,7 +165,10 @@ func benchmarkBlockQuerier(b *testing.B, numSeries int, timeout time.Duration) {
 		for name, q := range queries {
 			b.Run(name, func(b *testing.B) {
 				for i := 0; i < b.N; i++ {
-					ctx, _ := context.WithTimeout(baseCtx, timeout)
+					ctx := baseCtx
+					if !skipTimeout {
+						ctx, _ = context.WithTimeout(baseCtx, timeout)
+					}
 					querier, err := NewBlockQuerier(ctx, block, q.mint, q.maxt)
 					testutil.Ok(b, err)
 					start := time.Now()
@@ -170,10 +176,12 @@ func benchmarkBlockQuerier(b *testing.B, numSeries int, timeout time.Duration) {
 					if err != nil && err != ctx.Err() {
 						b.Fatalf("Unexpected Error: %v", err)
 					}
-					took := time.Now().Sub(start)
-					// if it took >1m over the timeout, then it didn't properly timeout
-					if took > (timeout + time.Millisecond) {
-						b.Fatalf("didn't timeout")
+					if !skipTimeout {
+						took := time.Now().Sub(start)
+						// if it took >1m over the timeout, then it didn't properly timeout
+						if took > (timeout + time.Millisecond) {
+							b.Fatalf("didn't timeout")
+						}
 					}
 				}
 			})
