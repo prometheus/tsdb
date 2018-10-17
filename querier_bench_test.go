@@ -21,12 +21,11 @@ func init() {
 }
 
 func BenchmarkBlockQuerier(b *testing.B) {
-	//counts := []int{10, 100, 1000, 10000, 100000, 1000000}
-	counts := []int{1000000}
+	counts := []int{10, 100, 1000, 10000, 100000, 1000000}
 	timeouts := []time.Duration{
 		time.Millisecond * 100,
-		//time.Second,
-		//time.Minute,
+		time.Second,
+		time.Minute,
 	}
 	for _, timeout := range timeouts {
 		for _, count := range counts {
