@@ -83,12 +83,11 @@ type IndexReader interface {
 	Series(ref uint64, lset *labels.Labels, chks *[]chunks.Meta) error
 
 	// LabelIndices returns a list of string tuples for which a label value index exists.
+	// NOTE: This is depricated. Use `LabelNames()` instead.
 	LabelIndices() ([][]string, error)
 
 	// LabelNames returns all the unique label names present in the index in sorted order.
-	// Label names are filtered using the matchers give. The label name is considered as
-	// the value for the matcher, hence the name of the matcher is ignored.
-	LabelNames(ms ...labels.Matcher) ([]string, error)
+	LabelNames() ([]string, error)
 
 	// Close releases the underlying resources of the reader.
 	Close() error
@@ -412,8 +411,8 @@ func (r blockIndexReader) LabelIndices() ([][]string, error) {
 	return ss, errors.Wrapf(err, "block: %s", r.b.Meta().ULID)
 }
 
-func (r blockIndexReader) LabelNames(ms ...labels.Matcher) ([]string, error) {
-	return r.b.LabelNames(ms...)
+func (r blockIndexReader) LabelNames() ([]string, error) {
+	return r.b.LabelNames()
 }
 
 func (r blockIndexReader) Close() error {
@@ -574,8 +573,8 @@ func (pb *Block) OverlapsClosedInterval(mint, maxt int64) bool {
 }
 
 // LabelNames returns all the unique label names present in the Block in sorted order.
-func (pb *Block) LabelNames(ms ...labels.Matcher) ([]string, error) {
-	return pb.indexr.LabelNames(ms...)
+func (pb *Block) LabelNames() ([]string, error) {
+	return pb.indexr.LabelNames()
 }
 
 func clampInterval(a, b, mint, maxt int64) (int64, int64) {

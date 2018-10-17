@@ -883,10 +883,10 @@ type emptyStringTuples struct{}
 func (emptyStringTuples) At(i int) ([]string, error) { return nil, nil }
 func (emptyStringTuples) Len() int                   { return 0 }
 
-// LabelIndices returns a for which labels or label tuples value indices exist.
+// LabelIndices returns a slice of label names for which labels or label tuples value indices exist.
+// NOTE: This is depricated. Use `LabelNames()` instead.
 func (r *Reader) LabelIndices() ([][]string, error) {
 	res := [][]string{}
-
 	for s := range r.labels {
 		res = append(res, strings.Split(s, labelNameSeperator))
 	}
@@ -935,7 +935,7 @@ func (r *Reader) SortedPostings(p Postings) Postings {
 }
 
 // LabelNames returns all the unique label names present in the index.
-func (r *Reader) LabelNames(ms ...labels.Matcher) ([]string, error) {
+func (r *Reader) LabelNames() ([]string, error) {
 	labelNamesMap := make(map[string]struct{}, len(r.labels))
 	for key := range r.labels {
 		// 'key' contains the label names concatenated with the
@@ -951,13 +951,7 @@ func (r *Reader) LabelNames(ms ...labels.Matcher) ([]string, error) {
 		}
 	}
 	labelNames := make([]string, 0, len(labelNamesMap))
-Outer:
 	for name := range labelNamesMap {
-		for _, m := range ms {
-			if !m.Matches(name) {
-				continue Outer
-			}
-		}
 		labelNames = append(labelNames, name)
 	}
 	sort.Slice(labelNames, func(i, j int) bool {

@@ -1493,23 +1493,15 @@ func (m mockIndex) Series(ref uint64, lset *labels.Labels, chks *[]chunks.Meta) 
 
 func (m mockIndex) LabelIndices() ([][]string, error) {
 	res := make([][]string, 0, len(m.labelIndex))
-
 	for k := range m.labelIndex {
 		res = append(res, []string{k})
 	}
-
 	return res, nil
 }
 
-func (m mockIndex) LabelNames(ms ...labels.Matcher) ([]string, error) {
+func (m mockIndex) LabelNames() ([]string, error) {
 	labelNames := make([]string, 0, len(m.labelIndex))
-Outer:
 	for name := range m.labelIndex {
-		for _, m := range ms {
-			if !m.Matches(name) {
-				continue Outer
-			}
-		}
 		labelNames = append(labelNames, name)
 	}
 	return labelNames, nil
