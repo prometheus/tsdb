@@ -116,9 +116,9 @@ type DB struct {
 	cmtx sync.Mutex
 
 	// autoCompactMtx ensures that no compaction gets triggered while
-	// changing the autoCompactions var.
-	autoCompactMtx  sync.Mutex
-	autoCompactions bool
+	// changing the autoCompact var.
+	autoCompactMtx sync.Mutex
+	autoCompact    bool
 }
 
 type dbMetrics struct {
@@ -235,14 +235,14 @@ func Open(dir string, l log.Logger, r prometheus.Registerer, opts *Options) (db 
 	}
 
 	db = &DB{
-		dir:             dir,
-		logger:          l,
-		opts:            opts,
-		compactc:        make(chan struct{}, 1),
-		donec:           make(chan struct{}),
-		stopc:           make(chan struct{}),
-		autoCompactions: true,
-		chunkPool:       chunkenc.NewPool(),
+		dir:         dir,
+		logger:      l,
+		opts:        opts,
+		compactc:    make(chan struct{}, 1),
+		donec:       make(chan struct{}),
+		stopc:       make(chan struct{}),
+		autoCompact: true,
+		chunkPool:   chunkenc.NewPool(),
 	}
 	db.metrics = newDBMetrics(db, r)
 
@@ -310,7 +310,7 @@ func (db *DB) run() {
 			db.metrics.compactionsTriggered.Inc()
 
 			db.autoCompactMtx.Lock()
-			if db.autoCompactions {
+			if db.autoCompact {
 				if err := db.compact(); err != nil {
 					level.Error(db.logger).Log("msg", "compaction failed", "err", err)
 					backoff = exponential(backoff, 1*time.Second, 1*time.Minute)
@@ -744,7 +744,7 @@ func (db *DB) DisableCompactions() {
 	db.autoCompactMtx.Lock()
 	defer db.autoCompactMtx.Unlock()
 
-	db.autoCompactions = false
+	db.autoCompact = false
 	level.Info(db.logger).Log("msg", "compactions disabled")
 }
 
@@ -753,7 +753,7 @@ func (db *DB) EnableCompactions() {
 	db.autoCompactMtx.Lock()
 	defer db.autoCompactMtx.Unlock()
 
-	db.autoCompactions = true
+	db.autoCompact = true
 	level.Info(db.logger).Log("msg", "compactions enabled")
 }
 
