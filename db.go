@@ -112,8 +112,11 @@ type DB struct {
 	donec    chan struct{}
 	stopc    chan struct{}
 
-	// cmtx is used to control compactions and deletions.
-	cmtx            sync.Mutex
+	// cmtx ensures that compactions and deletions don't run simultaneously.
+	cmtx sync.Mutex
+
+	// autoCompactMtx ensures that no compaction gets triggered while changing the autoCompactions var.
+	autoCompactMtx  sync.Mutex
 	autoCompactions bool
 }
 
@@ -305,10 +308,8 @@ func (db *DB) run() {
 		case <-db.compactc:
 			db.metrics.compactionsTriggered.Inc()
 
-			db.cmtx.Lock()
-			enabled := db.autoCompactions
-			db.cmtx.Unlock()
-			if enabled {
+			db.autoCompactMtx.Lock()
+			if db.autoCompactions {
 				if err := db.compact(); err != nil {
 					level.Error(db.logger).Log("msg", "compaction failed", "err", err)
 					backoff = exponential(backoff, 1*time.Second, 1*time.Minute)
@@ -318,6 +319,7 @@ func (db *DB) run() {
 			} else {
 				db.metrics.compactionsSkipped.Inc()
 			}
+			db.autoCompactMtx.Unlock()
 		case <-db.stopc:
 			return
 		}
@@ -738,8 +740,8 @@ func (db *DB) Close() error {
 
 // DisableCompactions disables compactions.
 func (db *DB) DisableCompactions() {
-	db.cmtx.Lock()
-	defer db.cmtx.Unlock()
+	db.autoCompactMtx.Lock()
+	defer db.autoCompactMtx.Unlock()
 
 	db.autoCompactions = false
 	level.Info(db.logger).Log("msg", "compactions disabled")
@@ -747,8 +749,8 @@ func (db *DB) DisableCompactions() {
 
 // EnableCompactions enables compactions.
 func (db *DB) EnableCompactions() {
-	db.cmtx.Lock()
-	defer db.cmtx.Unlock()
+	db.autoCompactMtx.Lock()
+	defer db.autoCompactMtx.Unlock()
 
 	db.autoCompactions = true
 	level.Info(db.logger).Log("msg", "compactions enabled")
