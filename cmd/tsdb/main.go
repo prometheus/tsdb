@@ -21,6 +21,7 @@ import (
 	"io/ioutil"
 	"math"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"runtime/pprof"
@@ -37,7 +38,6 @@ import (
 	"github.com/pkg/errors"
 	"github.com/prometheus/tsdb"
 	"github.com/prometheus/tsdb/labels"
-	"github.com/prometheus/tsdb/wal"
 	"gopkg.in/alecthomas/kingpin.v2"
 )
 
@@ -53,8 +53,7 @@ func main() {
 		listCmdHumanReadable = listCmd.Flag("human-readable", "print human readable values").Short('h').Bool()
 		listPath             = listCmd.Arg("db path", "database path (default is benchout/storage)").Default("benchout/storage").String()
 		walBlockCmd          = cli.Command("wal-block", "write a block from the wal file")
-		walPath              = walBlockCmd.Arg("wal path", "wal path (default is ./wal)").Default("./wal").String()
-		walMint              = walBlockCmd.Flag("mint", "the timestamp from which to start loading samples from the wal (if not provided it will load all)").Default("-1").Int64()
+		dbDir                = walBlockCmd.Arg("db dir", "db dir (default is ./)").Default("./").String()
 		logger               = level.NewFilter(log.NewLogfmtLogger(log.NewSyncWriter(os.Stderr)), level.AllowInfo())
 	)
 
@@ -73,7 +72,7 @@ func main() {
 		}
 		printBlocks(db.Blocks(), *listCmdHumanReadable)
 	case walBlockCmd.FullCommand():
-		block, err := walBlock(logger, *walPath, *walMint)
+		block, err := walBlock(logger, *dbDir)
 		if err != nil {
 			exitWithError(err)
 		}
@@ -98,42 +97,52 @@ type writeBenchmark struct {
 	mtxprof   *os.File
 }
 
-func walBlock(logger log.Logger, walPath string, mint int64) (*tsdb.Block, error) {
-	if err := tsdb.MigrateWAL(logger, walPath); err != nil {
-		return nil, errors.Wrap(err, "migrate WAL")
-	}
-	wal, err := wal.New(logger, nil, walPath)
-	if err != nil {
-		return nil, err
-	}
-	head, err := tsdb.NewHead(nil, logger, wal, tsdb.DefaultOptions.BlockRanges[0])
-	if err != nil {
-		return nil, err
-	}
-	// Closing the head shouldn't be needed, but just in case.
-	defer func() {
-		if err := head.Close(); err != nil {
-			level.Error(logger).Log("msg", "closing the head failed", "err", err)
-		}
-	}()
-	totalTime := measureTime("reading the wal files into memory", func() {
-		if mint > 0 {
-			errors.Wrap(head.Truncate(mint), "setting the minimum WAL timestamp")
-			level.Info(logger).Log("msg", "head start time", "mint", head.MinTime())
+func walBlock(logger log.Logger, dbDir string) (*tsdb.Block, error) {
 
-		}
-		errors.Wrap(head.Init(), "reading the wal files into memory")
+	var (
+		err    error
+		db     *tsdb.DB
+		walDir = path.Join(dbDir, "wal")
+	)
+	totalTime := measureTime("opening the db", func() {
+		db, err = tsdb.Open(dbDir, logger, nil, tsdb.DefaultOptions)
+	})
+
+	if err != nil {
+		return nil, errors.Wrapf(err, "couldn't open db dir:%v", dbDir)
+	}
+
+	// Get the maxt of the last block in the db.
+	// The wal block needs to start from there to avoid overlaps.
+	blocks := db.Blocks()
+	if len(blocks) == 0 {
+		return nil, fmt.Errorf("no blocks found in dir: %v", dbDir)
+	}
+	lastBlockMaxT := blocks[len(blocks)-1].Meta().MaxTime
+	level.Info(logger).Log("msg", "db last block maxt",
+		"maxt", lastBlockMaxT,
+		"maxt-h", getFormatedTime(lastBlockMaxT, true),
+	)
+
+	head := db.Head()
+	// If the maxt hasn't changed than the head doesn't contain any samples.
+	if head.MaxTime() == lastBlockMaxT || head.MaxTime() == math.MinInt64 {
+		return nil, fmt.Errorf("head doesn't contain any samples, dir:%s", dbDir)
+	}
+
+	totalTime += measureTime("truncating the head", func() {
+		err = head.Truncate(lastBlockMaxT)
 	})
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrapf(err, "truncating the head to:%v", lastBlockMaxT)
 	}
 
-	// After head initialization if the max time hasn't changed than the wal doesn't contain any samples.
-	if (mint > 0 && head.MaxTime() == mint) || head.MaxTime() == math.MinInt64 {
-		return nil, fmt.Errorf("wal read error, head doesn't include any samples, dir:%s", walPath)
-	}
-
-	level.Info(logger).Log("msg", "wal loaded", "mint", getFormatedTime(head.MinTime(), true), "maxt", getFormatedTime(head.MaxTime(), true))
+	level.Info(logger).Log("msg", "head truncated to the last block maxt",
+		"mint", head.MinTime(),
+		"mint-h", getFormatedTime(head.MinTime(), true),
+		"maxt", head.MaxTime(),
+		"maxt-h", getFormatedTime(head.MaxTime(), true),
+	)
 
 	compactor, err := tsdb.NewLeveledCompactor(nil, logger, tsdb.DefaultOptions.BlockRanges, nil)
 	if err != nil {
@@ -142,7 +151,7 @@ func walBlock(logger log.Logger, walPath string, mint int64) (*tsdb.Block, error
 
 	var ulid ulid.ULID
 	totalTime += measureTime("read series from memory and write a block", func() {
-		ulid, err = compactor.Write(walPath, head, head.MinTime(), head.MaxTime(), nil)
+		ulid, err = compactor.Write(walDir, head, head.MinTime(), head.MaxTime(), nil)
 		if err != nil {
 			errors.Wrap(err, "read series from memory and write a block")
 		}
@@ -153,7 +162,7 @@ func walBlock(logger log.Logger, walPath string, mint int64) (*tsdb.Block, error
 
 	var b *tsdb.Block
 	totalTime += measureTime("opening new block", func() {
-		b, err = tsdb.OpenBlock(filepath.Join(walPath, ulid.String()), nil)
+		b, err = tsdb.OpenBlock(filepath.Join(walDir, ulid.String()), nil)
 		errors.Wrap(err, "opening new block")
 	})
 	if err != nil {
@@ -163,6 +172,38 @@ func walBlock(logger log.Logger, walPath string, mint int64) (*tsdb.Block, error
 	fmt.Printf("\n>> total time for all stages:%v \n\n", totalTime)
 
 	return b, nil
+
+	// return nil, nil
+
+	// if _, err := os.Stat(walDir); err != nil {
+	// 	return nil, errors.Wrapf(err, "couldn't stat the wal dir:%v", walDir)
+	// }
+	// if err := tsdb.MigrateWAL(logger, walDir); err != nil {
+	// 	return nil, errors.Wrap(err, "migrate WAL")
+	// }
+	// wal, err := wal.New(logger, nil, walDir)
+	// if err != nil {
+	// 	return nil, err
+	// }
+	// head, err := tsdb.NewHead(nil, logger, wal, tsdb.DefaultOptions.BlockRanges[0])
+	// if err != nil {
+	// 	return nil, err
+	// }
+	// // Closing the head shouldn't be needed, but just in case.
+	// defer func() {
+	// 	if err := head.Close(); err != nil {
+	// 		level.Error(logger).Log("msg", "closing the head failed", "err", err)
+	// 	}
+	// }()
+	// totalTime := measureTime("reading the wal files into memory", func() {
+	// 	errors.Wrap(head.Truncate(lastBlockMaxT), "setting the minimum WAL timestamp")
+	// 	level.Info(logger).Log("msg", "head start time", "mint", head.MinTime())
+	// 	errors.Wrap(head.Init(), "reading the wal files into memory")
+	// })
+	// if err != nil {
+	// 	return nil, err
+	// }
+
 }
 
 func (b *writeBenchmark) run() {
