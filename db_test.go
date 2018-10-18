@@ -1364,7 +1364,8 @@ func TestDisableAutoCompactions(t *testing.T) {
 
 	testutil.Ok(t, app.Commit())
 
-	// Wait for a compaction to be skipped and check that no new blocks were created.
+	// Wait for a compaction to be triggered and  skipped and
+	// check that no new blocks were created.
 	m := &dto.Metric{}
 	for x := 0; x < 3; x++ {
 		db.metrics.compactionsSkipped.Write(m)

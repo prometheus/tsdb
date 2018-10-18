@@ -115,7 +115,8 @@ type DB struct {
 	// cmtx ensures that compactions and deletions don't run simultaneously.
 	cmtx sync.Mutex
 
-	// autoCompactMtx ensures that no compaction gets triggered while changing the autoCompactions var.
+	// autoCompactMtx ensures that no compaction gets triggered while
+	// changing the autoCompactions var.
 	autoCompactMtx  sync.Mutex
 	autoCompactions bool
 }
@@ -738,7 +739,7 @@ func (db *DB) Close() error {
 	return merr.Err()
 }
 
-// DisableCompactions disables compactions.
+// DisableCompactions disables auto compactions.
 func (db *DB) DisableCompactions() {
 	db.autoCompactMtx.Lock()
 	defer db.autoCompactMtx.Unlock()
@@ -747,7 +748,7 @@ func (db *DB) DisableCompactions() {
 	level.Info(db.logger).Log("msg", "compactions disabled")
 }
 
-// EnableCompactions enables compactions.
+// EnableCompactions enables auto compactions.
 func (db *DB) EnableCompactions() {
 	db.autoCompactMtx.Lock()
 	defer db.autoCompactMtx.Unlock()
