@@ -18,11 +18,10 @@ import (
 	"io/ioutil"
 	"math"
 	"math/rand"
-	"path/filepath"
+	"os"
 	"sort"
 	"testing"
 
-	"github.com/go-kit/kit/log"
 	"github.com/pkg/errors"
 	"github.com/prometheus/tsdb/chunkenc"
 	"github.com/prometheus/tsdb/chunks"
@@ -1303,8 +1302,12 @@ func BenchmarkPersistedQueries(b *testing.B) {
 	for _, nSeries := range []int{10, 100} {
 		for _, nSamples := range []int{1000, 10000, 100000} {
 			b.Run(fmt.Sprintf("series=%d,samplesPerSeries=%d", nSeries, nSamples), func(b *testing.B) {
-				block, err := createBlock(nSeries, nSamples)
+				dir, err := ioutil.TempDir("", "bench_persisted")
 				testutil.Ok(b, err)
+				defer os.RemoveAll(dir)
+				block := createPopulatedBlock(b, dir, nSeries, nSamples)
+				defer block.Close()
+
 				q, err := NewBlockQuerier(block, block.Meta().MinTime, block.Meta().MaxTime)
 				testutil.Ok(b, err)
 				defer q.Close()
@@ -1325,58 +1328,6 @@ func BenchmarkPersistedQueries(b *testing.B) {
 			})
 		}
 	}
-}
-
-func createBlock(nSeries, nSamples int) (*Block, error) {
-	head, err := NewHead(nil, nil, nil, 2*60*60*1000)
-	if err != nil {
-		return nil, err
-	}
-
-	lbls, err := labels.ReadLabels("testdata/20kseries.json", nSeries)
-	if err != nil {
-		return nil, err
-	}
-	refs := make([]uint64, nSeries)
-
-	for n := 0; n < nSamples; n++ {
-		app := head.Appender()
-		ts := n * 1000
-		for i, lbl := range lbls {
-			if refs[i] != 0 {
-				err := app.AddFast(refs[i], int64(ts), rand.Float64())
-				if err == nil {
-					continue
-				}
-			}
-			ref, err := app.Add(lbl, int64(ts), rand.Float64())
-			if err != nil {
-				return nil, err
-			}
-			refs[i] = ref
-		}
-		err := app.Commit()
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	compactor, err := NewLeveledCompactor(nil, log.NewNopLogger(), []int64{1000000}, nil, true)
-	if err != nil {
-		return nil, err
-	}
-
-	tmpdir, err := ioutil.TempDir("", "test")
-	if err != nil {
-		return nil, err
-	}
-
-	ulid, err := compactor.Write(tmpdir, head, head.MinTime(), head.MaxTime(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return OpenBlock(filepath.Join(tmpdir, ulid.String()), nil)
 }
 
 type mockChunkReader map[uint64]chunkenc.Chunk

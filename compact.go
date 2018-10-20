@@ -628,12 +628,12 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 			}
 		}
 
-		// Scale the goal chunk size to be 60 samples per hour in the block.
-		// So a 6 hour block will try to have 360 samples per chunk
-		goalChunkSize := 60 * (meta.MaxTime - meta.MinTime) / 1000 / 60 / 60
-		goalChunkSize = clampInt64(goalChunkSize, 120, 12000)
 		if c.mergeSmallChunks {
-			chks = c.mergeChunks(chks, int(goalChunkSize))
+			if newChks, err := c.mergeChunks(chks, scaleChunkSize(meta.MaxTime-meta.MinTime)); err == nil {
+				chks = newChks
+			} else {
+				level.Warn(c.logger).Log("msg", "failed to merge chunks", "err", err)
+			}
 		}
 
 		if err := chunkw.WriteChunks(chks...); err != nil {
@@ -692,30 +692,30 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 	return nil
 }
 
-func (c *LeveledCompactor) mergeChunks(chks []chunks.Meta, numSamples int) []chunks.Meta {
+func (c *LeveledCompactor) mergeChunks(chks []chunks.Meta, maxSamples int) ([]chunks.Meta, error) {
 	newChks := make([]chunks.Meta, 0, len(chks))
 	for i := 0; i < len(chks); i++ {
-		if i >= len(chks)-1 || chks[i].Chunk.NumSamples()+chks[i+1].Chunk.NumSamples() > numSamples {
+		// If the current chunk cannot be merged with future chunks, add it and move on.
+		if i >= len(chks)-1 || !canMergeChunks(chks[i].Chunk, chks[i+1].Chunk, maxSamples) {
 			newChks = append(newChks, chks[i])
 			continue
 		}
+
 		newChunk := chunkenc.NewXORChunk()
 		app, err := newChunk.Appender()
 		if err != nil {
-			level.Warn(c.logger).Log("msg", "failed to merge chunks", "err", err)
-			return chks
+			return nil, err
 		}
 		if err := appendChunk(app, chks[i].Chunk); err != nil {
-			level.Warn(c.logger).Log("msg", "failed to merge chunks", "err", err)
-			return chks
+			return nil, err
 		}
 		minTime := chks[i].MinTime
 		maxTime := chks[i].MaxTime
 
-		for i < len(chks)-1 && newChunk.NumSamples()+chks[i+1].Chunk.NumSamples() <= numSamples {
+		// Merge chunks together until no more can be merged.
+		for i < len(chks)-1 && canMergeChunks(newChunk, chks[i+1].Chunk, maxSamples) {
 			if err := appendChunk(app, chks[i+1].Chunk); err != nil {
-				level.Warn(c.logger).Log("msg", "failed to merge chunks", "err", err)
-				return chks
+				return nil, err
 			}
 			maxTime = chks[i+1].MaxTime
 			i++
@@ -726,17 +726,24 @@ func (c *LeveledCompactor) mergeChunks(chks []chunks.Meta, numSamples int) []chu
 			Chunk:   newChunk,
 		})
 	}
-	return newChks
+	return newChks, nil
 }
 
-func clampInt64(n, min, max int64) int64 {
-	if n < min {
-		return min
+// scaleChunkSize calculates the maximum number of samples per chunk as 1 sample per minute.
+// For example 360 minutes (21600000 milliseconds) will scale to 360 samples per chunk.
+func scaleChunkSize(blockLength int64) int {
+	n := int(blockLength / 1000 / 60)
+	if n < 120 {
+		return 120
 	}
-	if n > max {
-		return max
+	if n > 12000 {
+		return 12000
 	}
 	return n
+}
+
+func canMergeChunks(chk1, chk2 chunkenc.Chunk, maxSamples int) bool {
+	return chk1.NumSamples()+chk2.NumSamples() <= maxSamples
 }
 
 func appendChunk(app chunkenc.Appender, chunk chunkenc.Chunk) error {

@@ -418,6 +418,7 @@ func TestCompaction_populateBlock(t *testing.T) {
 
 		expSeriesSamples []seriesSamples
 		expErr           error
+		mergeChunks      bool
 	}{
 		{
 			title:              "Populate block from empty input should return error.",
@@ -634,6 +635,64 @@ func TestCompaction_populateBlock(t *testing.T) {
 				},
 			},
 		},
+		{
+			title: "Populate from single block while merging chunks.",
+			inputSeriesSamples: [][]seriesSamples{
+				{
+					{
+						lset:   map[string]string{"a": "b"},
+						chunks: [][]sample{{{t: 0}, {t: 10}}, {{t: 11}, {t: 20}}},
+					},
+				},
+			},
+			expSeriesSamples: []seriesSamples{
+				{
+					lset:   map[string]string{"a": "b"},
+					chunks: [][]sample{{{t: 0}, {t: 10}, {t: 11}, {t: 20}}},
+				},
+			},
+			mergeChunks: true,
+		},
+		{
+			title: "Populate from two blocks while merging chunks.",
+			inputSeriesSamples: [][]seriesSamples{
+				{
+					{
+						lset:   map[string]string{"a": "b"},
+						chunks: [][]sample{{{t: 0}, {t: 10}}, {{t: 11}, {t: 20}}},
+					},
+					{
+						lset:   map[string]string{"a": "c"},
+						chunks: [][]sample{{{t: 1}, {t: 9}}, {{t: 10}, {t: 19}}},
+					},
+					{
+						// no-chunk series should be dropped.
+						lset: map[string]string{"a": "empty"},
+					},
+				},
+				{
+					{
+						lset:   map[string]string{"a": "b"},
+						chunks: [][]sample{{{t: 21}, {t: 30}}},
+					},
+					{
+						lset:   map[string]string{"a": "c"},
+						chunks: [][]sample{{{t: 40}, {t: 45}}},
+					},
+				},
+			},
+			expSeriesSamples: []seriesSamples{
+				{
+					lset:   map[string]string{"a": "b"},
+					chunks: [][]sample{{{t: 0}, {t: 10}, {t: 11}, {t: 20}, {t: 21}, {t: 30}}},
+				},
+				{
+					lset:   map[string]string{"a": "c"},
+					chunks: [][]sample{{{t: 1}, {t: 9}, {t: 10}, {t: 19}, {t: 40}, {t: 45}}},
+				},
+			},
+			mergeChunks: true,
+		},
 	}
 
 	for _, tc := range populateBlocksCases {
@@ -644,7 +703,7 @@ func TestCompaction_populateBlock(t *testing.T) {
 				blocks = append(blocks, &mockBReader{ir: ir, cr: cr})
 			}
 
-			c, err := NewLeveledCompactor(nil, nil, []int64{0}, nil, false)
+			c, err := NewLeveledCompactor(nil, nil, []int64{0}, nil, tc.mergeChunks)
 			testutil.Ok(t, err)
 
 			meta := &BlockMeta{
