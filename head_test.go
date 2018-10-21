@@ -350,7 +350,7 @@ Outer:
 		res, err := q.Select(labels.NewEqualMatcher("a", "b"))
 		testutil.Ok(t, err)
 
-		expSamples := make([]sample, 0, len(c.remaint))
+		expSamples := make([]Sampler, 0, len(c.remaint))
 		for _, ts := range c.remaint {
 			expSamples = append(expSamples, sample{ts, smpls[ts]})
 		}
@@ -469,9 +469,9 @@ func TestDelete_e2e(t *testing.T) {
 			{"job", "prom-k8s"},
 		},
 	}
-	seriesMap := map[string][]sample{}
+	seriesMap := map[string][]Sampler{}
 	for _, l := range lbls {
-		seriesMap[labels.New(l...).String()] = []sample{}
+		seriesMap[labels.New(l...).String()] = []Sampler{}
 	}
 	dir, _ := ioutil.TempDir("", "test")
 	defer os.RemoveAll(dir)
@@ -480,7 +480,7 @@ func TestDelete_e2e(t *testing.T) {
 	app := hb.Appender()
 	for _, l := range lbls {
 		ls := labels.New(l...)
-		series := []sample{}
+		series := []Sampler{}
 		ts := rand.Int63n(300)
 		for i := 0; i < numDatapoints; i++ {
 			v := rand.Float64()
@@ -600,12 +600,12 @@ func boundedSamples(full []sample, mint, maxt int64) []sample {
 	return full
 }
 
-func deletedSamples(full []sample, dranges Intervals) []sample {
-	ds := make([]sample, 0, len(full))
+func deletedSamples(full []Sampler, dranges Intervals) []Sampler {
+	ds := make([]Sampler, 0, len(full))
 Outer:
 	for _, s := range full {
 		for _, r := range dranges {
-			if r.inBounds(s.t) {
+			if r.inBounds(s.T()) {
 				continue Outer
 			}
 		}
