@@ -692,43 +692,6 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 	return nil
 }
 
-func mergeChunks(chks []chunks.Meta, maxSamples int) ([]chunks.Meta, error) {
-	newChks := make([]chunks.Meta, 0, len(chks))
-	for i := 0; i < len(chks); i++ {
-		// If the current chunk cannot be merged with future chunks, add it and move on.
-		if i >= len(chks)-1 || !canMergeChunks(chks[i].Chunk, chks[i+1].Chunk, maxSamples) {
-			newChks = append(newChks, chks[i])
-			continue
-		}
-
-		newChunk := chunkenc.NewXORChunk()
-		app, err := newChunk.Appender()
-		if err != nil {
-			return nil, err
-		}
-		if err := appendChunk(app, chks[i].Chunk); err != nil {
-			return nil, err
-		}
-		minTime := chks[i].MinTime
-		maxTime := chks[i].MaxTime
-
-		// Merge chunks together until no more can be merged.
-		for i < len(chks)-1 && canMergeChunks(newChunk, chks[i+1].Chunk, maxSamples) {
-			if err := appendChunk(app, chks[i+1].Chunk); err != nil {
-				return nil, err
-			}
-			maxTime = chks[i+1].MaxTime
-			i++
-		}
-		newChks = append(newChks, chunks.Meta{
-			MinTime: minTime,
-			MaxTime: maxTime,
-			Chunk:   newChunk,
-		})
-	}
-	return newChks, nil
-}
-
 // scaleChunkSize calculates the maximum number of samples per chunk as 1 sample per minute.
 // For example 360 minutes (21600000 milliseconds) will scale to 360 samples per chunk.
 func scaleChunkSize(blockLength int64) int {
@@ -742,16 +705,63 @@ func scaleChunkSize(blockLength int64) int {
 	return n
 }
 
-func canMergeChunks(chk1, chk2 chunkenc.Chunk, maxSamples int) bool {
-	return chk1.NumSamples()+chk2.NumSamples() <= maxSamples
+func mergeChunks(chks []chunks.Meta, maxSamples int) ([]chunks.Meta, error) {
+	newChks := make([]chunks.Meta, 0, len(chks))
+	for len(chks) > 0 {
+		// If this is the last chunk, we cannot do a merge
+		if len(chks) == 1 {
+			return append(newChks, chks[0]), nil
+		}
+
+		// If this chunk cannot be merged with the next, do not bother creating a new chunk
+		if !canMergeChunks(chks[0].Chunk, chks[1].Chunk, maxSamples) {
+			newChks = append(newChks, chks[0])
+			chks = chks[1:]
+			continue
+		}
+
+		newChunk, nAppended, err := newMergedChunk(chks, maxSamples)
+		if err != nil {
+			return nil, err
+		}
+
+		newChks = append(newChks, newChunk)
+		chks = chks[nAppended:]
+	}
+	return newChks, nil
 }
 
-func appendChunk(app chunkenc.Appender, chunk chunkenc.Chunk) error {
-	it := chunk.Iterator()
-	for it.Next() {
-		app.Append(it.At())
+func newMergedChunk(chkMetas []chunks.Meta, maxSamples int) (chunks.Meta, int, error) {
+	newChunk := chunkenc.NewXORChunk()
+	app, err := newChunk.Appender()
+	if err != nil {
+		return chunks.Meta{}, 0, err
 	}
-	return it.Err()
+
+	chunksAppended := 0
+	for _, chkMeta := range chkMetas {
+		if !canMergeChunks(newChunk, chkMeta.Chunk, maxSamples) {
+			break
+		}
+		it := chkMeta.Chunk.Iterator()
+		for it.Next() {
+			app.Append(it.At())
+		}
+		if err := it.Err(); err != nil {
+			return chunks.Meta{}, 0, err
+		}
+		chunksAppended++
+	}
+
+	return chunks.Meta{
+		MinTime: chkMetas[0].MinTime,
+		MaxTime: chkMetas[chunksAppended-1].MaxTime,
+		Chunk:   newChunk,
+	}, chunksAppended, nil
+}
+
+func canMergeChunks(chk1, chk2 chunkenc.Chunk, maxSamples int) bool {
+	return chk1.NumSamples()+chk2.NumSamples() <= maxSamples
 }
 
 type compactionSeriesSet struct {
