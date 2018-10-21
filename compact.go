@@ -629,7 +629,7 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 		}
 
 		if c.mergeSmallChunks {
-			if newChks, err := c.mergeChunks(chks, scaleChunkSize(meta.MaxTime-meta.MinTime)); err == nil {
+			if newChks, err := mergeChunks(chks, scaleChunkSize(meta.MaxTime-meta.MinTime)); err == nil {
 				chks = newChks
 			} else {
 				level.Warn(c.logger).Log("msg", "failed to merge chunks", "err", err)
@@ -692,7 +692,7 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 	return nil
 }
 
-func (c *LeveledCompactor) mergeChunks(chks []chunks.Meta, maxSamples int) ([]chunks.Meta, error) {
+func mergeChunks(chks []chunks.Meta, maxSamples int) ([]chunks.Meta, error) {
 	newChks := make([]chunks.Meta, 0, len(chks))
 	for i := 0; i < len(chks); i++ {
 		// If the current chunk cannot be merged with future chunks, add it and move on.

@@ -640,15 +640,20 @@ func TestCompaction_populateBlock(t *testing.T) {
 			inputSeriesSamples: [][]seriesSamples{
 				{
 					{
-						lset:   map[string]string{"a": "b"},
-						chunks: [][]sample{{{t: 0}, {t: 10}}, {{t: 11}, {t: 20}}},
+						lset: map[string]string{"a": "b"},
+						chunks: [][]sample{
+							{{t: 0}, {t: 10}},
+							{{t: 11}, {t: 20}},
+						},
 					},
 				},
 			},
 			expSeriesSamples: []seriesSamples{
 				{
-					lset:   map[string]string{"a": "b"},
-					chunks: [][]sample{{{t: 0}, {t: 10}, {t: 11}, {t: 20}}},
+					lset: map[string]string{"a": "b"},
+					chunks: [][]sample{
+						{{t: 0}, {t: 10}, {t: 11}, {t: 20}},
+					},
 				},
 			},
 			mergeChunks: true,
@@ -658,12 +663,18 @@ func TestCompaction_populateBlock(t *testing.T) {
 			inputSeriesSamples: [][]seriesSamples{
 				{
 					{
-						lset:   map[string]string{"a": "b"},
-						chunks: [][]sample{{{t: 0}, {t: 10}}, {{t: 11}, {t: 20}}},
+						lset: map[string]string{"a": "b"},
+						chunks: [][]sample{
+							{{t: 0}, {t: 10}},
+							{{t: 11}, {t: 20}},
+						},
 					},
 					{
-						lset:   map[string]string{"a": "c"},
-						chunks: [][]sample{{{t: 1}, {t: 9}}, {{t: 10}, {t: 19}}},
+						lset: map[string]string{"a": "c"},
+						chunks: [][]sample{
+							{{t: 1}, {t: 9}},
+							{{t: 10}, {t: 19}},
+						},
 					},
 					{
 						// no-chunk series should be dropped.
@@ -672,23 +683,31 @@ func TestCompaction_populateBlock(t *testing.T) {
 				},
 				{
 					{
-						lset:   map[string]string{"a": "b"},
-						chunks: [][]sample{{{t: 21}, {t: 30}}},
+						lset: map[string]string{"a": "b"},
+						chunks: [][]sample{
+							{{t: 21}, {t: 30}},
+						},
 					},
 					{
-						lset:   map[string]string{"a": "c"},
-						chunks: [][]sample{{{t: 40}, {t: 45}}},
+						lset: map[string]string{"a": "c"},
+						chunks: [][]sample{
+							{{t: 40}, {t: 45}},
+						},
 					},
 				},
 			},
 			expSeriesSamples: []seriesSamples{
 				{
-					lset:   map[string]string{"a": "b"},
-					chunks: [][]sample{{{t: 0}, {t: 10}, {t: 11}, {t: 20}, {t: 21}, {t: 30}}},
+					lset: map[string]string{"a": "b"},
+					chunks: [][]sample{
+						{{t: 0}, {t: 10}, {t: 11}, {t: 20}, {t: 21}, {t: 30}},
+					},
 				},
 				{
-					lset:   map[string]string{"a": "c"},
-					chunks: [][]sample{{{t: 1}, {t: 9}, {t: 10}, {t: 19}, {t: 40}, {t: 45}}},
+					lset: map[string]string{"a": "c"},
+					chunks: [][]sample{
+						{{t: 1}, {t: 9}, {t: 10}, {t: 19}, {t: 40}, {t: 45}},
+					},
 				},
 			},
 			mergeChunks: true,
@@ -740,4 +759,88 @@ func TestCompaction_populateBlock(t *testing.T) {
 			return
 		}
 	}
+}
+
+func TestMergeChunks(t *testing.T) {
+	testCases := []struct {
+		name         string
+		maxSamples   int
+		inputChunks  []chunks.Meta
+		resultChunks []chunks.Meta
+	}{
+		{
+			name:       "merges multiple chunks",
+			maxSamples: 10,
+			inputChunks: []chunks.Meta{
+				populatedChunk(3, 0),
+				populatedChunk(3, 3000),
+				populatedChunk(3, 6000),
+				populatedChunk(3, 9000),
+				populatedChunk(3, 12000),
+			},
+			resultChunks: []chunks.Meta{
+				populatedChunk(9, 0),
+				populatedChunk(6, 9000),
+			},
+		},
+		{
+			name:       "does not merge too many",
+			maxSamples: 10,
+			inputChunks: []chunks.Meta{
+				populatedChunk(4, 0),
+				populatedChunk(4, 4000),
+				populatedChunk(4, 8000),
+			},
+			resultChunks: []chunks.Meta{
+				populatedChunk(8, 0),
+				populatedChunk(4, 8000),
+			},
+		},
+		{
+			name:       "leaves big chunk alone",
+			maxSamples: 10,
+			inputChunks: []chunks.Meta{
+				populatedChunk(11, 0),
+				populatedChunk(8, 11000),
+				populatedChunk(2, 19000),
+			},
+			resultChunks: []chunks.Meta{
+				populatedChunk(11, 0),
+				populatedChunk(10, 11000),
+			},
+		},
+		{
+			name:       "does not merge if all too large",
+			maxSamples: 10,
+			inputChunks: []chunks.Meta{
+				populatedChunk(8, 0),
+				populatedChunk(3, 8000),
+				populatedChunk(8, 11000),
+			},
+			resultChunks: []chunks.Meta{
+				populatedChunk(8, 0),
+				populatedChunk(3, 8000),
+				populatedChunk(8, 11000),
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		if ok := t.Run(tc.name, func(t *testing.T) {
+			result, err := mergeChunks(tc.inputChunks, tc.maxSamples)
+			testutil.Ok(t, err)
+			testutil.Equals(t, tc.resultChunks, result)
+		}); !ok {
+			return
+		}
+	}
+}
+
+// populatedChunk creates a chunk populated with samples every second starting at minTime
+func populatedChunk(numSamples int, minTime int64) chunks.Meta {
+	samples := make([]sample, numSamples)
+	for i := 0; i < numSamples; i++ {
+		samples[i] = sample{minTime + int64(i*1000), 1.0}
+	}
+	return chunkFromSamples(samples)
 }
