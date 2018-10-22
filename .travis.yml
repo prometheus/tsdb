@@ -3,11 +3,19 @@ sudo: required
 dist: trusty
 language: go
 
+os:
+- windows
+- linux
+- osx
+
 go:
   - 1.9.x
   - 1.10.x
 
 go_import_path: github.com/prometheus/tsdb
+
+before_install:
+- if [[ "$TRAVIS_OS_NAME" == "windows" ]]; then choco install make; fi
 
 install:
   - go get -v -t ./...
@@ -15,4 +23,4 @@ install:
 script:
   # `check_license` target is omitted due to some missing license headers
   # `staticcheck` target is omitted due to linting errors
-  - make style unused test
+  - make test
