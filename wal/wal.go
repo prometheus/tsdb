@@ -745,6 +745,9 @@ func (r *Reader) next() (err error) {
 
 		// Gobble up zero bytes.
 		if typ == recPageTerm {
+			// Increase buf to be able to fit an entyre page size minus 1 byte for the rec type.
+			buf = r.buf[1:]
+
 			// We are pedantic and check whether the zeros are actually up
 			// to a page boundary.
 			// It's not strictly necessary but may catch sketchy state early.
