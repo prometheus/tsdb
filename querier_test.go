@@ -15,8 +15,10 @@ package tsdb
 
 import (
 	"fmt"
+	"io/ioutil"
 	"math"
 	"math/rand"
+	"os"
 	"sort"
 	"testing"
 
@@ -245,12 +247,14 @@ func expandSeriesIterator(it SeriesIterator) (r []sample, err error) {
 	return r, it.Err()
 }
 
-// Index: labels -> postings -> chunkMetas -> chunkRef
-// ChunkReader: ref -> vals
-func createIdxChkReaders(tc []struct {
+type seriesSamples struct {
 	lset   map[string]string
 	chunks [][]sample
-}) (IndexReader, ChunkReader) {
+}
+
+// Index: labels -> postings -> chunkMetas -> chunkRef
+// ChunkReader: ref -> vals
+func createIdxChkReaders(tc []seriesSamples) (IndexReader, ChunkReader) {
 	sort.Slice(tc, func(i, j int) bool {
 		return labels.Compare(labels.FromMap(tc[i].lset), labels.FromMap(tc[i].lset)) < 0
 	})
@@ -322,17 +326,11 @@ func TestBlockQuerier(t *testing.T) {
 	}
 
 	cases := struct {
-		data []struct {
-			lset   map[string]string
-			chunks [][]sample
-		}
+		data []seriesSamples
 
 		queries []query
 	}{
-		data: []struct {
-			lset   map[string]string
-			chunks [][]sample
-		}{
+		data: []seriesSamples{
 			{
 				lset: map[string]string{
 					"a": "a",
@@ -528,18 +526,12 @@ func TestBlockQuerierDelete(t *testing.T) {
 	}
 
 	cases := struct {
-		data []struct {
-			lset   map[string]string
-			chunks [][]sample
-		}
+		data []seriesSamples
 
 		tombstones TombstoneReader
 		queries    []query
 	}{
-		data: []struct {
-			lset   map[string]string
-			chunks [][]sample
-		}{
+		data: []seriesSamples{
 			{
 				lset: map[string]string{
 					"a": "a",
@@ -1339,6 +1331,41 @@ func BenchmarkMergedSeriesSet(b *testing.B) {
 					}
 					testutil.Ok(b, ms.Err())
 					testutil.Equals(b, len(lbls), i)
+				}
+			})
+		}
+	}
+}
+
+func BenchmarkPersistedQueries(b *testing.B) {
+	for _, nSeries := range []int{10, 100} {
+		for _, nSamples := range []int{1000, 10000, 100000} {
+			b.Run(fmt.Sprintf("series=%d,samplesPerSeries=%d", nSeries, nSamples), func(b *testing.B) {
+				dir, err := ioutil.TempDir("", "bench_persisted")
+				testutil.Ok(b, err)
+				defer os.RemoveAll(dir)
+				block := createPopulatedBlock(b, dir, nSeries, nSamples)
+				defer block.Close()
+
+				q, err := NewBlockQuerier(block, block.Meta().MinTime, block.Meta().MaxTime)
+				testutil.Ok(b, err)
+				defer q.Close()
+
+				b.ResetTimer()
+				b.ReportAllocs()
+
+				for i := 0; i < b.N; i++ {
+					ss, err := q.Select(labels.NewMustRegexpMatcher("__name__", ".+"))
+					for ss.Next() {
+						s := ss.At()
+						s.Labels()
+						it := s.Iterator()
+						for it.Next() {
+						}
+						testutil.Ok(b, it.Err())
+					}
+					testutil.Ok(b, ss.Err())
+					testutil.Ok(b, err)
 				}
 			})
 		}
