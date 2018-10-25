@@ -58,6 +58,10 @@ type Options struct {
 	// Duration of persisted data to keep.
 	RetentionDuration uint64
 
+	// Maximum number of bytes in blocks to be retained.
+	// 0 or less means disabled.
+	MaxBytes int64
+
 	// The sizes of the Blocks.
 	BlockRanges []int64
 
@@ -127,6 +131,8 @@ type dbMetrics struct {
 	cutoffsFailed        prometheus.Counter
 	startTime            prometheus.GaugeFunc
 	tombCleanTimer       prometheus.Histogram
+	blocksBytes          prometheus.Gauge
+	sizeRetentionCount   prometheus.Counter
 }
 
 func newDBMetrics(db *DB, r prometheus.Registerer) *dbMetrics {
@@ -188,6 +194,14 @@ func newDBMetrics(db *DB, r prometheus.Registerer) *dbMetrics {
 		Name: "prometheus_tsdb_tombstone_cleanup_seconds",
 		Help: "The time taken to recompact blocks to remove tombstones.",
 	})
+	m.blocksBytes = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "prometheus_tsdb_storage_blocks_bytes_total",
+		Help: "The number of bytes that are currently used for local storage by blocks.",
+	})
+	m.sizeRetentionCount = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "prometheus_tsdb_size_limit_deletions_total",
+		Help: "The number of times that blocks were deleted because the maximum number of bytes was exceeded.",
+	})
 
 	if r != nil {
 		r.MustRegister(
@@ -200,6 +214,8 @@ func newDBMetrics(db *DB, r prometheus.Registerer) *dbMetrics {
 			m.compactionsTriggered,
 			m.startTime,
 			m.tombCleanTimer,
+			m.blocksBytes,
+			m.sizeRetentionCount,
 		)
 	}
 	return m
@@ -307,14 +323,13 @@ func (db *DB) run() {
 			} else {
 				backoff = 0
 			}
-
 		case <-db.stopc:
 			return
 		}
 	}
 }
 
-func (db *DB) beyondRetention(meta *BlockMeta) bool {
+func (db *DB) beyondTimeRetention(meta BlockMeta) bool {
 	if db.opts.RetentionDuration == 0 {
 		return false
 	}
@@ -331,6 +346,34 @@ func (db *DB) beyondRetention(meta *BlockMeta) bool {
 	mint := last.Meta().MaxTime - int64(db.opts.RetentionDuration)
 
 	return meta.MaxTime < mint
+}
+
+func (db *DB) beyondSizeRetention(blocks []*Block) (deleteable map[ulid.ULID]*Block) {
+	// Sort the blocks to make sure the block wiht the lowest MinTime is removed first.
+	sort.Slice(blocks, func(i, j int) bool {
+		return blocks[i].Meta().MinTime > blocks[j].Meta().MinTime
+	})
+
+	deleteable = make(map[ulid.ULID]*Block)
+
+	var blocksSize = int64(0)
+
+	for i, block := range blocks {
+		if db.opts.MaxBytes > 0 && blocksSize+block.Size() > db.opts.MaxBytes {
+			// Add this and all previous blocks for deletion.
+
+			for _, b := range blocks[i:] {
+				deleteable[b.meta.ULID] = b
+			}
+			db.metrics.sizeRetentionCount.Inc()
+			break
+		}
+		blocksSize += block.Size()
+	}
+
+	db.metrics.blocksBytes.Set(float64(blocksSize))
+
+	return deleteable
 }
 
 // Appender opens a new appender against the database.
@@ -452,8 +495,7 @@ func (db *DB) getBlock(id ulid.ULID) (*Block, bool) {
 	return nil, false
 }
 
-// reload on-disk blocks and trigger head truncation if new blocks appeared. It takes
-// a list of block directories which should be deleted during reload.
+// reload on-disk blocks and trigger head truncation if new blocks appeared.
 // Blocks that are obsolete due to replacement or retention will be deleted.
 func (db *DB) reload() (err error) {
 	defer func() {
@@ -463,110 +505,139 @@ func (db *DB) reload() (err error) {
 		db.metrics.reloads.Inc()
 	}()
 
+	loadable, corrupted, err := db.openBlocks()
+	if err != nil {
+		return err
+	}
+	deletable := db.deletableBlocks(loadable)
+
+	for ulid, err := range corrupted {
+		if _, ok := deletable[ulid]; !ok {
+			return errors.Wrap(err, "unexpected corrupted block")
+		}
+	}
+
+	// All deletable blocks should not be loaded.
+	var bb []*Block
+	for _, block := range loadable {
+		if _, ok := deletable[block.Meta().ULID]; ok {
+			deletable[block.Meta().ULID] = block
+			continue
+		}
+		bb = append(bb, block)
+	}
+	loadable = bb
+
+	sort.Slice(loadable, func(i, j int) bool {
+		return loadable[i].Meta().MinTime < loadable[j].Meta().MinTime
+	})
+	if err := validateBlockSequence(loadable); err != nil {
+		return errors.Wrap(err, "invalid block sequence")
+	}
+
+	// Swap in new blocks first for subsequently created readers to be seen.
+	db.mtx.Lock()
+	oldBlocks := db.blocks
+	db.blocks = loadable
+	db.mtx.Unlock()
+
+	for _, b := range oldBlocks {
+		if _, ok := deletable[b.Meta().ULID]; ok {
+			deletable[b.Meta().ULID] = b
+		}
+	}
+
+	if err := db.deleteBlocks(deletable); err != nil {
+		return err
+	}
+
+	// Garbage collect data in the head if the most recent persisted block
+	// covers data of its current time range.
+	if len(loadable) == 0 {
+		return nil
+	}
+	maxt := loadable[len(loadable)-1].Meta().MaxTime
+
+	return errors.Wrap(db.head.Truncate(maxt), "head truncate failed")
+}
+
+func (db *DB) openBlocks() (blocks []*Block, corrupted map[ulid.ULID]error, err error) {
+	corrupted = make(map[ulid.ULID]error)
+
 	dirs, err := blockDirs(db.dir)
 	if err != nil {
-		return errors.Wrap(err, "find blocks")
+		return nil, nil, errors.Wrap(err, "find blocks")
 	}
-	// We delete old blocks that have been superseded by new ones by gathering all parents
+
+	for _, dir := range dirs {
+		ulid, err := ulid.Parse(filepath.Base(dir))
+		if err != nil {
+			level.Error(db.logger).Log("msg", "not a block dir", "dir", dir)
+			continue
+		}
+
+		// See if we already have the block in memory or open it otherwise.
+		block, ok := db.getBlock(ulid)
+		if !ok {
+			block, err = OpenBlock(db.logger, dir, db.chunkPool)
+			if err != nil {
+				corrupted[ulid] = err
+			}
+
+		}
+		blocks = append(blocks, block)
+	}
+
+	return blocks, corrupted, nil
+}
+
+// deletableBlocks returns all blocks past retention policy
+// and blocks superseded by parents after a compaction.
+func (db *DB) deletableBlocks(blocks []*Block) map[ulid.ULID]*Block {
+
+	deletable := make(map[ulid.ULID]*Block)
+	for _, block := range blocks {
+		if db.beyondTimeRetention(block.Meta()) {
+			deletable[block.Meta().ULID] = block
+		}
+	}
+
+	for ulid, block := range db.beyondSizeRetention(blocks) {
+		deletable[ulid] = block
+	}
+
+	// Delete old blocks that have been superseded by new ones by gathering all parents
 	// from existing blocks. Those parents all have newer replacements and can be safely deleted
 	// after we loaded the other blocks.
 	// This makes us resilient against the process crashing towards the end of a compaction.
 	// Creation of a new block and deletion of its parents cannot happen atomically. By creating
 	// blocks with their parents, we can pick up the deletion where it left off during a crash.
-	var (
-		blocks     []*Block
-		corrupted  = map[ulid.ULID]error{}
-		opened     = map[ulid.ULID]struct{}{}
-		deleteable = map[ulid.ULID]struct{}{}
-	)
-	for _, dir := range dirs {
-		meta, err := readMetaFile(dir)
-		if err != nil {
-			// The block was potentially in the middle of being deleted during a crash.
-			// Skip it since we may delete it properly further down again.
-			level.Warn(db.logger).Log("msg", "read meta information", "err", err, "dir", dir)
-
-			ulid, err2 := ulid.Parse(filepath.Base(dir))
-			if err2 != nil {
-				level.Error(db.logger).Log("msg", "not a block dir", "dir", dir)
-				continue
-			}
-			corrupted[ulid] = err
-			continue
-		}
-		if db.beyondRetention(meta) {
-			deleteable[meta.ULID] = struct{}{}
-			continue
-		}
-		for _, b := range meta.Compaction.Parents {
-			deleteable[b.ULID] = struct{}{}
-		}
-	}
-	// Blocks we failed to open should all be those we are want to delete anyway.
-	for c, err := range corrupted {
-		if _, ok := deleteable[c]; !ok {
-			return errors.Wrapf(err, "unexpected corrupted block %s", c)
-		}
-	}
-	// Load new blocks into memory.
-	for _, dir := range dirs {
-		meta, err := readMetaFile(dir)
-		if err != nil {
-			return errors.Wrapf(err, "read meta information %s", dir)
-		}
-		// Don't load blocks that are scheduled for deletion.
-		if _, ok := deleteable[meta.ULID]; ok {
-			continue
-		}
-		// See if we already have the block in memory or open it otherwise.
-		b, ok := db.getBlock(meta.ULID)
-		if !ok {
-			b, err = OpenBlock(dir, db.chunkPool)
-			if err != nil {
-				return errors.Wrapf(err, "open block %s", dir)
+	for _, block := range blocks {
+		for _, b := range block.Meta().Compaction.Parents {
+			if _, ok := deletable[b.ULID]; !ok {
+				deletable[b.ULID] = nil
 			}
 		}
-		blocks = append(blocks, b)
-		opened[meta.ULID] = struct{}{}
-	}
-	sort.Slice(blocks, func(i, j int) bool {
-		return blocks[i].Meta().MinTime < blocks[j].Meta().MinTime
-	})
-	if err := validateBlockSequence(blocks); err != nil {
-		return errors.Wrap(err, "invalid block sequence")
 	}
 
-	// Swap in new blocks first for subsequently created readers to be seen.
-	// Then close previous blocks, which may block for pending readers to complete.
-	db.mtx.Lock()
-	oldBlocks := db.blocks
-	db.blocks = blocks
-	db.mtx.Unlock()
+	return deletable
+}
 
-	// Drop old blocks from memory.
-	for _, b := range oldBlocks {
-		if _, ok := opened[b.Meta().ULID]; ok {
-			continue
+// deleteBlocks closes and deletes blocks from the disk.
+// When the map contains a non nil block object it means it is loaded in memory
+// so needs to be closed first as it might need to wait for pending readers to complete.
+func (db *DB) deleteBlocks(blocks map[ulid.ULID]*Block) error {
+	for ulid, block := range blocks {
+		if block != nil {
+			if err := block.Close(); err != nil {
+				level.Warn(db.logger).Log("msg", "closing block failed", "err", err)
+			}
 		}
-		if err := b.Close(); err != nil {
-			level.Warn(db.logger).Log("msg", "closing block failed", "err", err)
-		}
-	}
-	// Delete all obsolete blocks. None of them are opened any longer.
-	for ulid := range deleteable {
 		if err := os.RemoveAll(filepath.Join(db.dir, ulid.String())); err != nil {
 			return errors.Wrapf(err, "delete obsolete block %s", ulid)
 		}
 	}
-
-	// Garbage collect data in the head if the most recent persisted block
-	// covers data of its current time range.
-	if len(blocks) == 0 {
-		return nil
-	}
-	maxt := blocks[len(blocks)-1].Meta().MaxTime
-
-	return errors.Wrap(db.head.Truncate(maxt), "head truncate failed")
+	return nil
 }
 
 // validateBlockSequence returns error if given block meta files indicate that some blocks overlaps within sequence.
