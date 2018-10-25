@@ -327,12 +327,16 @@ func compactBlockMetas(uid ulid.ULID, blocks ...*BlockMeta) *BlockMeta {
 	res := &BlockMeta{
 		ULID:    uid,
 		MinTime: blocks[0].MinTime,
-		MaxTime: blocks[len(blocks)-1].MaxTime,
 	}
 
 	sources := map[ulid.ULID]struct{}{}
+	// For overlapping blocks, the MaxTime can be in any blocks.
+	maxt := blocks[0].MaxTime
 
 	for _, b := range blocks {
+		if b.MaxTime > maxt {
+			maxt = b.MaxTime
+		}
 		if b.Compaction.Level > res.Compaction.Level {
 			res.Compaction.Level = b.Compaction.Level
 		}
@@ -354,6 +358,7 @@ func compactBlockMetas(uid ulid.ULID, blocks ...*BlockMeta) *BlockMeta {
 		return res.Compaction.Sources[i].Compare(res.Compaction.Sources[j]) < 0
 	})
 
+	res.MaxTime = maxt
 	return res
 }
 

@@ -526,7 +526,7 @@ func TestCompaction_populateBlock(t *testing.T) {
 			},
 		},
 		{
-			title: "Populate from two blocks showing that order is maintained.",
+			title: "Populate from two blocks showing that chunks are sorted.",
 			inputSeriesSamples: [][]seriesSamples{
 				{
 					{
@@ -552,11 +552,11 @@ func TestCompaction_populateBlock(t *testing.T) {
 			expSeriesSamples: []seriesSamples{
 				{
 					lset:   map[string]string{"a": "b"},
-					chunks: [][]sample{{{t: 21}, {t: 30}}, {{t: 0}, {t: 10}}, {{t: 11}, {t: 20}}},
+					chunks: [][]sample{{{t: 0}, {t: 10}}, {{t: 11}, {t: 20}}, {{t: 21}, {t: 30}}},
 				},
 				{
 					lset:   map[string]string{"a": "c"},
-					chunks: [][]sample{{{t: 40}, {t: 45}}, {{t: 1}, {t: 9}}, {{t: 10}, {t: 19}}},
+					chunks: [][]sample{{{t: 1}, {t: 9}}, {{t: 10}, {t: 19}}, {{t: 40}, {t: 45}}},
 				},
 			},
 		},
