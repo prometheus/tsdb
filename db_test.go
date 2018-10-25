@@ -25,6 +25,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-kit/kit/log"
 	"github.com/oklog/ulid"
 	"github.com/pkg/errors"
 	"github.com/prometheus/tsdb/chunkenc"
@@ -1728,4 +1729,55 @@ func (ctcs *MockChunkSeriesSet) Next() bool {
 
 func (ctcs *MockChunkSeriesSet) Err() error {
 	return ctcs.err
+}
+
+func BenchmarkNormalCompaction(b *testing.B) {
+
+	cases := []struct {
+		startTimes          []int64
+		numSamplesPerSeries int
+	}{
+		{
+			startTimes:          []int64{0, 2000000000, 4000000000, 6000000000},
+			numSamplesPerSeries: 100,
+		},
+		{
+			startTimes:          []int64{0, 2000000000, 4000000000, 6000000000},
+			numSamplesPerSeries: 1000,
+		},
+		{
+			startTimes:          []int64{0, 2000000000, 4000000000, 6000000000},
+			numSamplesPerSeries: 10000,
+		},
+		{
+			startTimes:          []int64{0, 2000000000, 4000000000, 6000000000},
+			numSamplesPerSeries: 100000,
+		},
+	}
+
+	nSeries := 10000
+	for _, c := range cases {
+		nBlocks := len(c.startTimes)
+		b.Run(fmt.Sprintf("blocks=%d,series=%d,samplesPerSeriesPerBlock=%d", nBlocks, nSeries, c.numSamplesPerSeries), func(b *testing.B) {
+			dir, err := ioutil.TempDir("", "bench_normal_compaction")
+			testutil.Ok(b, err)
+			defer os.RemoveAll(dir)
+			blockDirs := make([]string, 0, len(c.startTimes))
+
+			for _, st := range c.startTimes {
+				block := createPopulatedBlock(b, dir, nSeries, c.numSamplesPerSeries, st)
+				defer block.Close()
+				blockDirs = append(blockDirs, block.Dir())
+			}
+
+			c, err := NewLeveledCompactor(nil, log.NewNopLogger(), []int64{0}, nil)
+			testutil.Ok(b, err)
+
+			b.ResetTimer()
+			b.ReportAllocs()
+			_, err = c.Compact(dir, blockDirs...)
+			testutil.Ok(b, err)
+		})
+	}
+
 }

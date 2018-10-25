@@ -78,7 +78,7 @@ func createEmptyBlock(t *testing.T, dir string, meta *BlockMeta) *Block {
 }
 
 // createPopulatedBlock creates a block with nSeries series, and nSamples samples.
-func createPopulatedBlock(tb testing.TB, dir string, nSeries, nSamples int) *Block {
+func createPopulatedBlock(tb testing.TB, dir string, nSeries, nSamples int, startTime int64) *Block {
 	head, err := NewHead(nil, nil, nil, 2*60*60*1000)
 	testutil.Ok(tb, err)
 	defer head.Close()
@@ -89,15 +89,15 @@ func createPopulatedBlock(tb testing.TB, dir string, nSeries, nSamples int) *Blo
 
 	for n := 0; n < nSamples; n++ {
 		app := head.Appender()
-		ts := n * 1000
+		ts := startTime + int64(n*1000)
 		for i, lbl := range lbls {
 			if refs[i] != 0 {
-				err := app.AddFast(refs[i], int64(ts), rand.Float64())
+				err := app.AddFast(refs[i], ts, rand.Float64())
 				if err == nil {
 					continue
 				}
 			}
-			ref, err := app.Add(lbl, int64(ts), rand.Float64())
+			ref, err := app.Add(lbl, ts, rand.Float64())
 			testutil.Ok(tb, err)
 			refs[i] = ref
 		}
