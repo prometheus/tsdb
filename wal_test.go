@@ -136,6 +136,7 @@ func TestSegmentWAL_Truncate(t *testing.T) {
 	// The same again with a new WAL.
 	w, err = OpenSegmentWAL(dir, nil, 0, nil)
 	testutil.Ok(t, err)
+	defer w.Close()
 
 	var readSeries []RefSeries
 	r := w.Reader()

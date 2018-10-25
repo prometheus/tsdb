@@ -236,6 +236,8 @@ func OpenSegmentWAL(dir string, logger log.Logger, flushInterval time.Duration, 
 			w.files = append(w.files, newSegmentFile(f))
 			continue
 		}
+		f.Close()
+
 		level.Warn(logger).Log("msg", "invalid segment file detected, truncating WAL", "err", err, "file", fn)
 
 		for _, fn := range fns[i:] {
@@ -405,17 +407,27 @@ func (w *SegmentWAL) Truncate(mint int64, keep func(uint64) bool) error {
 	if err := csf.Truncate(off); err != nil {
 		return err
 	}
-	csf.Sync()
-	csf.Close()
 
-	candidates[0].Close() // need close before remove on platform windows
+	if err := csf.Sync(); err != nil {
+		return errors.Wrap(err, "persisting temporary segment file")
+	}
+
+	if err := csf.Close(); err != nil {
+		return errors.Wrap(err, "closing temporary segment file")
+	}
+
+	candidates[0].Close()
+
 	if err := renameFile(csf.Name(), candidates[0].Name()); err != nil {
 		return errors.Wrap(err, "rename compaction segment")
 	}
 	for _, f := range candidates[1:] {
-		f.Close() // need close before remove on platform windows
+		f.Close()
+
+		fmt.Println(f.Name())
+
 		if err := os.RemoveAll(f.Name()); err != nil {
-			return errors.Wrap(err, "delete WAL segment file")
+			return errors.Wrapf(err, "delete WAL segment file:%v", f.Name())
 		}
 	}
 	if err := w.dirFile.Sync(); err != nil {
