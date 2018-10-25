@@ -27,7 +27,6 @@ import (
 
 	"github.com/oklog/ulid"
 	"github.com/pkg/errors"
-	dto "github.com/prometheus/client_model/go"
 	"github.com/prometheus/tsdb/chunks"
 	"github.com/prometheus/tsdb/index"
 	"github.com/prometheus/tsdb/labels"
@@ -1337,51 +1336,4 @@ func TestCorrectNumTombstones(t *testing.T) {
 
 	testutil.Ok(t, db.Delete(9, 11, labels.NewEqualMatcher("foo", "bar")))
 	testutil.Equals(t, uint64(3), db.blocks[0].meta.Stats.NumTombstones)
-}
-
-// TestDisableCompactions checks that we can disable the
-// auto compaction and run compactions on demand.
-// This is needed for unit tests that rely on
-// checking state before and after a compaction.
-func TestDisableAutoCompactions(t *testing.T) {
-	db, close := openTestDB(t, nil)
-	defer close()
-	defer db.Close()
-
-	db.DisableCompactions()
-
-	blockRange := DefaultOptions.BlockRanges[0]
-	label := labels.FromStrings("foo", "bar")
-
-	app := db.Appender()
-
-	for i := int64(0); i < 3; i++ {
-		_, err := app.Add(label, i*blockRange, 0)
-		testutil.Ok(t, err)
-		_, err = app.Add(label, i*blockRange+1000, 0)
-		testutil.Ok(t, err)
-	}
-
-	testutil.Ok(t, app.Commit())
-
-	// Wait for a compaction to be triggered and  skipped and
-	// check that no new blocks were created.
-	m := &dto.Metric{}
-	for x := 0; x < 3; x++ {
-		db.metrics.compactionsSkipped.Write(m)
-		if *m.Counter.Value > float64(0) {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if *m.Counter.Value == float64(0) {
-		t.Fatal("No compaction was skipped after the set timeout.")
-	}
-	testutil.Equals(t, 0, len(db.blocks))
-
-	// Running compactions manually should create a new block
-	// even when auto compaction is disabled.
-	err := db.compact()
-	testutil.Ok(t, err)
-	testutil.Equals(t, 1, len(db.blocks))
 }
