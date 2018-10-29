@@ -372,20 +372,21 @@ func (s *Reader) Chunk(ref uint64) (chunkenc.Chunk, error) {
 }
 
 func nextSequenceFile(dir string) (string, int, error) {
-	names, err := fileutil.ReadDir(dir)
+	names, err := fileutil.ReadDir(dir) //sorted
 	if err != nil {
 		return "", 0, err
 	}
 
-	i := uint64(0)
-	for _, n := range names {
-		j, err := strconv.ParseUint(n, 10, 64)
+	// dir may contain other than chunk files
+	for i := len(names) - 1; i > -1; i++ {
+		j, err := strconv.ParseUint(names[i], 10, 64)
 		if err != nil {
 			continue
 		}
-		i = j
+		return filepath.Join(dir, fmt.Sprintf("%0.6d", j+1)), int(j + 1), nil
 	}
-	return filepath.Join(dir, fmt.Sprintf("%0.6d", i+1)), int(i + 1), nil
+
+	return filepath.Join(dir, fmt.Sprintf("%0.6d", 1)), 1, nil
 }
 
 func sequenceFiles(dir string) ([]string, error) {
