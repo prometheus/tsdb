@@ -121,7 +121,8 @@ func FromMap(m map[string]string) Labels {
 	for k, v := range m {
 		l = append(l, Label{Name: k, Value: v})
 	}
-	return New(l...)
+	sort.Sort(Labels(l))
+	return l
 }
 
 // FromStrings creates new labels from pairs of strings.
