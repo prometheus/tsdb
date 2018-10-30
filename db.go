@@ -882,42 +882,35 @@ func (db *DB) CleanTombstones() (err error) {
 // Label names are filtered using the matchers give. The label name is considered as
 // the value for the matcher, hence the name of the matcher is ignored.
 func (db *DB) LabelNames() ([]string, error) {
-	headIndexr, err := db.head.Index()
-	if err != nil {
-		return nil, errors.Wrap(err, "get head IndexReader")
-	}
 	labelNamesMap := make(map[string]struct{})
 
-	names, err := headIndexr.LabelNames()
-	if err != nil {
-		return nil, errors.Wrap(err, "LabelNames() from head IndexReader")
-	}
-	for _, name := range names {
-		labelNamesMap[name] = struct{}{}
-	}
-	err = headIndexr.Close()
-	if err != nil {
-		return nil, errors.Wrap(err, "close head IndexReader")
-	}
-
-	db.mtx.RLock()
-	blocks := db.blocks[:]
-	db.mtx.RUnlock()
-	for _, b := range blocks {
-		blockIndexr, err := b.Index()
+	updateLabelNames := func(br BlockReader) error {
+		ir, err := br.Index()
 		if err != nil {
-			return nil, errors.Wrap(err, "get block IndexReader")
+			return errors.Wrap(err, "get IndexReader")
 		}
-		names, err := blockIndexr.LabelNames()
+		names, err := ir.LabelNames()
 		if err != nil {
-			return nil, errors.Wrap(err, "LabelNames() from block IndexReader")
+			return errors.Wrap(err, "LabelNames() from IndexReader")
 		}
 		for _, name := range names {
 			labelNamesMap[name] = struct{}{}
 		}
-		err = blockIndexr.Close()
-		if err != nil {
-			return nil, errors.Wrap(err, "close block IndexReader")
+		if err = ir.Close(); err != nil {
+			return errors.Wrap(err, "close IndexReader")
+		}
+		return nil
+	}
+
+	if err := updateLabelNames(db.head); err != nil {
+		return nil, err
+	}
+	db.mtx.RLock()
+	blocks := db.blocks[:]
+	db.mtx.RUnlock()
+	for _, b := range blocks {
+		if err := updateLabelNames(b); err != nil {
+			return nil, err
 		}
 	}
 
