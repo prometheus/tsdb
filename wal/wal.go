@@ -752,6 +752,9 @@ func (r *Reader) next() (err error) {
 			if k == pageSize {
 				continue // Initial 0 byte was last page byte.
 			}
+			if int(k) > len(buf) {
+				return errors.New("read would result in slice bounds out of range")
+			}
 			n, err := io.ReadFull(r.rdr, buf[:k])
 			if err != nil {
 				return errors.Wrap(err, "read remaining zeros")
