@@ -980,9 +980,7 @@ func (h *headIndexReader) LabelNames() ([]string, error) {
 		}
 		labelNames = append(labelNames, name)
 	}
-	sort.Slice(labelNames, func(i, j int) bool {
-		return labelNames[i] < labelNames[j]
-	})
+	sort.Strings(labelNames)
 	return labelNames, nil
 }
 

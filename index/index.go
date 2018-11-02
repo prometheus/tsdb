@@ -954,12 +954,7 @@ func (r *Reader) LabelNames() ([]string, error) {
 	for name := range labelNamesMap {
 		labelNames = append(labelNames, name)
 	}
-	sort.Slice(labelNames, func(i, j int) bool {
-		return labelNames[i] < labelNames[j]
-	})
-	sort.Slice(labelNames, func(i, j int) bool {
-		return labelNames[i] < labelNames[j]
-	})
+	sort.Strings(labelNames)
 	return labelNames, nil
 }
 

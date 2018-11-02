@@ -83,7 +83,7 @@ type IndexReader interface {
 	Series(ref uint64, lset *labels.Labels, chks *[]chunks.Meta) error
 
 	// LabelIndices returns a list of string tuples for which a label value index exists.
-	// NOTE: This is depricated. Use `LabelNames()` instead.
+	// NOTE: This is deprecated. Use `LabelNames()` instead.
 	LabelIndices() ([][]string, error)
 
 	// LabelNames returns all the unique label names present in the index in sorted order.

@@ -878,49 +878,45 @@ func (db *DB) CleanTombstones() (err error) {
 	return errors.Wrap(db.reload(), "reload blocks")
 }
 
-// LabelNames returns all the unique label names present in the DB in sorted order.
-// Label names are filtered using the matchers give. The label name is considered as
-// the value for the matcher, hence the name of the matcher is ignored.
-func (db *DB) LabelNames() ([]string, error) {
+// labelNames returns all the unique label names from the Block Readers.
+func labelNames(brs ...BlockReader) (map[string]struct{}, error) {
 	labelNamesMap := make(map[string]struct{})
-
-	updateLabelNames := func(br BlockReader) error {
+	for _, br := range brs {
 		ir, err := br.Index()
 		if err != nil {
-			return errors.Wrap(err, "get IndexReader")
+			return nil, errors.Wrap(err, "get IndexReader")
 		}
 		names, err := ir.LabelNames()
 		if err != nil {
-			return errors.Wrap(err, "LabelNames() from IndexReader")
+			return nil, errors.Wrap(err, "LabelNames() from IndexReader")
 		}
 		for _, name := range names {
 			labelNamesMap[name] = struct{}{}
 		}
 		if err = ir.Close(); err != nil {
-			return errors.Wrap(err, "close IndexReader")
+			return nil, errors.Wrap(err, "close IndexReader")
 		}
-		return nil
+	}
+	return labelNamesMap, nil
+}
+
+// LabelNames returns all the unique label names present in the DB in sorted order.
+func (db *DB) LabelNames() ([]string, error) {
+	brs := []BlockReader{db.head}
+	for _, b := range db.Blocks() {
+		brs = append(brs, b)
 	}
 
-	if err := updateLabelNames(db.head); err != nil {
+	labelNamesMap, err := labelNames(brs...)
+	if err != nil {
 		return nil, err
-	}
-	db.mtx.RLock()
-	blocks := db.blocks[:]
-	db.mtx.RUnlock()
-	for _, b := range blocks {
-		if err := updateLabelNames(b); err != nil {
-			return nil, err
-		}
 	}
 
 	labelNames := make([]string, 0, len(labelNamesMap))
 	for name := range labelNamesMap {
 		labelNames = append(labelNames, name)
 	}
-	sort.Slice(labelNames, func(i, j int) bool {
-		return labelNames[i] < labelNames[j]
-	})
+	sort.Strings(labelNames)
 
 	return labelNames, nil
 }

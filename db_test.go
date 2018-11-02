@@ -781,7 +781,7 @@ func TestTombstoneClean(t *testing.T) {
 			testutil.Equals(t, smplExp, smplRes)
 		}
 
-		for _, b := range db.blocks {
+		for _, b := range db.Blocks() {
 			testutil.Equals(t, NewMemTombstones(), b.tombstones)
 		}
 	}
@@ -1134,7 +1134,7 @@ func TestChunkAtBlockBoundary(t *testing.T) {
 	err = db.compact()
 	testutil.Ok(t, err)
 
-	for _, block := range db.blocks {
+	for _, block := range db.Blocks() {
 		r, err := block.Index()
 		testutil.Ok(t, err)
 		defer r.Close()
@@ -1305,8 +1305,12 @@ func TestInitializeHeadTimestamp(t *testing.T) {
 
 func TestDB_LabelNames(t *testing.T) {
 	tests := []struct {
+		// Add 'sampleLabels1' -> Test Head -> Compact -> Test Disk ->
+		//              -> Add 'sampleLabels2' -> Test Head+Disk
+
 		sampleLabels1 [][2]string // For checking head and disk.
-		// sampleLabels2 should have atleast 1 label name which is not there in sampleLabels1.
+		// To test Head+Disk, sampleLabels2 should have
+		// atleast 1 unique label name which is not there in sampleLabels1.
 		sampleLabels2 [][2]string // For check head+disk.
 		exp1          []string    // after adding sampleLabels1.
 		exp2          []string    // after adding sampleLabels1 and sampleLabels2.
@@ -1374,7 +1378,7 @@ func TestDB_LabelNames(t *testing.T) {
 		testutil.Ok(t, err)
 		// All blocks have same label names, hence check them individually.
 		// No need to aggregrate and check.
-		for _, b := range db.blocks {
+		for _, b := range db.Blocks() {
 			blockIndexr, err := b.Index()
 			testutil.Ok(t, err)
 			labelNames, err = blockIndexr.LabelNames()

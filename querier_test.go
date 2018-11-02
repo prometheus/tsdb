@@ -1504,5 +1504,6 @@ func (m mockIndex) LabelNames() ([]string, error) {
 	for name := range m.labelIndex {
 		labelNames = append(labelNames, name)
 	}
+	sort.Strings(labelNames)
 	return labelNames, nil
 }
