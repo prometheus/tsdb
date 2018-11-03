@@ -244,7 +244,7 @@ Outer:
 		res, err := q.Select(labels.NewEqualMatcher("a", "b"))
 		testutil.Ok(t, err)
 
-		expSamples := make([]sample, 0, len(c.remaint))
+		expSamples := make([]Sample, 0, len(c.remaint))
 		for _, ts := range c.remaint {
 			expSamples = append(expSamples, sample{ts, smpls[ts]})
 		}
@@ -471,7 +471,7 @@ Outer:
 		res, err := q.Select(labels.NewEqualMatcher("a", "b"))
 		testutil.Ok(t, err)
 
-		expSamples := make([]sample, 0, len(c.remaint))
+		expSamples := make([]Sample, 0, len(c.remaint))
 		for _, ts := range c.remaint {
 			expSamples = append(expSamples, sample{ts, smpls[ts]})
 		}
@@ -750,7 +750,7 @@ func TestTombstoneClean(t *testing.T) {
 		res, err := q.Select(labels.NewEqualMatcher("a", "b"))
 		testutil.Ok(t, err)
 
-		expSamples := make([]sample, 0, len(c.remaint))
+		expSamples := make([]Sample, 0, len(c.remaint))
 		for _, ts := range c.remaint {
 			expSamples = append(expSamples, sample{ts, smpls[ts]})
 		}
@@ -1354,13 +1354,13 @@ func TestVerticalCompaction(t *testing.T) {
 			maxt: []int64{9, 14},
 			blockSeries: [][]Series{
 				[]Series{
-					newSeries(map[string]string{"a": "b"}, []sample{
+					newSeries(map[string]string{"a": "b"}, []Sample{
 						sample{0, 0}, sample{1, 0}, sample{2, 0}, sample{4, 0},
 						sample{5, 0}, sample{7, 0}, sample{8, 0}, sample{9, 0},
 					}),
 				},
 				[]Series{
-					newSeries(map[string]string{"a": "b"}, []sample{
+					newSeries(map[string]string{"a": "b"}, []Sample{
 						sample{3, 99}, sample{5, 99}, sample{6, 99}, sample{7, 99},
 						sample{8, 99}, sample{9, 99}, sample{10, 99}, sample{11, 99},
 						sample{12, 99}, sample{13, 99}, sample{14, 99},
@@ -1382,14 +1382,14 @@ func TestVerticalCompaction(t *testing.T) {
 			maxt: []int64{17, 10},
 			blockSeries: [][]Series{
 				[]Series{
-					newSeries(map[string]string{"a": "b"}, []sample{
+					newSeries(map[string]string{"a": "b"}, []Sample{
 						sample{0, 0}, sample{1, 0}, sample{2, 0}, sample{4, 0},
 						sample{5, 0}, sample{7, 0}, sample{8, 0}, sample{9, 0},
 						sample{11, 0}, sample{13, 0}, sample{17, 0},
 					}),
 				},
 				[]Series{
-					newSeries(map[string]string{"a": "b"}, []sample{
+					newSeries(map[string]string{"a": "b"}, []Sample{
 						sample{3, 99}, sample{5, 99}, sample{6, 99}, sample{7, 99},
 						sample{8, 99}, sample{9, 99}, sample{10, 99},
 					}),
@@ -1411,20 +1411,20 @@ func TestVerticalCompaction(t *testing.T) {
 			maxt: []int64{17, 9, 22},
 			blockSeries: [][]Series{
 				[]Series{
-					newSeries(map[string]string{"a": "b"}, []sample{
+					newSeries(map[string]string{"a": "b"}, []Sample{
 						sample{0, 0}, sample{1, 0}, sample{2, 0}, sample{4, 0},
 						sample{5, 0}, sample{7, 0}, sample{8, 0}, sample{9, 0},
 						sample{11, 0}, sample{13, 0}, sample{17, 0},
 					}),
 				},
 				[]Series{
-					newSeries(map[string]string{"a": "b"}, []sample{
+					newSeries(map[string]string{"a": "b"}, []Sample{
 						sample{3, 99}, sample{5, 99}, sample{6, 99}, sample{7, 99},
 						sample{8, 99}, sample{9, 99},
 					}),
 				},
 				[]Series{
-					newSeries(map[string]string{"a": "b"}, []sample{
+					newSeries(map[string]string{"a": "b"}, []Sample{
 						sample{14, 59}, sample{15, 59}, sample{17, 59}, sample{20, 59},
 						sample{21, 59}, sample{22, 59},
 					}),
@@ -1447,19 +1447,19 @@ func TestVerticalCompaction(t *testing.T) {
 			maxt: []int64{9, 22, 17},
 			blockSeries: [][]Series{
 				[]Series{
-					newSeries(map[string]string{"a": "b"}, []sample{
+					newSeries(map[string]string{"a": "b"}, []Sample{
 						sample{0, 0}, sample{1, 0}, sample{2, 0}, sample{4, 0},
 						sample{5, 0}, sample{8, 0}, sample{9, 0},
 					}),
 				},
 				[]Series{
-					newSeries(map[string]string{"a": "b"}, []sample{
+					newSeries(map[string]string{"a": "b"}, []Sample{
 						sample{14, 59}, sample{15, 59}, sample{17, 59}, sample{20, 59},
 						sample{21, 59}, sample{22, 59},
 					}),
 				},
 				[]Series{
-					newSeries(map[string]string{"a": "b"}, []sample{
+					newSeries(map[string]string{"a": "b"}, []Sample{
 						sample{5, 99}, sample{6, 99}, sample{7, 99}, sample{8, 99},
 						sample{9, 99}, sample{10, 99}, sample{13, 99}, sample{15, 99},
 						sample{16, 99}, sample{17, 99},
@@ -1483,7 +1483,7 @@ func TestVerticalCompaction(t *testing.T) {
 			maxt: []int64{22, 11, 17},
 			blockSeries: [][]Series{
 				[]Series{
-					newSeries(map[string]string{"a": "b"}, []sample{
+					newSeries(map[string]string{"a": "b"}, []Sample{
 						sample{0, 0}, sample{1, 0}, sample{2, 0}, sample{4, 0},
 						sample{5, 0}, sample{8, 0}, sample{9, 0}, sample{10, 0},
 						sample{13, 0}, sample{15, 0}, sample{16, 0}, sample{17, 0},
@@ -1491,13 +1491,13 @@ func TestVerticalCompaction(t *testing.T) {
 					}),
 				},
 				[]Series{
-					newSeries(map[string]string{"a": "b"}, []sample{
+					newSeries(map[string]string{"a": "b"}, []Sample{
 						sample{7, 59}, sample{8, 59}, sample{9, 59}, sample{10, 59},
 						sample{11, 59},
 					}),
 				},
 				[]Series{
-					newSeries(map[string]string{"a": "b"}, []sample{
+					newSeries(map[string]string{"a": "b"}, []Sample{
 						sample{3, 99}, sample{5, 99}, sample{6, 99}, sample{8, 99},
 						sample{9, 99}, sample{10, 99}, sample{13, 99}, sample{15, 99},
 						sample{16, 99}, sample{17, 99},
