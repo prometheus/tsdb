@@ -14,6 +14,7 @@
 package tsdb
 
 import (
+	"fmt"
 	"io/ioutil"
 	"math"
 	"os"
@@ -716,4 +717,80 @@ func TestCompaction_populateBlock(t *testing.T) {
 			return
 		}
 	}
+}
+
+func BenchmarkCompaction(b *testing.B) {
+
+	cases := []struct {
+		startTimes          []int64
+		numSamplesPerSeries int
+		compactionType      string
+	}{
+		{
+			startTimes:          []int64{0, 2000000000, 4000000000, 6000000000},
+			numSamplesPerSeries: 100,
+			compactionType:      "normal",
+		},
+		{
+			startTimes:          []int64{0, 2000000000, 4000000000, 6000000000},
+			numSamplesPerSeries: 1000,
+			compactionType:      "normal",
+		},
+		{
+			startTimes:          []int64{0, 2000000000, 4000000000, 6000000000},
+			numSamplesPerSeries: 10000,
+			compactionType:      "normal",
+		},
+		{
+			startTimes:          []int64{0, 2000000000, 4000000000, 6000000000},
+			numSamplesPerSeries: 100000,
+			compactionType:      "normal",
+		},
+		{
+			startTimes:          []int64{0, 20000, 40000, 60000},
+			numSamplesPerSeries: 100,
+			compactionType:      "vertical",
+		},
+		{
+			startTimes:          []int64{0, 200000, 400000, 600000},
+			numSamplesPerSeries: 1000,
+			compactionType:      "vertical",
+		},
+		{
+			startTimes:          []int64{0, 200000, 400000, 600000},
+			numSamplesPerSeries: 10000,
+			compactionType:      "vertical",
+		},
+		{
+			startTimes:          []int64{0, 200000, 400000, 600000},
+			numSamplesPerSeries: 100000,
+			compactionType:      "vertical",
+		},
+	}
+
+	nSeries := 10000
+	for _, c := range cases {
+		nBlocks := len(c.startTimes)
+		b.Run(fmt.Sprintf("type=%s,blocks=%d,series=%d,samplesPerSeriesPerBlock=%d", c.compactionType, nBlocks, nSeries, c.numSamplesPerSeries), func(b *testing.B) {
+			dir, err := ioutil.TempDir("", "bench_normal_compaction")
+			testutil.Ok(b, err)
+			defer os.RemoveAll(dir)
+			blockDirs := make([]string, 0, len(c.startTimes))
+
+			for _, st := range c.startTimes {
+				block := createPopulatedBlock(b, dir, nSeries, c.numSamplesPerSeries, st)
+				defer block.Close()
+				blockDirs = append(blockDirs, block.Dir())
+			}
+
+			c, err := NewLeveledCompactor(nil, log.NewNopLogger(), []int64{0}, nil)
+			testutil.Ok(b, err)
+
+			b.ResetTimer()
+			b.ReportAllocs()
+			_, err = c.Compact(dir, blockDirs...)
+			testutil.Ok(b, err)
+		})
+	}
+
 }
