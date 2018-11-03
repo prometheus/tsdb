@@ -725,7 +725,6 @@ func (it *verticalMergeSeriesIterator) Seek(t int64) bool {
 }
 
 func (it *verticalMergeSeriesIterator) Next() bool {
-
 	if !it.initialized {
 		it.aok = it.a.Next()
 		it.bok = it.b.Next()

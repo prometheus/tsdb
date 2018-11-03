@@ -416,7 +416,7 @@ func TestCompactionFailWillCleanUpTempDir(t *testing.T) {
 	testutil.Ok(t, err)
 	defer os.RemoveAll(tmpdir)
 
-	_, err = compactor.write(tmpdir, &BlockMeta{}, erringBReader{})
+	err = compactor.write(tmpdir, &BlockMeta{}, false, erringBReader{})
 	testutil.NotOk(t, err)
 	_, err = os.Stat(filepath.Join(tmpdir, BlockMeta{}.ULID.String()) + ".tmp")
 	testutil.Assert(t, os.IsNotExist(err), "directory is not cleaned up")
@@ -552,11 +552,11 @@ func TestCompaction_populateBlock(t *testing.T) {
 			expSeriesSamples: []seriesSamples{
 				{
 					lset:   map[string]string{"a": "b"},
-					chunks: [][]sample{{{t: 0}, {t: 10}}, {{t: 11}, {t: 20}}, {{t: 21}, {t: 30}}},
+					chunks: [][]sample{{{t: 21}, {t: 30}}, {{t: 0}, {t: 10}}, {{t: 11}, {t: 20}}},
 				},
 				{
 					lset:   map[string]string{"a": "c"},
-					chunks: [][]sample{{{t: 1}, {t: 9}}, {{t: 10}, {t: 19}}, {{t: 40}, {t: 45}}},
+					chunks: [][]sample{{{t: 40}, {t: 45}}, {{t: 1}, {t: 9}}, {{t: 10}, {t: 19}}},
 				},
 			},
 		},
@@ -691,7 +691,7 @@ func TestCompaction_populateBlock(t *testing.T) {
 			}
 
 			iw := &mockIndexWriter{}
-			_, err = c.populateBlock(blocks, meta, iw, nopChunkWriter{})
+			err = c.populateBlock(blocks, false, meta, iw, nopChunkWriter{})
 			if tc.expErr != nil {
 				testutil.NotOk(t, err)
 				testutil.Equals(t, tc.expErr.Error(), err.Error())
