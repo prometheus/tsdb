@@ -948,26 +948,29 @@ func TestSizeBasedRetention(t *testing.T) {
 
 	// Add some empty blocks.
 	blocks := []*BlockMeta{
-		{ULID: ulid.MustNew(100, nil), MinTime: 100, MaxTime: 200},
-		{ULID: ulid.MustNew(200, nil), MinTime: 200, MaxTime: 300},
-		{ULID: ulid.MustNew(300, nil), MinTime: 300, MaxTime: 400},
-		{ULID: ulid.MustNew(400, nil), MinTime: 400, MaxTime: 500},
-		{ULID: ulid.MustNew(500, nil), MinTime: 500, MaxTime: 600},
+		{MinTime: 100, MaxTime: 200},
+		{MinTime: 200, MaxTime: 300},
+		{MinTime: 300, MaxTime: 400},
+		{MinTime: 400, MaxTime: 500},
+		{MinTime: 500, MaxTime: 600},
 	}
 
-	var emptyBlockSize int64
+	var singleBlockSize int64
 	for _, m := range blocks {
-		emptyBlockSize = createEmptyBlock(t, filepath.Join(db.Dir(), m.ULID.String()), m).Size()
+		singleBlockSize = createPopulatedBlock(t, db.Dir(), 100, m.MinTime, m.MaxTime).Size()
 	}
+
+	// TODO check that the reported size equals the actual size on disk.
+	// using os.Stat for all files.
 
 	// Set the max bytes to be one block smaller than the current size so that a delete is prompted.
-	db.opts.MaxBytes = int64(len(blocks)-1) * emptyBlockSize
+	db.opts.MaxBytes = int64(len(blocks)-1) * singleBlockSize
 
 	// Reload and ensure that actual size is less than limit.
 	testutil.Ok(t, db.reload())
 
 	var size int64
-	for _, b := range db.blocks {
+	for _, b := range db.Blocks() {
 		size += b.Size()
 	}
 
@@ -977,7 +980,7 @@ func TestSizeBasedRetention(t *testing.T) {
 	testutil.Equals(t, blocks[1].MaxTime, db.blocks[0].meta.MaxTime) // Ensure oldest block was deleted.
 
 	// Reduce the size limit and test again.
-	db.opts.MaxBytes = emptyBlockSize
+	db.opts.MaxBytes = singleBlockSize
 	testutil.Ok(t, db.reload())
 
 	size = 0
