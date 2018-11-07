@@ -884,7 +884,7 @@ func (emptyStringTuples) At(i int) ([]string, error) { return nil, nil }
 func (emptyStringTuples) Len() int                   { return 0 }
 
 // LabelIndices returns a slice of label names for which labels or label tuples value indices exist.
-// NOTE: This is depricated. Use `LabelNames()` instead.
+// NOTE: This is deprecated. Use `LabelNames()` instead.
 func (r *Reader) LabelIndices() ([][]string, error) {
 	res := [][]string{}
 	for s := range r.labels {

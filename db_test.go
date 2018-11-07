@@ -1306,12 +1306,12 @@ func TestInitializeHeadTimestamp(t *testing.T) {
 func TestDB_LabelNames(t *testing.T) {
 	tests := []struct {
 		// Add 'sampleLabels1' -> Test Head -> Compact -> Test Disk ->
-		//              -> Add 'sampleLabels2' -> Test Head+Disk
+		// -> Add 'sampleLabels2' -> Test Head+Disk
 
-		sampleLabels1 [][2]string // For checking head and disk.
+		sampleLabels1 [][2]string // For checking head and disk separately.
 		// To test Head+Disk, sampleLabels2 should have
-		// atleast 1 unique label name which is not there in sampleLabels1.
-		sampleLabels2 [][2]string // For check head+disk.
+		// at least 1 unique label name which is not in sampleLabels1.
+		sampleLabels2 [][2]string // // For checking head and disk together.
 		exp1          []string    // after adding sampleLabels1.
 		exp2          []string    // after adding sampleLabels1 and sampleLabels2.
 	}{
