@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/go-kit/kit/log"
+	"github.com/prometheus/tsdb/chunkenc"
 	"github.com/prometheus/tsdb/index"
 	"github.com/prometheus/tsdb/labels"
 	"github.com/prometheus/tsdb/testutil"
@@ -105,7 +106,8 @@ func createPopulatedBlock(tb testing.TB, dir string, nSeries, nSamples int) *Blo
 		testutil.Ok(tb, err)
 	}
 
-	compactor, err := NewLeveledCompactor(nil, log.NewNopLogger(), []int64{1000000}, nil)
+	pool := chunkenc.NewPool()
+	compactor, err := NewLeveledCompactor(nil, log.NewNopLogger(), []int64{1000000}, pool)
 	testutil.Ok(tb, err)
 
 	testutil.Ok(tb, os.MkdirAll(dir, 0777))
@@ -113,7 +115,7 @@ func createPopulatedBlock(tb testing.TB, dir string, nSeries, nSamples int) *Blo
 	ulid, err := compactor.Write(dir, head, head.MinTime(), head.MaxTime(), nil)
 	testutil.Ok(tb, err)
 
-	blk, err := OpenBlock(filepath.Join(dir, ulid.String()), nil)
+	blk, err := OpenBlock(filepath.Join(dir, ulid.String()), pool)
 	testutil.Ok(tb, err)
 	return blk
 }
