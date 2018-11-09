@@ -499,17 +499,10 @@ func (s *baseChunkSeries) Err() error { return s.err }
 
 func (s *baseChunkSeries) Next() bool {
 	var (
-		lset     labels.Labels
-		chkMetas []chunks.Meta
+		lset     = make(labels.Labels, len(s.lset))
+		chkMetas = make([]chunks.Meta, len(s.chks))
 		err      error
 	)
-
-	if lsetLen := len(s.lset); lsetLen > 0 {
-		lset = make(labels.Labels, lsetLen)
-	}
-	if chksLen := len(s.chks); chksLen > 0 {
-		chkMetas = make([]chunks.Meta, chksLen)
-	}
 
 	for s.p.Next() {
 		ref := s.p.At()
