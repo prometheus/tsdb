@@ -760,15 +760,12 @@ func (r *Reader) next() (err error) {
 		r.curRecTyp = recType(hdr[0])
 
 		// Gobble up zero bytes.
-<<<<<<< HEAD
-		if typ == recPageTerm {
-			// recPageTerm is a single byte that indicates that the rest of the page is padded.
-			// If it's the first byte in a page, buf is too small and we have to resize buf to fit pageSize-1 bytes.
+		if r.curRecTyp == recPageTerm {
+			// recPageTerm is a single byte that indicates the rest of the page is padded.
+			// If it's the first byte in a page, buf is too small and
+			// needs to be resized to fit pageSize-1 bytes.
 			buf = r.buf[1:]
 
-=======
-		if r.curRecTyp == recPageTerm {
->>>>>>> 2a55efd... return an error when the  last wal segment record is torn.
 			// We are pedantic and check whether the zeros are actually up
 			// to a page boundary.
 			// It's not strictly necessary but may catch sketchy state early.
