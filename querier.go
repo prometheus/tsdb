@@ -37,6 +37,9 @@ type Querier interface {
 	// under the constraint of another label.
 	LabelValuesFor(string, labels.Label) ([]string, error)
 
+	// LabelNames returns all the unique label names present in the block in sorted order.
+	LabelNames() ([]string, error)
+
 	// Close releases the resources of the Querier.
 	Close() error
 }
@@ -58,6 +61,28 @@ type querier struct {
 
 func (q *querier) LabelValues(n string) ([]string, error) {
 	return q.lvals(q.blocks, n)
+}
+
+// LabelNames returns all the unique label names present querier blocks.
+func (q *querier) LabelNames() ([]string, error) {
+	labelNamesMap := make(map[string]struct{})
+	for _, b := range q.blocks {
+		names, err := b.LabelNames()
+		if err != nil {
+			return nil, errors.Wrap(err, "LabelNames() from IndexReader")
+		}
+		for _, name := range names {
+			labelNamesMap[name] = struct{}{}
+		}
+	}
+
+	labelNames := make([]string, 0, len(labelNamesMap))
+	for name := range labelNamesMap {
+		labelNames = append(labelNames, name)
+	}
+	sort.Strings(labelNames)
+
+	return labelNames, nil
 }
 
 func (q *querier) lvals(qs []Querier, n string) ([]string, error) {
@@ -185,6 +210,10 @@ func (q *blockQuerier) LabelValues(name string) ([]string, error) {
 		res = append(res, vals[0])
 	}
 	return res, nil
+}
+
+func (q *blockQuerier) LabelNames() ([]string, error) {
+	return q.index.LabelNames()
 }
 
 func (q *blockQuerier) LabelValuesFor(string, labels.Label) ([]string, error) {
