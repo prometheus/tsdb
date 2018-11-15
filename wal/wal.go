@@ -341,9 +341,14 @@ func (w *WAL) Repair(origErr error) error {
 	r := NewReader(bufio.NewReader(f))
 
 	for r.Next() {
+		// Add records only up to the where the error was.
+		if r.Offset() >= cerr.Offset {
+			break
+		}
 		if err := w.Log(r.Record()); err != nil {
 			return errors.Wrap(err, "insert record")
 		}
+
 	}
 	// We expect an error here from r.Err(), so nothing to handle.
 
@@ -867,6 +872,22 @@ func (r *Reader) Err() error {
 // valid until the next call to Next.
 func (r *Reader) Record() []byte {
 	return r.rec
+}
+
+// Segment returns the current segment being red.
+func (r *Reader) Segment() int {
+	if b, ok := r.rdr.(*segmentBufReader); ok {
+		return b.segs[b.cur].Index()
+	}
+	return -1
+}
+
+// Offset returns the current position of the segment being red.
+func (r *Reader) Offset() int64 {
+	if b, ok := r.rdr.(*segmentBufReader); ok {
+		return int64(b.off)
+	}
+	return r.total
 }
 
 func min(i, j int) int {
