@@ -33,6 +33,7 @@ type Querier interface {
 
 	// LabelValues returns all potential values for a label name.
 	LabelValues(string) ([]string, error)
+
 	// LabelValuesFor returns all potential values for a label name.
 	// under the constraint of another label.
 	LabelValuesFor(string, labels.Label) ([]string, error)
@@ -69,7 +70,7 @@ func (q *querier) LabelNames() ([]string, error) {
 	for _, b := range q.blocks {
 		names, err := b.LabelNames()
 		if err != nil {
-			return nil, errors.Wrap(err, "LabelNames() from IndexReader")
+			return nil, errors.Wrap(err, "LabelNames() from Querier")
 		}
 		for _, name := range names {
 			labelNamesMap[name] = struct{}{}
