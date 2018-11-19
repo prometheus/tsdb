@@ -784,7 +784,7 @@ func TestTombstoneClean(t *testing.T) {
 		}
 
 		for _, b := range db.Blocks() {
-			testutil.Equals(t, NewMemTombstones(), b.tombstones)
+			testutil.Equals(t, newMemTombstones(), b.tombstones)
 		}
 	}
 }
@@ -813,7 +813,7 @@ func TestTombstoneCleanFail(t *testing.T) {
 		block := createEmptyBlock(t, blockDir, meta)
 
 		// Add some some fake tombstones to trigger the compaction.
-		tomb := NewMemTombstones()
+		tomb := newMemTombstones()
 		tomb.addInterval(0, Interval{0, 1})
 		block.tombstones = tomb
 
@@ -878,7 +878,7 @@ func (c *mockCompactorFailing) Write(dest string, b BlockReader, mint, maxt int6
 	return block.Meta().ULID, nil
 }
 
-func (*mockCompactorFailing) Compact(dest string, dirs ...string) (ulid.ULID, error) {
+func (*mockCompactorFailing) Compact(dest string, dirs []string, open []*Block) (ulid.ULID, error) {
 	return ulid.ULID{}, nil
 
 }
@@ -1390,12 +1390,15 @@ func TestDB_LabelNames(t *testing.T) {
 		}
 
 		// Addings more samples to head with new label names
-		// so that we can test db.LabelNames() (the union).
+		// so that we can test (head+disk).LabelNames() (the union).
 		appendSamples(db, 5, 9, tst.sampleLabels2)
 
 		// Testing DB (union).
-		labelNames, err = db.LabelNames()
+		q, err := db.Querier(math.MinInt64, math.MaxInt64)
 		testutil.Ok(t, err)
+		labelNames, err = q.LabelNames()
+		testutil.Ok(t, err)
+		testutil.Ok(t, q.Close())
 		testutil.Equals(t, tst.exp2, labelNames)
 	}
 }
@@ -1684,7 +1687,7 @@ func createNewBlock(t *testing.T, dest string, mint, maxt int64, set ChunkSeries
 	testutil.Ok(t, writeMetaFile(tmp, meta))
 	testutil.Ok(t, errors.Wrap(chunkw.Close(), "close chunk writer"))
 	testutil.Ok(t, errors.Wrap(indexw.Close(), "close index writer"))
-	testutil.Ok(t, errors.Wrap(writeTombstoneFile(tmp, NewMemTombstones()), "write new tombstones file"))
+	testutil.Ok(t, errors.Wrap(writeTombstoneFile(tmp, newMemTombstones()), "write new tombstones file"))
 
 	df, err := fileutil.OpenDir(tmp)
 	testutil.Ok(t, errors.Wrap(err, "open temporary block dir"))

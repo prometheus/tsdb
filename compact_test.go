@@ -776,9 +776,10 @@ func BenchmarkCompaction(b *testing.B) {
 			testutil.Ok(b, err)
 			defer os.RemoveAll(dir)
 			blockDirs := make([]string, 0, len(c.startTimes))
-
+			var blocks []*Block
 			for _, st := range c.startTimes {
 				block := createPopulatedBlock(b, dir, nSeries, c.numSamplesPerSeries, st)
+				blocks = append(blocks, block)
 				defer block.Close()
 				blockDirs = append(blockDirs, block.Dir())
 			}
@@ -788,7 +789,7 @@ func BenchmarkCompaction(b *testing.B) {
 
 			b.ResetTimer()
 			b.ReportAllocs()
-			_, err = c.Compact(dir, blockDirs...)
+			_, err = c.Compact(dir, blockDirs, blocks)
 			testutil.Ok(b, err)
 		})
 	}
