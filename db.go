@@ -130,7 +130,6 @@ type dbMetrics struct {
 	compactionsSkipped   prometheus.Counter
 	cutoffs              prometheus.Counter
 	cutoffsFailed        prometheus.Counter
-	startTime            prometheus.GaugeFunc
 	tombCleanTimer       prometheus.Histogram
 }
 
@@ -182,17 +181,7 @@ func newDBMetrics(db *DB, r prometheus.Registerer) *dbMetrics {
 		Name: "prometheus_tsdb_retention_cutoffs_failures_total",
 		Help: "Number of times the database failed to cut off block data from disk.",
 	})
-	m.startTime = prometheus.NewGaugeFunc(prometheus.GaugeOpts{
-		Name: "prometheus_tsdb_lowest_timestamp",
-		Help: "Lowest timestamp value stored in the database.",
-	}, func() float64 {
-		db.mtx.RLock()
-		defer db.mtx.RUnlock()
-		if len(db.blocks) == 0 {
-			return float64(db.head.minTime)
-		}
-		return float64(db.blocks[0].meta.MinTime)
-	})
+
 	m.tombCleanTimer = prometheus.NewHistogram(prometheus.HistogramOpts{
 		Name: "prometheus_tsdb_tombstone_cleanup_seconds",
 		Help: "The time taken to recompact blocks to remove tombstones.",
@@ -207,7 +196,6 @@ func newDBMetrics(db *DB, r prometheus.Registerer) *dbMetrics {
 			m.cutoffs,
 			m.cutoffsFailed,
 			m.compactionsTriggered,
-			m.startTime,
 			m.tombCleanTimer,
 		)
 	}

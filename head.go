@@ -85,8 +85,6 @@ type headMetrics struct {
 	chunksCreated           prometheus.Counter
 	chunksRemoved           prometheus.Counter
 	gcDuration              prometheus.Summary
-	minTime                 prometheus.GaugeFunc
-	maxTime                 prometheus.GaugeFunc
 	samplesAppended         prometheus.Counter
 	walTruncateDuration     prometheus.Summary
 	headTruncateFail        prometheus.Counter
@@ -136,18 +134,6 @@ func newHeadMetrics(h *Head, r prometheus.Registerer) *headMetrics {
 		Name: "prometheus_tsdb_head_gc_duration_seconds",
 		Help: "Runtime of garbage collection in the head block.",
 	})
-	m.maxTime = prometheus.NewGaugeFunc(prometheus.GaugeOpts{
-		Name: "prometheus_tsdb_head_max_time",
-		Help: "Maximum timestamp of the head block.",
-	}, func() float64 {
-		return float64(h.MaxTime())
-	})
-	m.minTime = prometheus.NewGaugeFunc(prometheus.GaugeOpts{
-		Name: "prometheus_tsdb_head_min_time",
-		Help: "Minimum time bound of the head block.",
-	}, func() float64 {
-		return float64(h.MinTime())
-	})
 	m.walTruncateDuration = prometheus.NewSummary(prometheus.SummaryOpts{
 		Name: "prometheus_tsdb_wal_truncate_duration_seconds",
 		Help: "Duration of WAL truncation.",
@@ -191,8 +177,6 @@ func newHeadMetrics(h *Head, r prometheus.Registerer) *headMetrics {
 			m.seriesCreated,
 			m.seriesRemoved,
 			m.seriesNotFound,
-			m.minTime,
-			m.maxTime,
 			m.gcDuration,
 			m.walTruncateDuration,
 			m.samplesAppended,
