@@ -144,7 +144,7 @@ func TestReader(t *testing.T) {
 			if j >= len(c.exp) {
 				t.Fatal("received more records than inserted")
 			}
-			testutil.Equals(t, c.exp[j], rec)
+			testutil.Equals(t, c.exp[j], rec, "Bytes within record did not match expected Bytes")
 		}
 		if !c.fail && r.Err() != nil {
 			t.Fatalf("unexpected error: %s", r.Err())
@@ -217,6 +217,14 @@ func TestWAL_FuzzWriteRead(t *testing.T) {
 
 func TestWAL_Repair(t *testing.T) {
 	for name, cf := range map[string]func(f *os.File){
+		// Ensures that the page buffer is big enough to fit and entyre page size without panicing.
+		// https://github.com/prometheus/tsdb/pull/414
+		"bad_header": func(f *os.File) {
+			_, err := f.Seek(pageSize, 0)
+			testutil.Ok(t, err)
+			_, err = f.Write([]byte{byte(recPageTerm)})
+			testutil.Ok(t, err)
+		},
 		"bad_fragment_sequence": func(f *os.File) {
 			_, err := f.Seek(pageSize, 0)
 			testutil.Ok(t, err)
@@ -256,6 +264,7 @@ func TestWAL_Repair(t *testing.T) {
 			// We create 3 segments with 3 records each and then corrupt the 2nd record
 			// of the 2nd segment.
 			// As a result we want a repaired WAL with the first 4 records intact.
+			intactRecords := 4
 			w, err := NewSize(nil, nil, dir, 3*pageSize)
 			testutil.Ok(t, err)
 
@@ -306,7 +315,7 @@ func TestWAL_Repair(t *testing.T) {
 				result = append(result, append(b, r.Record()...))
 			}
 			testutil.Ok(t, r.Err())
-			testutil.Equals(t, 4, len(result))
+			testutil.Equals(t, intactRecords, len(result), "Wrong number of intact records")
 
 			for i, r := range result {
 				if !bytes.Equal(records[i], r) {

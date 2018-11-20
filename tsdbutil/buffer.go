@@ -1,14 +1,39 @@
+// Copyright 2018 The Prometheus Authors
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package tsdbutil
 
 import (
 	"math"
-
-	"github.com/prometheus/tsdb"
 )
+
+// SeriesIterator iterates over the data of a time series.
+type SeriesIterator interface {
+	// Seek advances the iterator forward to the given timestamp.
+	// If there's no value exactly at t, it advances to the first value
+	// after t.
+	Seek(t int64) bool
+	// At returns the current timestamp/value pair.
+	At() (t int64, v float64)
+	// Next advances the iterator by one.
+	Next() bool
+	// Err returns the current error.
+	Err() error
+}
 
 // BufferedSeriesIterator wraps an iterator with a look-back buffer.
 type BufferedSeriesIterator struct {
-	it  tsdb.SeriesIterator
+	it  SeriesIterator
 	buf *sampleRing
 
 	lastTime int64
@@ -16,7 +41,7 @@ type BufferedSeriesIterator struct {
 
 // NewBuffer returns a new iterator that buffers the values within the time range
 // of the current element and the duration of delta before.
-func NewBuffer(it tsdb.SeriesIterator, delta int64) *BufferedSeriesIterator {
+func NewBuffer(it SeriesIterator, delta int64) *BufferedSeriesIterator {
 	return &BufferedSeriesIterator{
 		it:       it,
 		buf:      newSampleRing(delta, 16),
@@ -31,7 +56,7 @@ func (b *BufferedSeriesIterator) PeekBack() (t int64, v float64, ok bool) {
 }
 
 // Buffer returns an iterator over the buffered data.
-func (b *BufferedSeriesIterator) Buffer() tsdb.SeriesIterator {
+func (b *BufferedSeriesIterator) Buffer() SeriesIterator {
 	return b.buf.iterator()
 }
 
@@ -90,6 +115,14 @@ type sample struct {
 	v float64
 }
 
+func (s sample) T() int64 {
+	return s.t
+}
+
+func (s sample) V() float64 {
+	return s.v
+}
+
 type sampleRing struct {
 	delta int64
 
@@ -112,7 +145,7 @@ func (r *sampleRing) reset() {
 	r.f = 0
 }
 
-func (r *sampleRing) iterator() tsdb.SeriesIterator {
+func (r *sampleRing) iterator() SeriesIterator {
 	return &sampleRingIterator{r: r, i: -1}
 }
 

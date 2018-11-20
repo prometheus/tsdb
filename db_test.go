@@ -242,7 +242,7 @@ Outer:
 		res, err := q.Select(labels.NewEqualMatcher("a", "b"))
 		testutil.Ok(t, err)
 
-		expSamples := make([]sample, 0, len(c.remaint))
+		expSamples := make([]Sample, 0, len(c.remaint))
 		for _, ts := range c.remaint {
 			expSamples = append(expSamples, sample{ts, smpls[ts]})
 		}
@@ -469,7 +469,7 @@ Outer:
 		res, err := q.Select(labels.NewEqualMatcher("a", "b"))
 		testutil.Ok(t, err)
 
-		expSamples := make([]sample, 0, len(c.remaint))
+		expSamples := make([]Sample, 0, len(c.remaint))
 		for _, ts := range c.remaint {
 			expSamples = append(expSamples, sample{ts, smpls[ts]})
 		}
@@ -748,7 +748,7 @@ func TestTombstoneClean(t *testing.T) {
 		res, err := q.Select(labels.NewEqualMatcher("a", "b"))
 		testutil.Ok(t, err)
 
-		expSamples := make([]sample, 0, len(c.remaint))
+		expSamples := make([]Sample, 0, len(c.remaint))
 		for _, ts := range c.remaint {
 			expSamples = append(expSamples, sample{ts, smpls[ts]})
 		}
@@ -781,8 +781,8 @@ func TestTombstoneClean(t *testing.T) {
 			testutil.Equals(t, smplExp, smplRes)
 		}
 
-		for _, b := range db.blocks {
-			testutil.Equals(t, NewMemTombstones(), b.tombstones)
+		for _, b := range db.Blocks() {
+			testutil.Equals(t, newMemTombstones(), b.tombstones)
 		}
 	}
 }
@@ -811,7 +811,7 @@ func TestTombstoneCleanFail(t *testing.T) {
 		block := createEmptyBlock(t, blockDir, meta)
 
 		// Add some some fake tombstones to trigger the compaction.
-		tomb := NewMemTombstones()
+		tomb := newMemTombstones()
 		tomb.addInterval(0, Interval{0, 1})
 		block.tombstones = tomb
 
@@ -876,7 +876,7 @@ func (c *mockCompactorFailing) Write(dest string, b BlockReader, mint, maxt int6
 	return block.Meta().ULID, nil
 }
 
-func (*mockCompactorFailing) Compact(dest string, dirs ...string) (ulid.ULID, error) {
+func (*mockCompactorFailing) Compact(dest string, dirs []string, open []*Block) (ulid.ULID, error) {
 	return ulid.ULID{}, nil
 
 }
@@ -1134,7 +1134,7 @@ func TestChunkAtBlockBoundary(t *testing.T) {
 	err = db.compact()
 	testutil.Ok(t, err)
 
-	for _, block := range db.blocks {
+	for _, block := range db.Blocks() {
 		r, err := block.Index()
 		testutil.Ok(t, err)
 		defer r.Close()
@@ -1310,7 +1310,7 @@ func TestNoEmptyBlocks(t *testing.T) {
 
 	// Test no blocks after compact with empty head.
 	testutil.Ok(t, db.compact())
-	testutil.Equals(t, 0, len(db.blocks))
+	testutil.Equals(t, 0, len(db.Blocks()))
 
 	// Test no blocks after deleting all samples from head.
 	blockRange := DefaultOptions.BlockRanges[0]
@@ -1332,7 +1332,7 @@ func TestNoEmptyBlocks(t *testing.T) {
 	testutil.Ok(t, db.reload())
 	testutil.Ok(t, db.head.Truncate(db.head.MaxTime()))
 	// No blocks created.
-	testutil.Equals(t, 0, len(db.blocks))
+	testutil.Equals(t, 0, len(db.Blocks()))
 
 	app = db.Appender()
 	for i := int64(7); i < 25; i++ {
@@ -1344,7 +1344,7 @@ func TestNoEmptyBlocks(t *testing.T) {
 	testutil.Ok(t, app.Commit())
 
 	testutil.Ok(t, db.compact())
-	testutil.Assert(t, len(db.blocks) > 0, "No blocks created when compacting with >0 samples")
+	testutil.Assert(t, len(db.Blocks()) > 0, "No blocks created when compacting with >0 samples")
 
 	// When no new block is created from head, and there are some blocks on disk,
 	// compaction should not run into infinite loop (was seen during development).
@@ -1363,26 +1363,26 @@ func TestNoEmptyBlocks(t *testing.T) {
 	// Mimicking Plan() of compactor and getting list
 	// of all block directories to pass for compaction.
 	plan := []string{}
-	for _, b := range db.blocks {
+	for _, b := range db.Blocks() {
 		plan = append(plan, b.Dir())
 	}
 
 	// Blocks are not set deletable before compaction.
-	for _, b := range db.blocks {
+	for _, b := range db.Blocks() {
 		meta, err := readMetaFile(b.dir)
 		testutil.Ok(t, err)
 		testutil.Assert(t, !meta.Compaction.Deletable, "Block was marked deletable before compaction")
 	}
 
 	// No new blocks are created by Compact, and marks all old blocks as deletable.
-	oldLen := len(db.blocks)
-	_, err = db.compactor.Compact(db.dir, plan...)
+	oldLen := len(db.Blocks())
+	_, err = db.compactor.Compact(db.dir, plan, db.Blocks())
 	testutil.Ok(t, err)
 	// Number of blocks are the same.
-	testutil.Equals(t, oldLen, len(db.blocks))
+	testutil.Equals(t, oldLen, len(db.Blocks()))
 
 	// Marked as deletable.
-	for _, b := range db.blocks {
+	for _, b := range db.Blocks() {
 		meta, err := readMetaFile(b.dir)
 		testutil.Ok(t, err)
 		testutil.Assert(t, meta.Compaction.Deletable, "Block was not marked deletable after compaction")
@@ -1391,7 +1391,105 @@ func TestNoEmptyBlocks(t *testing.T) {
 	// Deletes the deletable blocks.
 	testutil.Ok(t, db.reload())
 	// All samples are deleted. No blocks should be remeianing after compact.
-	testutil.Equals(t, 0, len(db.blocks))
+	testutil.Equals(t, 0, len(db.Blocks()))
+}
+
+func TestDB_LabelNames(t *testing.T) {
+	tests := []struct {
+		// Add 'sampleLabels1' -> Test Head -> Compact -> Test Disk ->
+		// -> Add 'sampleLabels2' -> Test Head+Disk
+
+		sampleLabels1 [][2]string // For checking head and disk separately.
+		// To test Head+Disk, sampleLabels2 should have
+		// at least 1 unique label name which is not in sampleLabels1.
+		sampleLabels2 [][2]string // // For checking head and disk together.
+		exp1          []string    // after adding sampleLabels1.
+		exp2          []string    // after adding sampleLabels1 and sampleLabels2.
+	}{
+		{
+			sampleLabels1: [][2]string{
+				[2]string{"name1", ""},
+				[2]string{"name3", ""},
+				[2]string{"name2", ""},
+			},
+			sampleLabels2: [][2]string{
+				[2]string{"name4", ""},
+				[2]string{"name1", ""},
+			},
+			exp1: []string{"name1", "name2", "name3"},
+			exp2: []string{"name1", "name2", "name3", "name4"},
+		},
+		{
+			sampleLabels1: [][2]string{
+				[2]string{"name2", ""},
+				[2]string{"name1", ""},
+				[2]string{"name2", ""},
+			},
+			sampleLabels2: [][2]string{
+				[2]string{"name6", ""},
+				[2]string{"name0", ""},
+			},
+			exp1: []string{"name1", "name2"},
+			exp2: []string{"name0", "name1", "name2", "name6"},
+		},
+	}
+
+	blockRange := DefaultOptions.BlockRanges[0]
+	// Appends samples into the database.
+	appendSamples := func(db *DB, mint, maxt int64, sampleLabels [][2]string) {
+		t.Helper()
+		app := db.Appender()
+		for i := mint; i <= maxt; i++ {
+			for _, tuple := range sampleLabels {
+				label := labels.FromStrings(tuple[0], tuple[1])
+				_, err := app.Add(label, i*blockRange, 0)
+				testutil.Ok(t, err)
+			}
+		}
+		err := app.Commit()
+		testutil.Ok(t, err)
+	}
+	for _, tst := range tests {
+		db, close := openTestDB(t, nil)
+		defer close()
+		defer db.Close()
+
+		appendSamples(db, 0, 4, tst.sampleLabels1)
+
+		// Testing head.
+		headIndexr, err := db.head.Index()
+		testutil.Ok(t, err)
+		labelNames, err := headIndexr.LabelNames()
+		testutil.Ok(t, err)
+		testutil.Equals(t, tst.exp1, labelNames)
+		testutil.Ok(t, headIndexr.Close())
+
+		// Testing disk.
+		err = db.compact()
+		testutil.Ok(t, err)
+		// All blocks have same label names, hence check them individually.
+		// No need to aggregrate and check.
+		for _, b := range db.Blocks() {
+			blockIndexr, err := b.Index()
+			testutil.Ok(t, err)
+			labelNames, err = blockIndexr.LabelNames()
+			testutil.Ok(t, err)
+			testutil.Equals(t, tst.exp1, labelNames)
+			testutil.Ok(t, blockIndexr.Close())
+		}
+
+		// Addings more samples to head with new label names
+		// so that we can test (head+disk).LabelNames() (the union).
+		appendSamples(db, 5, 9, tst.sampleLabels2)
+
+		// Testing DB (union).
+		q, err := db.Querier(math.MinInt64, math.MaxInt64)
+		testutil.Ok(t, err)
+		labelNames, err = q.LabelNames()
+		testutil.Ok(t, err)
+		testutil.Ok(t, q.Close())
+		testutil.Equals(t, tst.exp2, labelNames)
+	}
 }
 
 func TestCorrectNumTombstones(t *testing.T) {

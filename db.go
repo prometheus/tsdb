@@ -112,9 +112,13 @@ type DB struct {
 	donec    chan struct{}
 	stopc    chan struct{}
 
-	// cmtx is used to control compactions and deletions.
-	cmtx               sync.Mutex
-	compactionsEnabled bool
+	// cmtx ensures that compactions and deletions don't run simultaneously.
+	cmtx sync.Mutex
+
+	// autoCompactMtx ensures that no compaction gets triggered while
+	// changing the autoCompact var.
+	autoCompactMtx sync.Mutex
+	autoCompact    bool
 }
 
 type dbMetrics struct {
@@ -123,6 +127,7 @@ type dbMetrics struct {
 	reloads              prometheus.Counter
 	reloadsFailed        prometheus.Counter
 	compactionsTriggered prometheus.Counter
+	compactionsSkipped   prometheus.Counter
 	cutoffs              prometheus.Counter
 	cutoffsFailed        prometheus.Counter
 	startTime            prometheus.GaugeFunc
@@ -164,6 +169,10 @@ func newDBMetrics(db *DB, r prometheus.Registerer) *dbMetrics {
 	m.compactionsTriggered = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "prometheus_tsdb_compactions_triggered_total",
 		Help: "Total number of triggered compactions for the partition.",
+	})
+	m.compactionsSkipped = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "prometheus_tsdb_compactions_skipped_total",
+		Help: "Total number of skipped compactions due to disabled auto compaction.",
 	})
 	m.cutoffs = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "prometheus_tsdb_retention_cutoffs_total",
@@ -226,14 +235,14 @@ func Open(dir string, l log.Logger, r prometheus.Registerer, opts *Options) (db 
 	}
 
 	db = &DB{
-		dir:                dir,
-		logger:             l,
-		opts:               opts,
-		compactc:           make(chan struct{}, 1),
-		donec:              make(chan struct{}),
-		stopc:              make(chan struct{}),
-		compactionsEnabled: true,
-		chunkPool:          chunkenc.NewPool(),
+		dir:         dir,
+		logger:      l,
+		opts:        opts,
+		compactc:    make(chan struct{}, 1),
+		donec:       make(chan struct{}),
+		stopc:       make(chan struct{}),
+		autoCompact: true,
+		chunkPool:   chunkenc.NewPool(),
 	}
 	db.metrics = newDBMetrics(db, r)
 
@@ -300,14 +309,18 @@ func (db *DB) run() {
 		case <-db.compactc:
 			db.metrics.compactionsTriggered.Inc()
 
-			err := db.compact()
-			if err != nil {
-				level.Error(db.logger).Log("msg", "compaction failed", "err", err)
-				backoff = exponential(backoff, 1*time.Second, 1*time.Minute)
+			db.autoCompactMtx.Lock()
+			if db.autoCompact {
+				if err := db.compact(); err != nil {
+					level.Error(db.logger).Log("msg", "compaction failed", "err", err)
+					backoff = exponential(backoff, 1*time.Second, 1*time.Minute)
+				} else {
+					backoff = 0
+				}
 			} else {
-				backoff = 0
+				db.metrics.compactionsSkipped.Inc()
 			}
-
+			db.autoCompactMtx.Unlock()
 		case <-db.stopc:
 			return
 		}
@@ -369,11 +382,6 @@ func (a dbAppender) Commit() error {
 func (db *DB) compact() (err error) {
 	db.cmtx.Lock()
 	defer db.cmtx.Unlock()
-
-	if !db.compactionsEnabled {
-		return nil
-	}
-
 	// Check whether we have pending head blocks that are ready to be persisted.
 	// They have the highest priority.
 	for {
@@ -441,7 +449,7 @@ func (db *DB) compact() (err error) {
 		default:
 		}
 
-		if _, err := db.compactor.Compact(db.dir, plan...); err != nil {
+		if _, err := db.compactor.Compact(db.dir, plan, db.blocks); err != nil {
 			return errors.Wrapf(err, "compact %s", plan)
 		}
 		runtime.GC()
@@ -506,12 +514,12 @@ func (db *DB) reload() (err error) {
 			corrupted[ulid] = err
 			continue
 		}
-		if meta.Compaction.Deletable {
-			deleteable[meta.ULID] = struct{}{}
-		}
 		if db.beyondRetention(meta) {
 			deleteable[meta.ULID] = struct{}{}
 			continue
+		}
+		if meta.Compaction.Deletable {
+			deleteable[meta.ULID] = struct{}{}
 		}
 		for _, b := range meta.Compaction.Parents {
 			deleteable[b.ULID] = struct{}{}
@@ -746,21 +754,21 @@ func (db *DB) Close() error {
 	return merr.Err()
 }
 
-// DisableCompactions disables compactions.
+// DisableCompactions disables auto compactions.
 func (db *DB) DisableCompactions() {
-	db.cmtx.Lock()
-	defer db.cmtx.Unlock()
+	db.autoCompactMtx.Lock()
+	defer db.autoCompactMtx.Unlock()
 
-	db.compactionsEnabled = false
+	db.autoCompact = false
 	level.Info(db.logger).Log("msg", "compactions disabled")
 }
 
-// EnableCompactions enables compactions.
+// EnableCompactions enables auto compactions.
 func (db *DB) EnableCompactions() {
-	db.cmtx.Lock()
-	defer db.cmtx.Unlock()
+	db.autoCompactMtx.Lock()
+	defer db.autoCompactMtx.Unlock()
 
-	db.compactionsEnabled = true
+	db.autoCompact = true
 	level.Info(db.logger).Log("msg", "compactions enabled")
 }
 
@@ -808,7 +816,11 @@ func (db *DB) Querier(mint, maxt int64) (Querier, error) {
 		}
 	}
 	if maxt >= db.head.MinTime() {
-		blocks = append(blocks, db.head)
+		blocks = append(blocks, &rangeHead{
+			head: db.head,
+			mint: mint,
+			maxt: maxt,
+		})
 	}
 
 	sq := &querier{
