@@ -1307,6 +1307,7 @@ func TestNoEmptyBlocks(t *testing.T) {
 	db, close := openTestDB(t, nil)
 	defer close()
 	defer db.Close()
+	db.DisableCompactions()
 
 	// Test no blocks after compact with empty head.
 	testutil.Ok(t, db.compact())
@@ -1348,6 +1349,7 @@ func TestNoEmptyBlocks(t *testing.T) {
 
 	// When no new block is created from head, and there are some blocks on disk,
 	// compaction should not run into infinite loop (was seen during development).
+	oldBlocks := db.Blocks()
 	app = db.Appender()
 	for i := int64(26); i < 30; i++ {
 		_, err := app.Add(label, i*blockRange, 0)
@@ -1356,6 +1358,7 @@ func TestNoEmptyBlocks(t *testing.T) {
 	testutil.Ok(t, app.Commit())
 	testutil.Ok(t, db.head.Delete(math.MinInt64, math.MaxInt64, labels.NewEqualMatcher("foo", "bar")))
 	testutil.Ok(t, db.compact())
+	testutil.Equals(t, oldBlocks, db.Blocks())
 
 	// Test no blocks remaining after deleting all samples from disk.
 	testutil.Ok(t, db.Delete(math.MinInt64, math.MaxInt64, labels.NewEqualMatcher("foo", "bar")))
@@ -1371,15 +1374,15 @@ func TestNoEmptyBlocks(t *testing.T) {
 	for _, b := range db.Blocks() {
 		meta, err := readMetaFile(b.dir)
 		testutil.Ok(t, err)
-		testutil.Assert(t, !meta.Compaction.Deletable, "Block was marked deletable before compaction")
+		testutil.Assert(t, meta.Compaction.Deletable == false, "Block was marked deletable before compaction")
 	}
 
 	// No new blocks are created by Compact, and marks all old blocks as deletable.
-	oldLen := len(db.Blocks())
+	oldBlocks = db.Blocks()
 	_, err = db.compactor.Compact(db.dir, plan, db.Blocks())
 	testutil.Ok(t, err)
-	// Number of blocks are the same.
-	testutil.Equals(t, oldLen, len(db.Blocks()))
+	// Blocks are the same.
+	testutil.Equals(t, oldBlocks, db.Blocks())
 
 	// Marked as deletable.
 	for _, b := range db.Blocks() {
@@ -1390,7 +1393,7 @@ func TestNoEmptyBlocks(t *testing.T) {
 
 	// Deletes the deletable blocks.
 	testutil.Ok(t, db.reload())
-	// All samples are deleted. No blocks should be remeianing after compact.
+	// All samples are deleted. No blocks should be remaining after compact.
 	testutil.Equals(t, 0, len(db.Blocks()))
 }
 
