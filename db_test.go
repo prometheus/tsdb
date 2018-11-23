@@ -27,6 +27,7 @@ import (
 
 	"github.com/oklog/ulid"
 	"github.com/pkg/errors"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/prometheus/tsdb/chunks"
 	"github.com/prometheus/tsdb/index"
 	"github.com/prometheus/tsdb/labels"
@@ -90,6 +91,9 @@ func TestDB_reloadOrder(t *testing.T) {
 
 	testutil.Ok(t, db.reload())
 	blocks := db.Blocks()
+	for _, b := range blocks {
+		b.meta.Stats.NumBytes = 0
+	}
 	testutil.Equals(t, 3, len(blocks))
 	testutil.Equals(t, *metas[1], blocks[0].Meta())
 	testutil.Equals(t, *metas[0], blocks[1].Meta())
@@ -881,59 +885,105 @@ func (*mockCompactorFailing) Compact(dest string, dirs []string, open []*Block) 
 
 }
 
-func TestDB_Retention(t *testing.T) {
-	db, close := openTestDB(t, nil)
-	defer close()
-
-	lbls := labels.Labels{labels.Label{Name: "labelname", Value: "labelvalue"}}
-
-	app := db.Appender()
-	_, err := app.Add(lbls, 0, 1)
-	testutil.Ok(t, err)
-	testutil.Ok(t, app.Commit())
-
-	// create snapshot to make it create a block.
-	// TODO(gouthamve): Add a method to compact headblock.
-	snap, err := ioutil.TempDir("", "snap")
-	testutil.Ok(t, err)
-
-	defer os.RemoveAll(snap)
-	testutil.Ok(t, db.Snapshot(snap, true))
-	testutil.Ok(t, db.Close())
-
-	// reopen DB from snapshot
-	db, err = Open(snap, nil, nil, nil)
-	testutil.Ok(t, err)
-
-	testutil.Equals(t, 1, len(db.blocks))
-
-	app = db.Appender()
-	_, err = app.Add(lbls, 100, 1)
-	testutil.Ok(t, err)
-	testutil.Ok(t, app.Commit())
-
-	// Snapshot again to create another block.
-	snap, err = ioutil.TempDir("", "snap")
-	testutil.Ok(t, err)
-	defer os.RemoveAll(snap)
-
-	testutil.Ok(t, db.Snapshot(snap, true))
-	testutil.Ok(t, db.Close())
-
-	// reopen DB from snapshot
-	db, err = Open(snap, nil, nil, &Options{
-		RetentionDuration: 10,
-		BlockRanges:       []int64{50},
+func TestTimeRetention(t *testing.T) {
+	db, close := openTestDB(t, &Options{
+		BlockRanges: []int64{1000},
 	})
-	testutil.Ok(t, err)
+	defer close()
 	defer db.Close()
 
-	testutil.Equals(t, 2, len(db.blocks))
+	blocks := []*BlockMeta{
+		{MinTime: 500, MaxTime: 900}, // Oldest block
+		{MinTime: 1000, MaxTime: 1500},
+		{MinTime: 1500, MaxTime: 2000}, // Newest Block
+	}
 
-	// Reload blocks, which should drop blocks beyond the retention boundary.
+	for _, m := range blocks {
+		createPopulatedBlock(t, db.Dir(), 10, m.MinTime, m.MaxTime)
+	}
+
+	testutil.Ok(t, db.reload())                       // Reload the db to register the new blocks.
+	testutil.Equals(t, len(blocks), len(db.Blocks())) // Ensure all blocks are registered.
+	metrics := &dto.Metric{}                          // Also check the internal metrics.
+
+	db.opts.RetentionDuration = uint64(blocks[2].MaxTime - blocks[1].MinTime)
 	testutil.Ok(t, db.reload())
-	testutil.Equals(t, 1, len(db.blocks))
-	testutil.Equals(t, int64(100), db.blocks[0].meta.MaxTime) // To verify its the right block.
+	testutil.Ok(t, db.metrics.timeRetentionCount.Write(metrics))
+
+	expBlocks := blocks[1:]
+	actBlocks := db.Blocks()
+	actRetentCount := int(metrics.Counter.GetValue())
+
+	testutil.Equals(t, 1, actRetentCount, "metric retention count mismatch")
+	testutil.Equals(t, len(expBlocks), len(actBlocks))
+	testutil.Equals(t, expBlocks[0].MaxTime, actBlocks[0].meta.MaxTime)
+	testutil.Equals(t, expBlocks[len(expBlocks)-1].MaxTime, actBlocks[len(actBlocks)-1].meta.MaxTime)
+}
+
+func TestSizeRetention(t *testing.T) {
+	db, close := openTestDB(t, &Options{
+		BlockRanges: []int64{100},
+	})
+	defer close()
+	defer db.Close()
+
+	blocks := []*BlockMeta{
+		{MinTime: 100, MaxTime: 200}, // Oldest block
+		{MinTime: 200, MaxTime: 300},
+		{MinTime: 300, MaxTime: 400},
+		{MinTime: 400, MaxTime: 500},
+		{MinTime: 500, MaxTime: 600}, // Newest Block
+	}
+
+	for _, m := range blocks {
+		createPopulatedBlock(t, db.Dir(), 100, m.MinTime, m.MaxTime)
+	}
+
+	// Test that registered size matches the actual disk size.
+	testutil.Ok(t, db.reload())                       // Reload the db to register the new db size.
+	testutil.Equals(t, len(blocks), len(db.Blocks())) // Ensure all blocks are registered.
+	metrics := &dto.Metric{}                          // Use the the actual internal metrics.
+	testutil.Ok(t, db.metrics.blocksBytes.Write(metrics))
+	expSize := int64(metrics.Gauge.GetValue())
+	actSize := dbDiskSize(db.Dir())
+	testutil.Equals(t, expSize, actSize, "registered size doesn't match actual disk size")
+
+	// Decrease the max bytes limit so that a delete is triggered.
+	// Check total size, total count and check that the oldest block was deleted.
+	firstBlockSize := db.Blocks()[0].Size()
+	sizeLimit := actSize - firstBlockSize
+	db.opts.MaxBytes = sizeLimit // Set the new db size limit one block smaller that the actual size.
+	testutil.Ok(t, db.reload())  // Reload the db to register the new db size.
+	testutil.Ok(t, db.metrics.blocksBytes.Write(metrics))
+	testutil.Ok(t, db.metrics.sizeRetentionCount.Write(metrics))
+
+	expBlocks := blocks[1:]
+	actBlocks := db.Blocks()
+	expSize = int64(metrics.Gauge.GetValue())
+	actRetentCount := int(metrics.Counter.GetValue())
+	actSize = dbDiskSize(db.Dir())
+
+	testutil.Equals(t, 1, actRetentCount, "metric retention count mismatch")
+	testutil.Equals(t, actSize, expSize, "metric db size doesn't match actual disk size")
+	testutil.Assert(t, expSize <= sizeLimit, "actual size (%v) is expected to be less than or equal to limit (%v)", expSize, sizeLimit)
+	testutil.Equals(t, len(blocks)-1, len(actBlocks), "new block count should be decreased from:%v to:%v", len(blocks), len(blocks)-1)
+	testutil.Equals(t, expBlocks[0].MaxTime, actBlocks[0].meta.MaxTime, "maxT mismatch of the first block")
+	testutil.Equals(t, expBlocks[len(expBlocks)-1].MaxTime, actBlocks[len(actBlocks)-1].meta.MaxTime, "maxT mismatch of the last block")
+
+}
+
+func dbDiskSize(dir string) int64 {
+	var statSize int64
+	filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		// Include only index,tombstone and chunks.
+		if filepath.Dir(path) == chunkDir(filepath.Dir(filepath.Dir(path))) ||
+			info.Name() == indexFilename ||
+			info.Name() == tombstoneFilename {
+			statSize += info.Size()
+		}
+		return nil
+	})
+	return statSize
 }
 
 func TestNotMatcherSelectsLabelsUnsetSeries(t *testing.T) {
