@@ -55,12 +55,17 @@ type Compactor interface {
 	Plan(dir string) ([]string, error)
 
 	// Write persists a Block into a directory.
+	// No Block is written when resulting Block has 0 samples, and returns empty ulid.ULID{}.
 	Write(dest string, b BlockReader, mint, maxt int64, parent *BlockMeta) (ulid.ULID, error)
 
 	// Compact runs compaction against the provided directories. Must
 	// only be called concurrently with results of Plan().
 	// Can optionally pass a list of already open blocks,
 	// to avoid having to reopen them.
+	// When resulting Block has 0 samples
+	//  * No block is written.
+	//  * The source dirs are marked Deletable.
+	//  * Returns empty ulid.ULID{}.
 	Compact(dest string, dirs []string, open []*Block) (ulid.ULID, error)
 }
 
@@ -367,17 +372,22 @@ func (c *LeveledCompactor) Compact(dest string, dirs []string, open []*Block) (u
 	err = c.write(dest, meta, blocks...)
 	if err == nil {
 		if meta.Stats.NumSamples == 0 {
+			for _, b := range bs {
+				b.meta.Compaction.Deletable = true
+				if err = writeMetaFile(b.dir, &b.meta); err != nil {
+					level.Error(c.logger).Log(
+						"msg", "Failed to write 'Deletable' to meta file after compaction",
+						"ulid", b.meta.ULID,
+					)
+				}
+			}
+			uid = ulid.ULID{}
 			level.Info(c.logger).Log(
 				"msg", "compact blocks [resulted in empty block]",
 				"count", len(blocks),
 				"sources", fmt.Sprintf("%v", uids),
 				"duration", time.Since(start),
 			)
-			for _, b := range bs {
-				b.meta.Compaction.Deletable = true
-				writeMetaFile(b.dir, &b.meta)
-			}
-			uid = ulid.ULID{}
 		} else {
 			level.Info(c.logger).Log(
 				"msg", "compact blocks",
