@@ -423,7 +423,6 @@ func (h *Head) loadWAL(r *wal.Reader) error {
 				Segment: r.Segment(),
 				Offset:  r.Offset(),
 			}
-			return errors.Errorf("invalid record type %v", dec.Type(rec))
 		}
 	}
 	if r.Err() != nil {
