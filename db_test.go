@@ -14,7 +14,6 @@
 package tsdb
 
 import (
-	"flag"
 	"fmt"
 	"io/ioutil"
 	"math"
@@ -1459,12 +1458,7 @@ func TestCorrectNumTombstones(t *testing.T) {
 // This ensures that a snapshot that includes the head and creates a block with a custom time range
 // will not overlap with the first block created by the next compaction.
 func TestBlockRanges(t *testing.T) {
-	logger := log.NewNopLogger()
-	flag.Visit(func(f *flag.Flag) { // Use a real logger when we the test runs in verbose mode.
-		if f.Name == "test.v" && f.Value.String() == "true" {
-			logger = log.NewLogfmtLogger(log.NewSyncWriter(os.Stderr))
-		}
-	})
+	logger := log.NewLogfmtLogger(log.NewSyncWriter(os.Stderr))
 
 	dir, err := ioutil.TempDir("", "test_storage")
 	if err != nil {
