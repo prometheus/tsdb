@@ -1418,7 +1418,7 @@ func (s *memSeries) cut(mint int64) *memChunk {
 
 	// Set upper bound on when the next chunk must be started. An earlier timestamp
 	// may be chosen dynamically at a later point.
-	_, s.nextAt = rangeForTimestamp(mint, s.chunkRange)
+	s.nextAt = rangeForTimestamp(mint, s.chunkRange)
 
 	app, err := c.chunk.Appender()
 	if err != nil {

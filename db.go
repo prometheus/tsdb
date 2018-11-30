@@ -396,7 +396,7 @@ func (db *DB) compact() (err error) {
 			break
 		}
 		mint := db.head.MinTime()
-		_, maxt := rangeForTimestamp(mint, db.opts.BlockRanges[0])
+		maxt := rangeForTimestamp(mint, db.opts.BlockRanges[0])
 
 		// Wrap head into a range that bounds all reads to it.
 		head := &rangeHead{
@@ -827,9 +827,8 @@ func (db *DB) Querier(mint, maxt int64) (Querier, error) {
 	return sq, nil
 }
 
-func rangeForTimestamp(t int64, width int64) (mint, maxt int64) {
-	mint = (t / width) * width
-	return mint, mint + width
+func rangeForTimestamp(t int64, width int64) (maxt int64) {
+	return (t/width)*width + width
 }
 
 // Delete implements deletion of metrics. It only has atomicity guarantees on a per-block basis.
