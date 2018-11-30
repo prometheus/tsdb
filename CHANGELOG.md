@@ -1,4 +1,4 @@
-## Next Release API changes.
+## master / unreleased
 
  - `LastCheckpoint` used to return just the segment name and now it returns the full path.
  - `NewSegmentsRangeReader` can now read over miltiple wal ranges by using the new `SegmentRange` struct.
