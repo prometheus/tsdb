@@ -873,7 +873,7 @@ func (r *Reader) Record() []byte {
 	return r.rec
 }
 
-// Segment returns the current segment being red.
+// Segment returns the current segment being read.
 func (r *Reader) Segment() int {
 	if b, ok := r.rdr.(*segmentBufReader); ok {
 		return b.segs[b.cur].Index()
@@ -881,7 +881,7 @@ func (r *Reader) Segment() int {
 	return -1
 }
 
-// Offset returns the current position of the segment being red.
+// Offset returns the current position of the segment being read.
 func (r *Reader) Offset() int64 {
 	if b, ok := r.rdr.(*segmentBufReader); ok {
 		return int64(b.off)

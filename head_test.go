@@ -927,6 +927,7 @@ func TestWalRepair(t *testing.T) {
 
 			sr, err := wal.NewSegmentsReader(dir)
 			testutil.Ok(t, err)
+			defer sr.Close()
 			r := wal.NewReader(sr)
 
 			var actRec int
