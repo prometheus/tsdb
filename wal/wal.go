@@ -231,7 +231,7 @@ func NewSize(logger log.Logger, reg prometheus.Registerer, dir string, segmentSi
 			return nil, err
 		}
 	} else {
-		if w.segment, err = OpenWriteSegment(w.logger, w.dir, j); err != nil {
+		if w.segment, err = OpenWriteSegment(logger, w.dir, j); err != nil {
 			return nil, err
 		}
 		// Correctly initialize donePages.
@@ -341,6 +341,10 @@ func (w *WAL) Repair(origErr error) error {
 	r := NewReader(bufio.NewReader(f))
 
 	for r.Next() {
+		// Add records only up to the where the error was.
+		if r.Offset() >= cerr.Offset {
+			break
+		}
 		if err := w.Log(r.Record()); err != nil {
 			return errors.Wrap(err, "insert record")
 		}
@@ -713,11 +717,12 @@ func (r *segmentBufReader) Read(b []byte) (n int, err error) {
 
 // Reader reads WAL records from an io.Reader.
 type Reader struct {
-	rdr   io.Reader
-	err   error
-	rec   []byte
-	buf   [pageSize]byte
-	total int64 // total bytes processed.
+	rdr       io.Reader
+	err       error
+	rec       []byte
+	buf       [pageSize]byte
+	total     int64   // Total bytes processed.
+	curRecTyp recType // Used for checking that the last record is not torn.
 }
 
 // NewReader returns a new reader.
@@ -730,6 +735,12 @@ func NewReader(r io.Reader) *Reader {
 func (r *Reader) Next() bool {
 	err := r.next()
 	if errors.Cause(err) == io.EOF {
+		// The last WAL segment record shouldn't be torn(should be full or last).
+		// The last record would be torn after a crash just before
+		// the last record part could be persisted to disk.
+		if recType(r.curRecTyp) == recFirst || recType(r.curRecTyp) == recMiddle {
+			r.err = errors.New("last record is torn")
+		}
 		return false
 	}
 	r.err = err
@@ -750,12 +761,13 @@ func (r *Reader) next() (err error) {
 			return errors.Wrap(err, "read first header byte")
 		}
 		r.total++
-		typ := recType(hdr[0])
+		r.curRecTyp = recType(hdr[0])
 
 		// Gobble up zero bytes.
-		if typ == recPageTerm {
-			// recPageTerm is a single byte that indicates that the rest of the page is padded.
-			// If it's the first byte in a page, buf is too small and we have to resize buf to fit pageSize-1 bytes.
+		if r.curRecTyp == recPageTerm {
+			// recPageTerm is a single byte that indicates the rest of the page is padded.
+			// If it's the first byte in a page, buf is too small and
+			// needs to be resized to fit pageSize-1 bytes.
 			buf = r.buf[1:]
 
 			// We are pedantic and check whether the zeros are actually up
@@ -806,7 +818,7 @@ func (r *Reader) next() (err error) {
 		}
 		r.rec = append(r.rec, buf[:length]...)
 
-		switch typ {
+		switch r.curRecTyp {
 		case recFull:
 			if i != 0 {
 				return errors.New("unexpected full record")
@@ -826,7 +838,7 @@ func (r *Reader) next() (err error) {
 			}
 			return nil
 		default:
-			return errors.Errorf("unexpected record type %d", typ)
+			return errors.Errorf("unexpected record type %d", r.curRecTyp)
 		}
 		// Only increment i for non-zero records since we use it
 		// to determine valid content record sequences.
@@ -859,6 +871,22 @@ func (r *Reader) Err() error {
 // valid until the next call to Next.
 func (r *Reader) Record() []byte {
 	return r.rec
+}
+
+// Segment returns the current segment being read.
+func (r *Reader) Segment() int {
+	if b, ok := r.rdr.(*segmentBufReader); ok {
+		return b.segs[b.cur].Index()
+	}
+	return -1
+}
+
+// Offset returns the current position of the segment being read.
+func (r *Reader) Offset() int64 {
+	if b, ok := r.rdr.(*segmentBufReader); ok {
+		return int64(b.off)
+	}
+	return r.total
 }
 
 func min(i, j int) int {
