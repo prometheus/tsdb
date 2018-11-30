@@ -1460,7 +1460,7 @@ func TestCorrectNumTombstones(t *testing.T) {
 // will not overlap with the first block created by the next compaction.
 func TestBlockRanges(t *testing.T) {
 	logger := log.NewNopLogger()
-	flag.Visit(func(f *flag.Flag) {
+	flag.Visit(func(f *flag.Flag) { // Use a real logger when we the test runs in verbose mode.
 		if f.Name == "test.v" && f.Value.String() == "true" {
 			logger = log.NewLogfmtLogger(log.NewSyncWriter(os.Stderr))
 		}
