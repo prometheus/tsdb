@@ -655,11 +655,18 @@ func (h *Head) Appender() Appender {
 func (h *Head) appender() *headAppender {
 	return &headAppender{
 		head:         h,
-		minValidTime: h.MaxTime() - h.chunkRange/2,
+		minValidTime: max(h.MinTime(), h.MaxTime()-h.chunkRange/2),
 		mint:         math.MaxInt64,
 		maxt:         math.MinInt64,
 		samples:      h.getAppendBuffer(),
 	}
+}
+
+func max(a, b int64) int64 {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func (h *Head) getAppendBuffer() []RefSample {

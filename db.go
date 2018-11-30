@@ -395,7 +395,8 @@ func (db *DB) compact() (err error) {
 		if db.head.MaxTime()-db.head.MinTime() <= db.opts.BlockRanges[0]/2*3 {
 			break
 		}
-		mint, maxt := rangeForTimestamp(db.head.MinTime(), db.opts.BlockRanges[0])
+		mint := db.head.MinTime()
+		_, maxt := rangeForTimestamp(mint, db.opts.BlockRanges[0])
 
 		// Wrap head into a range that bounds all reads to it.
 		head := &rangeHead{
