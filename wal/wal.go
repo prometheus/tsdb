@@ -348,7 +348,6 @@ func (w *WAL) Repair(origErr error) error {
 		if err := w.Log(r.Record()); err != nil {
 			return errors.Wrap(err, "insert record")
 		}
-
 	}
 	// We expect an error here from r.Err(), so nothing to handle.
 
