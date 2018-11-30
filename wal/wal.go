@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"hash/crc32"
 	"io"
-	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -638,10 +637,10 @@ type SegmentRange struct {
 
 // NewSegmentsReader returns a new reader over all segments in the directory.
 func NewSegmentsReader(dir string) (io.ReadCloser, error) {
-	return NewSegmentsRangeReader(SegmentRange{dir, 0, math.MaxInt32})
+	return NewSegmentsRangeReader(SegmentRange{dir, -1, -1})
 }
 
-// NewSegmentsRangeReader returns a new reader over the given WAL segment range.
+// NewSegmentsRangeReader returns a new reader over the given WAL segment ranges.
 // If first or last are -1, the range is open on the respective end.
 func NewSegmentsRangeReader(sr ...SegmentRange) (io.ReadCloser, error) {
 	var segs []*Segment
