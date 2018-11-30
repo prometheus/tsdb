@@ -1560,3 +1560,89 @@ func (m mockIndex) LabelNames() ([]string, error) {
 	sort.Strings(labelNames)
 	return labelNames, nil
 }
+
+func BenchmarkQueryIteratorOverMultipleBlocks(b *testing.B) {
+	numBlocks := 20
+	nSeries := 1000
+	numSamplesPerSeriesPerBlock := 2000
+
+	dir, err := ioutil.TempDir("", "bench_query_iterator")
+	testutil.Ok(b, err)
+	defer os.RemoveAll(dir)
+
+	var blocks []*Block
+	for i := int64(0); i < int64(numBlocks); i++ {
+		block := createPopulatedBlock(b, dir, nSeries, numSamplesPerSeriesPerBlock, i*1000000000)
+		blocks = append(blocks, block)
+		defer block.Close()
+	}
+
+	sq := &querier{
+		blocks: make([]Querier, 0, len(blocks)),
+	}
+	defer sq.Close()
+	for _, blk := range blocks {
+		q, err := NewBlockQuerier(blk, math.MinInt64, math.MaxInt64)
+		testutil.Ok(b, err)
+		sq.blocks = append(sq.blocks, q)
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	ss, err := sq.Select(labels.NewMustRegexpMatcher("__name__", ".+"))
+	for ss.Next() {
+		s := ss.At()
+		it := s.Iterator()
+		for it.Next() {
+		}
+		testutil.Ok(b, it.Err())
+	}
+	testutil.Ok(b, ss.Err())
+	testutil.Ok(b, err)
+}
+
+func BenchmarkQuerySeekOverMultipleBlocks(b *testing.B) {
+	numBlocks := 20
+	nSeries := 100
+	numSamplesPerSeriesPerBlock := 200
+
+	dir, err := ioutil.TempDir("", "bench_query_seek")
+	testutil.Ok(b, err)
+	defer os.RemoveAll(dir)
+
+	var blocks []*Block
+	for i := int64(0); i < int64(numBlocks); i++ {
+		block := createPopulatedBlock(b, dir, nSeries, numSamplesPerSeriesPerBlock, i*1000000000)
+		blocks = append(blocks, block)
+		defer block.Close()
+	}
+
+	sq := &querier{
+		blocks: make([]Querier, 0, len(blocks)),
+	}
+	defer sq.Close()
+	for _, blk := range blocks {
+		q, err := NewBlockQuerier(blk, math.MinInt64, math.MaxInt64)
+		testutil.Ok(b, err)
+		sq.blocks = append(sq.blocks, q)
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	ss, err := sq.Select(labels.NewMustRegexpMatcher("__name__", ".+"))
+	for ss.Next() {
+		s := ss.At()
+		it := s.Iterator()
+		for i := int64(0); i < int64(numBlocks); i++ {
+			st := i * 1000000000
+			for t := int64(0); t <= int64(numSamplesPerSeriesPerBlock); t++ {
+				it.Seek(st + (t * 1000))
+			}
+		}
+		testutil.Ok(b, it.Err())
+	}
+	testutil.Ok(b, ss.Err())
+	testutil.Ok(b, err)
+}
