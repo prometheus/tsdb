@@ -1317,7 +1317,10 @@ func TestNoEmptyBlocks(t *testing.T) {
 
 	// Test no blocks after compact with empty head.
 	testutil.Ok(t, db.compact())
-	testutil.Equals(t, 0, len(db.Blocks()))
+	bb, err := blockDirs(db.Dir())
+	testutil.Ok(t, err)
+	testutil.Equals(t, len(db.Blocks()), len(bb))
+	testutil.Equals(t, 0, len(bb))
 
 	// Test no blocks after deleting all samples from head.
 	blockRange := DefaultOptions.BlockRanges[0]
@@ -1339,7 +1342,10 @@ func TestNoEmptyBlocks(t *testing.T) {
 	testutil.Ok(t, db.reload())
 	testutil.Ok(t, db.head.Truncate(db.head.MaxTime()))
 	// No blocks created.
-	testutil.Equals(t, 0, len(db.Blocks()))
+	bb, err = blockDirs(db.Dir())
+	testutil.Ok(t, err)
+	testutil.Equals(t, len(db.Blocks()), len(bb))
+	testutil.Equals(t, 0, len(bb))
 
 	app = db.Appender()
 	for i := int64(7); i < 25; i++ {
@@ -1351,7 +1357,10 @@ func TestNoEmptyBlocks(t *testing.T) {
 	testutil.Ok(t, app.Commit())
 
 	testutil.Ok(t, db.compact())
-	testutil.Assert(t, len(db.Blocks()) > 0, "No blocks created when compacting with >0 samples")
+	bb, err = blockDirs(db.Dir())
+	testutil.Ok(t, err)
+	testutil.Equals(t, len(db.Blocks()), len(bb))
+	testutil.Assert(t, len(bb) > 0, "No blocks created when compacting with >0 samples")
 
 	// When no new block is created from head, and there are some blocks on disk,
 	// compaction should not run into infinite loop (was seen during development).
@@ -1400,7 +1409,10 @@ func TestNoEmptyBlocks(t *testing.T) {
 	// Deletes the deletable blocks.
 	testutil.Ok(t, db.reload())
 	// All samples are deleted. No blocks should be remaining after compact.
-	testutil.Equals(t, 0, len(db.Blocks()))
+	bb, err = blockDirs(db.Dir())
+	testutil.Ok(t, err)
+	testutil.Equals(t, len(db.Blocks()), len(bb))
+	testutil.Equals(t, 0, len(bb))
 }
 
 func TestDB_LabelNames(t *testing.T) {
