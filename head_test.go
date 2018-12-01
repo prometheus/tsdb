@@ -15,6 +15,7 @@ package tsdb
 
 import (
 	"io/ioutil"
+	"math"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -123,7 +124,7 @@ func TestHead_ReadWAL(t *testing.T) {
 	testutil.Ok(t, err)
 	defer head.Close()
 
-	testutil.Ok(t, head.Init())
+	testutil.Ok(t, head.Init(math.MinInt64))
 	testutil.Equals(t, uint64(100), head.lastSeriesID)
 
 	s10 := head.series.getByID(10)
@@ -288,7 +289,7 @@ func TestHeadDeleteSeriesWithoutSamples(t *testing.T) {
 	testutil.Ok(t, err)
 	defer head.Close()
 
-	testutil.Ok(t, head.Init())
+	testutil.Ok(t, head.Init(math.MinInt64))
 
 	testutil.Ok(t, head.Delete(0, 100, labels.NewEqualMatcher("a", "1")))
 }
@@ -923,7 +924,7 @@ func TestWalRepair(t *testing.T) {
 
 			h, err := NewHead(nil, nil, w, 1)
 			testutil.Ok(t, err)
-			testutil.Ok(t, h.Init())
+			testutil.Ok(t, h.Init(math.MinInt64))
 
 			sr, err := wal.NewSegmentsReader(dir)
 			testutil.Ok(t, err)

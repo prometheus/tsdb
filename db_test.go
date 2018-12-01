@@ -1200,6 +1200,11 @@ func TestQuerierWithBoundaryChunks(t *testing.T) {
 	testutil.Assert(t, count == 2, "expected 2 blocks in querier, got %d", count)
 }
 
+// TestInitializeHeadTimestamp ensures that the h.minTime is set properly.
+// 	- no blocks no WAL: set to the time of the first  appended sample
+// 	- no blocks with WAL: set to the smallest sample from the WAL
+//	- with blocks no WAL: set to the last block maxT
+// 	- with blocks with WAL: same as above
 func TestInitializeHeadTimestamp(t *testing.T) {
 	t.Run("clean", func(t *testing.T) {
 		dir, err := ioutil.TempDir("", "test_head_init")
@@ -1443,11 +1448,6 @@ func TestCorrectNumTombstones(t *testing.T) {
 	testutil.Equals(t, uint64(3), db.blocks[0].meta.Stats.NumTombstones)
 }
 
-// h.minTime in different scenarios:
-// 	- no blocks no WAL: set to the time of the first  appended sample
-// 	- no blocks with WAL: set to the smallest sample from the WAL
-//	- with blocks no WAL: set to the last block maxT
-// 	- with blocks with WAL: same as above
 // TestBlockRanges checks the following use cases:
 //  - No samples can be added with timestamps lower than the last block maxt.
 //  - The compactor doesn't create overlaping blocks
