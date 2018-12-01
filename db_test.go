@@ -181,7 +181,7 @@ func TestDBAppenderAddRef(t *testing.T) {
 	err = app2.AddFast(ref2, 143, 2)
 	testutil.Ok(t, err)
 
-	err = app2.AddFast(9999999, 124, 1)
+	err = app2.AddFast(9999999, 1, 1)
 	testutil.Equals(t, ErrNotFound, errors.Cause(err))
 
 	testutil.Ok(t, app2.Commit())
@@ -570,20 +570,20 @@ func TestDB_e2e(t *testing.T) {
 
 	app := db.Appender()
 
-	ts := rand.Int63n(300)
 	for _, l := range lbls {
 		lset := labels.New(l...)
 		series := []sample{}
 
-		next := ts
+		ts := rand.Int63n(300)
 		for i := 0; i < numDatapoints; i++ {
 			v := rand.Float64()
 
-			series = append(series, sample{next, v})
-			_, err := app.Add(lset, next, v)
+			series = append(series, sample{ts, v})
+
+			_, err := app.Add(lset, ts, v)
 			testutil.Ok(t, err)
 
-			next += rand.Int63n(timeInterval) + 1
+			ts += rand.Int63n(timeInterval) + 1
 		}
 
 		seriesMap[lset.String()] = series
