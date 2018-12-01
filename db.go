@@ -184,7 +184,7 @@ func newDBMetrics(db *DB, r prometheus.Registerer) *dbMetrics {
 	})
 	m.startTime = prometheus.NewGaugeFunc(prometheus.GaugeOpts{
 		Name: "prometheus_tsdb_lowest_timestamp",
-		Help: "Lowest timestamp value stored in the database.",
+		Help: "Lowest timestamp value stored in the database. The unit is decided by the library consumer.",
 	}, func() float64 {
 		db.mtx.RLock()
 		defer db.mtx.RUnlock()
@@ -271,11 +271,11 @@ func Open(dir string, l log.Logger, r prometheus.Registerer, opts *Options) (db 
 	if err != nil {
 		return nil, err
 	}
-	if err := db.reload(); err != nil {
-		return nil, err
-	}
 	if err := db.head.Init(); err != nil {
 		return nil, errors.Wrap(err, "read WAL")
+	}
+	if err := db.reload(); err != nil {
+		return nil, err
 	}
 
 	go db.run()

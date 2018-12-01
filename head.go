@@ -15,7 +15,6 @@ package tsdb
 
 import (
 	"math"
-	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
@@ -138,13 +137,13 @@ func newHeadMetrics(h *Head, r prometheus.Registerer) *headMetrics {
 	})
 	m.maxTime = prometheus.NewGaugeFunc(prometheus.GaugeOpts{
 		Name: "prometheus_tsdb_head_max_time",
-		Help: "Maximum timestamp of the head block.",
+		Help: "Maximum timestamp of the head block. The unit is decided by the library consumer.",
 	}, func() float64 {
 		return float64(h.MaxTime())
 	})
 	m.minTime = prometheus.NewGaugeFunc(prometheus.GaugeOpts{
 		Name: "prometheus_tsdb_head_min_time",
-		Help: "Minimum time bound of the head block.",
+		Help: "Minimum time bound of the head block. The unit is decided by the library consumer.",
 	}, func() float64 {
 		return float64(h.MinTime())
 	})
@@ -349,7 +348,11 @@ func (h *Head) loadWAL(r *wal.Reader) error {
 		case RecordSeries:
 			series, err = dec.Series(rec, series)
 			if err != nil {
-				return errors.Wrap(err, "decode series")
+				return &wal.CorruptionErr{
+					Err:     errors.Wrap(err, "decode series"),
+					Segment: r.Segment(),
+					Offset:  r.Offset(),
+				}
 			}
 			for _, s := range series {
 				h.getOrCreateWithID(s.Ref, s.Labels.Hash(), s.Labels)
@@ -362,7 +365,11 @@ func (h *Head) loadWAL(r *wal.Reader) error {
 			samples, err = dec.Samples(rec, samples)
 			s := samples
 			if err != nil {
-				return errors.Wrap(err, "decode samples")
+				return &wal.CorruptionErr{
+					Err:     errors.Wrap(err, "decode samples"),
+					Segment: r.Segment(),
+					Offset:  r.Offset(),
+				}
 			}
 			// We split up the samples into chunks of 5000 samples or less.
 			// With O(300 * #cores) in-flight sample batches, large scrapes could otherwise
@@ -395,7 +402,11 @@ func (h *Head) loadWAL(r *wal.Reader) error {
 		case RecordTombstones:
 			tstones, err = dec.Tombstones(rec, tstones)
 			if err != nil {
-				return errors.Wrap(err, "decode tombstones")
+				return &wal.CorruptionErr{
+					Err:     errors.Wrap(err, "decode tombstones"),
+					Segment: r.Segment(),
+					Offset:  r.Offset(),
+				}
 			}
 			for _, s := range tstones {
 				for _, itv := range s.intervals {
@@ -406,7 +417,11 @@ func (h *Head) loadWAL(r *wal.Reader) error {
 				}
 			}
 		default:
-			return errors.Errorf("invalid record type %v", dec.Type(rec))
+			return &wal.CorruptionErr{
+				Err:     errors.Errorf("invalid record type %v", dec.Type(rec)),
+				Segment: r.Segment(),
+				Offset:  r.Offset(),
+			}
 		}
 	}
 	if r.Err() != nil {
@@ -441,7 +456,7 @@ func (h *Head) Init() error {
 		return errors.Wrap(err, "find last checkpoint")
 	}
 	if err == nil {
-		sr, err := wal.NewSegmentsReader(filepath.Join(h.wal.Dir(), dir))
+		sr, err := wal.NewSegmentsReader(dir)
 		if err != nil {
 			return errors.Wrap(err, "open checkpoint")
 		}
@@ -456,7 +471,7 @@ func (h *Head) Init() error {
 	}
 
 	// Backfill segments from the last checkpoint onwards
-	sr, err := wal.NewSegmentsRangeReader(h.wal.Dir(), startFrom, -1)
+	sr, err := wal.NewSegmentsRangeReader(wal.SegmentRange{Dir: h.wal.Dir(), First: startFrom, Last: -1})
 	if err != nil {
 		return errors.Wrap(err, "open WAL segments")
 	}
