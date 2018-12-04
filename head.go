@@ -60,7 +60,7 @@ type Head struct {
 	bytesPool  sync.Pool
 
 	minTime, maxTime int64 // Current min and max of the samples included in the head.
-	minValidTime     int64 // Mint allowed to be added to te head. It shouldn't be lower than the last persisted block.
+	minValidTime     int64 // Mint allowed to be added to the head. It shouldn't be lower than the maxt of the last persisted block.
 	lastSeriesID     uint64
 
 	// All series addressable by their ID or hash.
@@ -501,6 +501,7 @@ func (h *Head) Truncate(mint int64) (err error) {
 		return nil
 	}
 	atomic.StoreInt64(&h.minTime, mint)
+	h.minValidTime = mint
 
 	// Ensure that max time is at least as high as min time.
 	for h.MaxTime() < mint {
