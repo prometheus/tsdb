@@ -1,5 +1,7 @@
 ## master / unreleased
 
+## 0.3.0
+
  - [CHANGE] `LastCheckpoint()` used to return just the segment name and now it returns the full relative path.
  - [CHANGE] `NewSegmentsRangeReader()` can now read over miltiple wal ranges by using the new `SegmentRange{}` struct.
  - [CHANGE] `CorruptionErr{}` now also exposes the Segment `Dir` which is added when displaying any errors.
