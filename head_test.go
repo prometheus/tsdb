@@ -15,6 +15,7 @@ package tsdb
 
 import (
 	"io/ioutil"
+	"math"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -123,7 +124,7 @@ func TestHead_ReadWAL(t *testing.T) {
 	testutil.Ok(t, err)
 	defer head.Close()
 
-	testutil.Ok(t, head.Init())
+	testutil.Ok(t, head.Init(math.MinInt64))
 	testutil.Equals(t, uint64(100), head.lastSeriesID)
 
 	s10 := head.series.getByID(10)
@@ -132,7 +133,7 @@ func TestHead_ReadWAL(t *testing.T) {
 	s100 := head.series.getByID(100)
 
 	testutil.Equals(t, labels.FromStrings("a", "1"), s10.lset)
-	testutil.Equals(t, labels.FromStrings("a", "2"), s11.lset)
+	testutil.Equals(t, (*memSeries)(nil), s11) // Series without samples should be garbage colected at head.Init().
 	testutil.Equals(t, labels.FromStrings("a", "4"), s50.lset)
 	testutil.Equals(t, labels.FromStrings("a", "3"), s100.lset)
 
@@ -146,7 +147,6 @@ func TestHead_ReadWAL(t *testing.T) {
 	}
 
 	testutil.Equals(t, []sample{{100, 2}, {101, 5}}, expandChunk(s10.iterator(0)))
-	testutil.Equals(t, 0, len(s11.chunks))
 	testutil.Equals(t, []sample{{101, 6}}, expandChunk(s50.iterator(0)))
 	testutil.Equals(t, []sample{{100, 3}}, expandChunk(s100.iterator(0)))
 }
@@ -288,7 +288,7 @@ func TestHeadDeleteSeriesWithoutSamples(t *testing.T) {
 	testutil.Ok(t, err)
 	defer head.Close()
 
-	testutil.Ok(t, head.Init())
+	testutil.Ok(t, head.Init(math.MinInt64))
 
 	testutil.Ok(t, head.Delete(0, 100, labels.NewEqualMatcher("a", "1")))
 }
@@ -860,4 +860,83 @@ func TestHead_LogRollback(t *testing.T) {
 	series, ok := recs[0].([]RefSeries)
 	testutil.Assert(t, ok, "expected series record but got %+v", recs[0])
 	testutil.Equals(t, []RefSeries{{Ref: 1, Labels: labels.FromStrings("a", "b")}}, series)
+}
+
+func TestWalRepair(t *testing.T) {
+	var enc RecordEncoder
+	for name, test := range map[string]struct {
+		corrFunc  func(rec []byte) []byte // Func that applies the corruption to a record.
+		rec       []byte
+		totalRecs int
+		expRecs   int
+	}{
+		"invalid_record": {
+			func(rec []byte) []byte {
+				rec[0] = byte(RecordInvalid)
+				return rec
+			},
+			enc.Series([]RefSeries{{Ref: 1, Labels: labels.FromStrings("a", "b")}}, []byte{}),
+			9,
+			5,
+		},
+		"decode_series": {
+			func(rec []byte) []byte {
+				return rec[:3]
+			},
+			enc.Series([]RefSeries{{Ref: 1, Labels: labels.FromStrings("a", "b")}}, []byte{}),
+			9,
+			5,
+		},
+		"decode_samples": {
+			func(rec []byte) []byte {
+				return rec[:3]
+			},
+			enc.Samples([]RefSample{{Ref: 0, T: 99, V: 1}}, []byte{}),
+			9,
+			5,
+		},
+		"decode_tombstone": {
+			func(rec []byte) []byte {
+				return rec[:3]
+			},
+			enc.Tombstones([]Stone{{ref: 1, intervals: Intervals{}}}, []byte{}),
+			9,
+			5,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir, err := ioutil.TempDir("", "wal_head_repair")
+			testutil.Ok(t, err)
+			defer os.RemoveAll(dir)
+
+			w, err := wal.New(nil, nil, dir)
+			testutil.Ok(t, err)
+
+			for i := 1; i <= test.totalRecs; i++ {
+				// At this point insert a corrupted record.
+				if i-1 == test.expRecs {
+					testutil.Ok(t, w.Log(test.corrFunc(test.rec)))
+					continue
+				}
+				testutil.Ok(t, w.Log(test.rec))
+			}
+
+			h, err := NewHead(nil, nil, w, 1)
+			testutil.Ok(t, err)
+			testutil.Ok(t, h.Init(math.MinInt64))
+
+			sr, err := wal.NewSegmentsReader(dir)
+			testutil.Ok(t, err)
+			defer sr.Close()
+			r := wal.NewReader(sr)
+
+			var actRec int
+			for r.Next() {
+				actRec++
+			}
+			testutil.Ok(t, r.Err())
+			testutil.Equals(t, test.expRecs, actRec, "Wrong number of intact records")
+
+		})
+	}
 }
