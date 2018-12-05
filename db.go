@@ -234,12 +234,12 @@ func Open(dir string, l log.Logger, r prometheus.Registerer, opts *Options) (db 
 	}
 
 	db = &DB{
-		dir:                dir,
-		logger:             l,
-		opts:               opts,
-		compactc:           make(chan struct{}, 1),
-		donec:              make(chan struct{}),
-		stopc:              make(chan struct{}),
+		dir:         dir,
+		logger:      l,
+		opts:        opts,
+		compactc:    make(chan struct{}, 1),
+		donec:       make(chan struct{}),
+		stopc:       make(chan struct{}),
 		autoCompact: true,
 	}
 	db.metrics = newDBMetrics(db, r)
