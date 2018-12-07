@@ -723,65 +723,56 @@ func TestCompaction_populateBlock(t *testing.T) {
 }
 
 func BenchmarkCompaction(b *testing.B) {
-
 	cases := []struct {
-		startTimes          []int64
-		numSamplesPerSeries int
-		compactionType      string
+		ranges         [][2]int64
+		compactionType string
 	}{
 		{
-			startTimes:          []int64{0, 2000000000, 4000000000, 6000000000},
-			numSamplesPerSeries: 100,
-			compactionType:      "normal",
+			ranges:         [][2]int64{{0, 100}, {200, 300}, {400, 500}, {600, 700}},
+			compactionType: "normal",
 		},
 		{
-			startTimes:          []int64{0, 2000000000, 4000000000, 6000000000},
-			numSamplesPerSeries: 1000,
-			compactionType:      "normal",
+			ranges:         [][2]int64{{0, 1000}, {2000, 3000}, {4000, 5000}, {6000, 7000}},
+			compactionType: "normal",
 		},
 		{
-			startTimes:          []int64{0, 2000000000, 4000000000, 6000000000},
-			numSamplesPerSeries: 10000,
-			compactionType:      "normal",
+			ranges:         [][2]int64{{0, 10000}, {20000, 30000}, {40000, 50000}, {60000, 70000}},
+			compactionType: "normal",
 		},
 		{
-			startTimes:          []int64{0, 2000000000, 4000000000, 6000000000},
-			numSamplesPerSeries: 100000,
-			compactionType:      "normal",
+			ranges:         [][2]int64{{0, 100000}, {200000, 300000}, {400000, 500000}, {600000, 700000}},
+			compactionType: "normal",
+		},
+		// 40% overlaps.
+		{
+			ranges:         [][2]int64{{0, 100}, {60, 160}, {120, 220}, {180, 280}},
+			compactionType: "vertical",
 		},
 		{
-			startTimes:          []int64{0, 20000, 40000, 60000},
-			numSamplesPerSeries: 100,
-			compactionType:      "vertical",
+			ranges:         [][2]int64{{0, 1000}, {600, 1600}, {1200, 2200}, {1800, 2800}},
+			compactionType: "vertical",
 		},
 		{
-			startTimes:          []int64{0, 200000, 400000, 600000},
-			numSamplesPerSeries: 1000,
-			compactionType:      "vertical",
+			ranges:         [][2]int64{{0, 10000}, {6000, 16000}, {12000, 22000}, {18000, 28000}},
+			compactionType: "vertical",
 		},
 		{
-			startTimes:          []int64{0, 200000, 400000, 600000},
-			numSamplesPerSeries: 10000,
-			compactionType:      "vertical",
-		},
-		{
-			startTimes:          []int64{0, 200000, 400000, 600000},
-			numSamplesPerSeries: 100000,
-			compactionType:      "vertical",
+			ranges:         [][2]int64{{0, 100000}, {60000, 160000}, {120000, 220000}, {180000, 280000}},
+			compactionType: "vertical",
 		},
 	}
 
 	nSeries := 10000
 	for _, c := range cases {
-		nBlocks := len(c.startTimes)
-		b.Run(fmt.Sprintf("type=%s,blocks=%d,series=%d,samplesPerSeriesPerBlock=%d", c.compactionType, nBlocks, nSeries, c.numSamplesPerSeries), func(b *testing.B) {
+		nBlocks := len(c.ranges)
+		b.Run(fmt.Sprintf("type=%s,blocks=%d,series=%d,samplesPerSeriesPerBlock=%d", c.compactionType, nBlocks, nSeries, c.ranges[0][1]-c.ranges[0][0]+1), func(b *testing.B) {
 			dir, err := ioutil.TempDir("", "bench_normal_compaction")
 			testutil.Ok(b, err)
 			defer os.RemoveAll(dir)
-			blockDirs := make([]string, 0, len(c.startTimes))
+			blockDirs := make([]string, 0, len(c.ranges))
 			var blocks []*Block
-			for _, st := range c.startTimes {
-				block := createPopulatedBlock(b, dir, nSeries, c.numSamplesPerSeries, st)
+			for _, r := range c.ranges {
+				block := createPopulatedBlock(b, dir, nSeries, r[0], r[1])
 				blocks = append(blocks, block)
 				defer block.Close()
 				blockDirs = append(blockDirs, block.Dir())
@@ -845,7 +836,7 @@ func TestDisableAutoCompactions(t *testing.T) {
 	case db.compactc <- struct{}{}:
 	default:
 	}
-	for x := 0; x < 10; x++ {
+	for x := 0; x < 20; x++ {
 		if len(db.Blocks()) > 0 {
 			break
 		}

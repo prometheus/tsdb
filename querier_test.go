@@ -1331,7 +1331,7 @@ func BenchmarkPersistedQueries(b *testing.B) {
 				dir, err := ioutil.TempDir("", "bench_persisted")
 				testutil.Ok(b, err)
 				defer os.RemoveAll(dir)
-				block := createPopulatedBlock(b, dir, nSeries, nSamples, 0)
+				block := createPopulatedBlock(b, dir, nSeries, 1, int64(nSamples))
 				defer block.Close()
 
 				q, err := NewBlockQuerier(block, block.Meta().MinTime, block.Meta().MaxTime)
@@ -1572,7 +1572,7 @@ func BenchmarkQueryIteratorOverMultipleBlocks(b *testing.B) {
 
 	var blocks []*Block
 	for i := int64(0); i < int64(numBlocks); i++ {
-		block := createPopulatedBlock(b, dir, nSeries, numSamplesPerSeriesPerBlock, i*1000000000)
+		block := createPopulatedBlock(b, dir, nSeries, (2*i)*int64(numSamplesPerSeriesPerBlock), ((2*i)+1)*int64(numSamplesPerSeriesPerBlock))
 		blocks = append(blocks, block)
 		defer block.Close()
 	}
@@ -1613,7 +1613,7 @@ func BenchmarkQuerySeekOverMultipleBlocks(b *testing.B) {
 
 	var blocks []*Block
 	for i := int64(0); i < int64(numBlocks); i++ {
-		block := createPopulatedBlock(b, dir, nSeries, numSamplesPerSeriesPerBlock, i*1000000000)
+		block := createPopulatedBlock(b, dir, nSeries, (2*i)*int64(numSamplesPerSeriesPerBlock), ((2*i)+1)*int64(numSamplesPerSeriesPerBlock))
 		blocks = append(blocks, block)
 		defer block.Close()
 	}
