@@ -15,7 +15,6 @@
 package tsdb
 
 import (
-	"encoding/binary"
 	"encoding/json"
 	"io/ioutil"
 	"os"
@@ -83,7 +82,11 @@ type IndexReader interface {
 	Series(ref uint64, lset *labels.Labels, chks *[]chunks.Meta) error
 
 	// LabelIndices returns a list of string tuples for which a label value index exists.
+	// NOTE: This is deprecated. Use `LabelNames()` instead.
 	LabelIndices() ([][]string, error)
+
+	// LabelNames returns all the unique label names present in the index in sorted order.
+	LabelNames() ([]string, error)
 
 	// Close releases the underlying resources of the reader.
 	Close() error
@@ -274,23 +277,13 @@ func OpenBlock(dir string, pool chunkenc.Pool) (*Block, error) {
 		return nil, err
 	}
 
-	// Calculating symbol table size.
-	tmp := make([]byte, 8)
-	symTblSize := uint64(0)
-	for _, v := range ir.SymbolTable() {
-		// Size of varint length of the symbol.
-		symTblSize += uint64(binary.PutUvarint(tmp, uint64(len(v))))
-		// Size of the symbol.
-		symTblSize += uint64(len(v))
-	}
-
 	pb := &Block{
 		dir:             dir,
 		meta:            *meta,
 		chunkr:          cr,
 		indexr:          ir,
 		tombstones:      tr,
-		symbolTableSize: symTblSize,
+		symbolTableSize: ir.SymbolTableSize(),
 	}
 	return pb, nil
 }
@@ -407,6 +400,10 @@ func (r blockIndexReader) LabelIndices() ([][]string, error) {
 	return ss, errors.Wrapf(err, "block: %s", r.b.Meta().ULID)
 }
 
+func (r blockIndexReader) LabelNames() ([]string, error) {
+	return r.b.LabelNames()
+}
+
 func (r blockIndexReader) Close() error {
 	r.b.pendingReaders.Done()
 	return nil
@@ -449,7 +446,7 @@ func (pb *Block) Delete(mint, maxt int64, ms ...labels.Matcher) error {
 	ir := pb.indexr
 
 	// Choose only valid postings which have chunks in the time-range.
-	stones := NewMemTombstones()
+	stones := newMemTombstones()
 
 	var lset labels.Labels
 	var chks []chunks.Meta
@@ -557,11 +554,16 @@ func (pb *Block) Snapshot(dir string) error {
 	return nil
 }
 
-// Returns true if the block overlaps [mint, maxt].
+// OverlapsClosedInterval returns true if the block overlaps [mint, maxt].
 func (pb *Block) OverlapsClosedInterval(mint, maxt int64) bool {
 	// The block itself is a half-open interval
 	// [pb.meta.MinTime, pb.meta.MaxTime).
 	return pb.meta.MinTime <= maxt && mint < pb.meta.MaxTime
+}
+
+// LabelNames returns all the unique label names present in the Block in sorted order.
+func (pb *Block) LabelNames() ([]string, error) {
+	return pb.indexr.LabelNames()
 }
 
 func clampInterval(a, b, mint, maxt int64) (int64, int64) {

@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"hash/crc32"
 	"io"
-	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -46,6 +45,10 @@ const (
 // before.
 var castagnoliTable = crc32.MakeTable(crc32.Castagnoli)
 
+// page is an in memory buffer used to batch disk writes.
+// Records bigger than the page size are split and flushed separately.
+// A flush is triggered when a single records doesn't fit the page size or
+// when the next record can't fit in the remaining free page space.
 type page struct {
 	alloc   int
 	flushed int
@@ -79,6 +82,7 @@ func (s *Segment) Dir() string {
 
 // CorruptionErr is an error that's returned when corruption is encountered.
 type CorruptionErr struct {
+	Dir     string
 	Segment int
 	Offset  int64
 	Err     error
@@ -88,12 +92,13 @@ func (e *CorruptionErr) Error() string {
 	if e.Segment < 0 {
 		return fmt.Sprintf("corruption after %d bytes: %s", e.Offset, e.Err)
 	}
-	return fmt.Sprintf("corruption in segment %d at %d: %s", e.Segment, e.Offset, e.Err)
+	return fmt.Sprintf("corruption in segment %s at %d: %s", SegmentName(e.Dir, e.Segment), e.Offset, e.Err)
 }
 
 // OpenWriteSegment opens segment k in dir. The returned segment is ready for new appends.
-func OpenWriteSegment(dir string, k int) (*Segment, error) {
-	f, err := os.OpenFile(SegmentName(dir, k), os.O_WRONLY|os.O_APPEND, 0666)
+func OpenWriteSegment(logger log.Logger, dir string, k int) (*Segment, error) {
+	segName := SegmentName(dir, k)
+	f, err := os.OpenFile(segName, os.O_WRONLY|os.O_APPEND, 0666)
 	if err != nil {
 		return nil, err
 	}
@@ -108,6 +113,7 @@ func OpenWriteSegment(dir string, k int) (*Segment, error) {
 	// If it was torn mid-record, a full read (which the caller should do anyway
 	// to ensure integrity) will detect it as a corruption by the end.
 	if d := stat.Size() % pageSize; d != 0 {
+		level.Warn(logger).Log("msg", "last page of the wal is torn, filling it with zeros", "segment", segName)
 		if _, err := f.Write(make([]byte, pageSize-d)); err != nil {
 			f.Close()
 			return nil, errors.Wrap(err, "zero-pad torn page")
@@ -225,7 +231,7 @@ func NewSize(logger log.Logger, reg prometheus.Registerer, dir string, segmentSi
 			return nil, err
 		}
 	} else {
-		if w.segment, err = OpenWriteSegment(w.dir, j); err != nil {
+		if w.segment, err = OpenWriteSegment(logger, w.dir, j); err != nil {
 			return nil, err
 		}
 		// Correctly initialize donePages.
@@ -335,6 +341,10 @@ func (w *WAL) Repair(origErr error) error {
 	r := NewReader(bufio.NewReader(f))
 
 	for r.Next() {
+		// Add records only up to the where the error was.
+		if r.Offset() >= cerr.Offset {
+			break
+		}
 		if err := w.Log(r.Record()); err != nil {
 			return errors.Wrap(err, "insert record")
 		}
@@ -397,7 +407,7 @@ func (w *WAL) flushPage(clear bool) error {
 
 	// No more data will fit into the page. Enqueue and clear it.
 	if clear {
-		p.alloc = pageSize // write till end of page
+		p.alloc = pageSize // Write till end of page.
 		w.pageCompletions.Inc()
 	}
 	n, err := w.segment.Write(p.buf[p.flushed:p.alloc])
@@ -465,13 +475,14 @@ func (w *WAL) Log(recs ...[]byte) error {
 }
 
 // log writes rec to the log and forces a flush of the current page if its
-// the final record of a batch.
+// the final record of a batch, the record is bigger than the page size or
+// the current page is full.
 func (w *WAL) log(rec []byte, final bool) error {
-	// If the record is too big to fit within pages in the current
+	// If the record is too big to fit within the active page in the current
 	// segment, terminate the active segment and advance to the next one.
 	// This ensures that records do not cross segment boundaries.
-	left := w.page.remaining() - recordHeaderSize                                   // Active pages.
-	left += (pageSize - recordHeaderSize) * (w.pagesPerSegment() - w.donePages - 1) // Free pages.
+	left := w.page.remaining() - recordHeaderSize                                   // Free space in the active page.
+	left += (pageSize - recordHeaderSize) * (w.pagesPerSegment() - w.donePages - 1) // Free pages in the active segment.
 
 	if len(rec) > left {
 		if err := w.nextSegment(); err != nil {
@@ -511,7 +522,9 @@ func (w *WAL) log(rec []byte, final bool) error {
 		copy(buf[recordHeaderSize:], part)
 		p.alloc += len(part) + recordHeaderSize
 
-		// If we wrote a full record, we can fit more records of the batch
+		// By definition when a record is split it means its size is bigger than
+		// the page boundary so the current page would be full and needs to be flushed.
+		// On contrary if we wrote a full record, we can fit more records of the batch
 		// into the page before flushing it.
 		if final || typ != recFull || w.page.full() {
 			if err := w.flushPage(false); err != nil {
@@ -622,32 +635,41 @@ func listSegments(dir string) (refs []segmentRef, err error) {
 	return refs, nil
 }
 
-// NewSegmentsReader returns a new reader over all segments in the directory.
-func NewSegmentsReader(dir string) (io.ReadCloser, error) {
-	return NewSegmentsRangeReader(dir, 0, math.MaxInt32)
+// SegmentRange groups segments by the directory and the first and last index it includes.
+type SegmentRange struct {
+	Dir         string
+	First, Last int
 }
 
-// NewSegmentsRangeReader returns a new reader over the given WAL segment range.
+// NewSegmentsReader returns a new reader over all segments in the directory.
+func NewSegmentsReader(dir string) (io.ReadCloser, error) {
+	return NewSegmentsRangeReader(SegmentRange{dir, -1, -1})
+}
+
+// NewSegmentsRangeReader returns a new reader over the given WAL segment ranges.
 // If first or last are -1, the range is open on the respective end.
-func NewSegmentsRangeReader(dir string, first, last int) (io.ReadCloser, error) {
-	refs, err := listSegments(dir)
-	if err != nil {
-		return nil, err
-	}
+func NewSegmentsRangeReader(sr ...SegmentRange) (io.ReadCloser, error) {
 	var segs []*Segment
 
-	for _, r := range refs {
-		if first >= 0 && r.index < first {
-			continue
-		}
-		if last >= 0 && r.index > last {
-			break
-		}
-		s, err := OpenReadSegment(filepath.Join(dir, r.name))
+	for _, sgmRange := range sr {
+		refs, err := listSegments(sgmRange.Dir)
 		if err != nil {
-			return nil, err
+			return nil, errors.Wrapf(err, "list segment in dir:%v", sgmRange.Dir)
 		}
-		segs = append(segs, s)
+
+		for _, r := range refs {
+			if sgmRange.First >= 0 && r.index < sgmRange.First {
+				continue
+			}
+			if sgmRange.Last >= 0 && r.index > sgmRange.Last {
+				break
+			}
+			s, err := OpenReadSegment(filepath.Join(sgmRange.Dir, r.name))
+			if err != nil {
+				return nil, errors.Wrapf(err, "open segment:%v in dir:%v", r.name, sgmRange.Dir)
+			}
+			segs = append(segs, s)
+		}
 	}
 	return newSegmentBufReader(segs...), nil
 }
@@ -704,11 +726,12 @@ func (r *segmentBufReader) Read(b []byte) (n int, err error) {
 
 // Reader reads WAL records from an io.Reader.
 type Reader struct {
-	rdr   io.Reader
-	err   error
-	rec   []byte
-	buf   [pageSize]byte
-	total int64 // total bytes processed.
+	rdr       io.Reader
+	err       error
+	rec       []byte
+	buf       [pageSize]byte
+	total     int64   // Total bytes processed.
+	curRecTyp recType // Used for checking that the last record is not torn.
 }
 
 // NewReader returns a new reader.
@@ -721,6 +744,12 @@ func NewReader(r io.Reader) *Reader {
 func (r *Reader) Next() bool {
 	err := r.next()
 	if errors.Cause(err) == io.EOF {
+		// The last WAL segment record shouldn't be torn(should be full or last).
+		// The last record would be torn after a crash just before
+		// the last record part could be persisted to disk.
+		if recType(r.curRecTyp) == recFirst || recType(r.curRecTyp) == recMiddle {
+			r.err = errors.New("last record is torn")
+		}
 		return false
 	}
 	r.err = err
@@ -741,10 +770,15 @@ func (r *Reader) next() (err error) {
 			return errors.Wrap(err, "read first header byte")
 		}
 		r.total++
-		typ := recType(hdr[0])
+		r.curRecTyp = recType(hdr[0])
 
 		// Gobble up zero bytes.
-		if typ == recPageTerm {
+		if r.curRecTyp == recPageTerm {
+			// recPageTerm is a single byte that indicates the rest of the page is padded.
+			// If it's the first byte in a page, buf is too small and
+			// needs to be resized to fit pageSize-1 bytes.
+			buf = r.buf[1:]
+
 			// We are pedantic and check whether the zeros are actually up
 			// to a page boundary.
 			// It's not strictly necessary but may catch sketchy state early.
@@ -793,7 +827,7 @@ func (r *Reader) next() (err error) {
 		}
 		r.rec = append(r.rec, buf[:length]...)
 
-		switch typ {
+		switch r.curRecTyp {
 		case recFull:
 			if i != 0 {
 				return errors.New("unexpected full record")
@@ -813,7 +847,7 @@ func (r *Reader) next() (err error) {
 			}
 			return nil
 		default:
-			return errors.Errorf("unexpected record type %d", typ)
+			return errors.Errorf("unexpected record type %d", r.curRecTyp)
 		}
 		// Only increment i for non-zero records since we use it
 		// to determine valid content record sequences.
@@ -831,6 +865,7 @@ func (r *Reader) Err() error {
 	if b, ok := r.rdr.(*segmentBufReader); ok {
 		return &CorruptionErr{
 			Err:     r.err,
+			Dir:     b.segs[b.cur].Dir(),
 			Segment: b.segs[b.cur].Index(),
 			Offset:  int64(b.off),
 		}
@@ -846,6 +881,22 @@ func (r *Reader) Err() error {
 // valid until the next call to Next.
 func (r *Reader) Record() []byte {
 	return r.rec
+}
+
+// Segment returns the current segment being read.
+func (r *Reader) Segment() int {
+	if b, ok := r.rdr.(*segmentBufReader); ok {
+		return b.segs[b.cur].Index()
+	}
+	return -1
+}
+
+// Offset returns the current position of the segment being read.
+func (r *Reader) Offset() int64 {
+	if b, ok := r.rdr.(*segmentBufReader); ok {
+		return int64(b.off)
+	}
+	return r.total
 }
 
 func min(i, j int) int {

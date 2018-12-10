@@ -15,7 +15,6 @@ package tsdb
 
 import (
 	"math"
-	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
@@ -60,7 +59,8 @@ type Head struct {
 	appendPool sync.Pool
 	bytesPool  sync.Pool
 
-	minTime, maxTime int64
+	minTime, maxTime int64 // Current min and max of the samples included in the head.
+	minValidTime     int64 // Mint allowed to be added to the head. It shouldn't be lower than the maxt of the last persisted block.
 	lastSeriesID     uint64
 
 	// All series addressable by their ID or hash.
@@ -138,13 +138,13 @@ func newHeadMetrics(h *Head, r prometheus.Registerer) *headMetrics {
 	})
 	m.maxTime = prometheus.NewGaugeFunc(prometheus.GaugeOpts{
 		Name: "prometheus_tsdb_head_max_time",
-		Help: "Maximum timestamp of the head block.",
+		Help: "Maximum timestamp of the head block. The unit is decided by the library consumer.",
 	}, func() float64 {
 		return float64(h.MaxTime())
 	})
 	m.minTime = prometheus.NewGaugeFunc(prometheus.GaugeOpts{
 		Name: "prometheus_tsdb_head_min_time",
-		Help: "Minimum time bound of the head block.",
+		Help: "Minimum time bound of the head block. The unit is decided by the library consumer.",
 	}, func() float64 {
 		return float64(h.MinTime())
 	})
@@ -225,7 +225,7 @@ func NewHead(r prometheus.Registerer, l log.Logger, wal *wal.WAL, chunkRange int
 		values:     map[string]stringset{},
 		symbols:    map[string]struct{}{},
 		postings:   index.NewUnorderedMemPostings(),
-		tombstones: NewMemTombstones(),
+		tombstones: newMemTombstones(),
 	}
 	h.metrics = newHeadMetrics(h, r)
 
@@ -237,22 +237,28 @@ func NewHead(r prometheus.Registerer, l log.Logger, wal *wal.WAL, chunkRange int
 // Samples before the mint timestamp are discarded.
 func (h *Head) processWALSamples(
 	minValidTime int64,
-	partition, total uint64,
 	input <-chan []RefSample, output chan<- []RefSample,
 ) (unknownRefs uint64) {
 	defer close(output)
+
+	// Mitigate lock contention in getByID.
+	refSeries := map[uint64]*memSeries{}
 
 	mint, maxt := int64(math.MaxInt64), int64(math.MinInt64)
 
 	for samples := range input {
 		for _, s := range samples {
-			if s.T < minValidTime || s.Ref%total != partition {
+			if s.T < minValidTime {
 				continue
 			}
-			ms := h.series.getByID(s.Ref)
+			ms := refSeries[s.Ref]
 			if ms == nil {
-				unknownRefs++
-				continue
+				ms = h.series.getByID(s.Ref)
+				if ms == nil {
+					unknownRefs++
+					continue
+				}
+				refSeries[s.Ref] = ms
 			}
 			_, chunkCreated := ms.append(s.T, s.V)
 			if chunkCreated {
@@ -295,13 +301,6 @@ func (h *Head) updateMinMaxTime(mint, maxt int64) {
 }
 
 func (h *Head) loadWAL(r *wal.Reader) error {
-	minValidTime := h.MinTime()
-	// If the min time is still uninitialized (no persisted blocks yet),
-	// we accept all sample timestamps from the WAL.
-	if minValidTime == math.MaxInt64 {
-		minValidTime = math.MinInt64
-	}
-
 	// Track number of samples that referenced a series we don't know about
 	// for error reporting.
 	var unknownRefs uint64
@@ -310,25 +309,22 @@ func (h *Head) loadWAL(r *wal.Reader) error {
 	// They are connected through a ring of channels which ensures that all sample batches
 	// read from the WAL are processed in order.
 	var (
-		wg         sync.WaitGroup
-		n          = runtime.GOMAXPROCS(0)
-		firstInput = make(chan []RefSample, 300)
-		input      = firstInput
+		wg      sync.WaitGroup
+		n       = runtime.GOMAXPROCS(0)
+		inputs  = make([]chan []RefSample, n)
+		outputs = make([]chan []RefSample, n)
 	)
 	wg.Add(n)
 
 	for i := 0; i < n; i++ {
-		output := make(chan []RefSample, 300)
+		outputs[i] = make(chan []RefSample, 300)
+		inputs[i] = make(chan []RefSample, 300)
 
-		go func(i int, input <-chan []RefSample, output chan<- []RefSample) {
-			unknown := h.processWALSamples(minValidTime, uint64(i), uint64(n), input, output)
+		go func(input <-chan []RefSample, output chan<- []RefSample) {
+			unknown := h.processWALSamples(h.minValidTime, input, output)
 			atomic.AddUint64(&unknownRefs, unknown)
 			wg.Done()
-		}(i, input, output)
-
-		// The output feeds the next worker goroutine. For the last worker,
-		// it feeds the initial input again to reuse the RefSample slices.
-		input = output
+		}(inputs[i], outputs[i])
 	}
 
 	var (
@@ -336,6 +332,7 @@ func (h *Head) loadWAL(r *wal.Reader) error {
 		series  []RefSeries
 		samples []RefSample
 		tstones []Stone
+		err     error
 	)
 	for r.Next() {
 		series, samples, tstones = series[:0], samples[:0], tstones[:0]
@@ -343,9 +340,13 @@ func (h *Head) loadWAL(r *wal.Reader) error {
 
 		switch dec.Type(rec) {
 		case RecordSeries:
-			series, err := dec.Series(rec, series)
+			series, err = dec.Series(rec, series)
 			if err != nil {
-				return errors.Wrap(err, "decode series")
+				return &wal.CorruptionErr{
+					Err:     errors.Wrap(err, "decode series"),
+					Segment: r.Segment(),
+					Offset:  r.Offset(),
+				}
 			}
 			for _, s := range series {
 				h.getOrCreateWithID(s.Ref, s.Labels.Hash(), s.Labels)
@@ -355,51 +356,77 @@ func (h *Head) loadWAL(r *wal.Reader) error {
 				}
 			}
 		case RecordSamples:
-			samples, err := dec.Samples(rec, samples)
+			samples, err = dec.Samples(rec, samples)
+			s := samples
 			if err != nil {
-				return errors.Wrap(err, "decode samples")
+				return &wal.CorruptionErr{
+					Err:     errors.Wrap(err, "decode samples"),
+					Segment: r.Segment(),
+					Offset:  r.Offset(),
+				}
 			}
 			// We split up the samples into chunks of 5000 samples or less.
 			// With O(300 * #cores) in-flight sample batches, large scrapes could otherwise
 			// cause thousands of very large in flight buffers occupying large amounts
 			// of unused memory.
 			for len(samples) > 0 {
-				n := 5000
-				if len(samples) < n {
-					n = len(samples)
+				m := 5000
+				if len(samples) < m {
+					m = len(samples)
 				}
-				var buf []RefSample
-				select {
-				case buf = <-input:
-				default:
+				shards := make([][]RefSample, n)
+				for i := 0; i < n; i++ {
+					var buf []RefSample
+					select {
+					case buf = <-outputs[i]:
+					default:
+					}
+					shards[i] = buf[:0]
 				}
-				firstInput <- append(buf[:0], samples[:n]...)
-				samples = samples[n:]
+				for _, sam := range samples[:m] {
+					mod := sam.Ref % uint64(n)
+					shards[mod] = append(shards[mod], sam)
+				}
+				for i := 0; i < n; i++ {
+					inputs[i] <- shards[i]
+				}
+				samples = samples[m:]
 			}
+			samples = s // Keep whole slice for reuse.
 		case RecordTombstones:
-			tstones, err := dec.Tombstones(rec, tstones)
+			tstones, err = dec.Tombstones(rec, tstones)
 			if err != nil {
-				return errors.Wrap(err, "decode tombstones")
+				return &wal.CorruptionErr{
+					Err:     errors.Wrap(err, "decode tombstones"),
+					Segment: r.Segment(),
+					Offset:  r.Offset(),
+				}
 			}
 			for _, s := range tstones {
 				for _, itv := range s.intervals {
-					if itv.Maxt < minValidTime {
+					if itv.Maxt < h.minValidTime {
 						continue
 					}
 					h.tombstones.addInterval(s.ref, itv)
 				}
 			}
 		default:
-			return errors.Errorf("invalid record type %v", dec.Type(rec))
+			return &wal.CorruptionErr{
+				Err:     errors.Errorf("invalid record type %v", dec.Type(rec)),
+				Segment: r.Segment(),
+				Offset:  r.Offset(),
+			}
 		}
 	}
 	if r.Err() != nil {
 		return errors.Wrap(r.Err(), "read records")
 	}
 
-	// Signal termination to first worker and wait for last one to close its output channel.
-	close(firstInput)
-	for range input {
+	// Signal termination to each worker and wait for it to close its output channel.
+	for i := 0; i < n; i++ {
+		close(inputs[i])
+		for range outputs[i] {
+		}
 	}
 	wg.Wait()
 
@@ -410,8 +437,12 @@ func (h *Head) loadWAL(r *wal.Reader) error {
 }
 
 // Init loads data from the write ahead log and prepares the head for writes.
-func (h *Head) Init() error {
+// It should be called before using an appender so that
+// limits the ingested samples to the head min valid time.
+func (h *Head) Init(minValidTime int64) error {
+	h.minValidTime = minValidTime
 	defer h.postings.EnsureOrder()
+	defer h.gc() // After loading the wal remove the obsolete data from the head.
 
 	if h.wal == nil {
 		return nil
@@ -423,7 +454,7 @@ func (h *Head) Init() error {
 		return errors.Wrap(err, "find last checkpoint")
 	}
 	if err == nil {
-		sr, err := wal.NewSegmentsReader(filepath.Join(h.wal.Dir(), dir))
+		sr, err := wal.NewSegmentsReader(dir)
 		if err != nil {
 			return errors.Wrap(err, "open checkpoint")
 		}
@@ -438,7 +469,7 @@ func (h *Head) Init() error {
 	}
 
 	// Backfill segments from the last checkpoint onwards
-	sr, err := wal.NewSegmentsRangeReader(h.wal.Dir(), startFrom, -1)
+	sr, err := wal.NewSegmentsRangeReader(wal.SegmentRange{Dir: h.wal.Dir(), First: startFrom, Last: -1})
 	if err != nil {
 		return errors.Wrap(err, "open WAL segments")
 	}
@@ -453,6 +484,7 @@ func (h *Head) Init() error {
 	if err := h.wal.Repair(err); err != nil {
 		return errors.Wrap(err, "repair corrupted WAL")
 	}
+
 	return nil
 }
 
@@ -469,6 +501,7 @@ func (h *Head) Truncate(mint int64) (err error) {
 		return nil
 	}
 	atomic.StoreInt64(&h.minTime, mint)
+	h.minValidTime = mint
 
 	// Ensure that max time is at least as high as min time.
 	for h.MaxTime() < mint {
@@ -621,12 +654,21 @@ func (h *Head) Appender() Appender {
 
 func (h *Head) appender() *headAppender {
 	return &headAppender{
-		head:         h,
-		minValidTime: h.MaxTime() - h.chunkRange/2,
+		head: h,
+		// Set the minimum valid time to whichever is greater the head min valid time or the compaciton window.
+		// This ensures that no samples will be added within the compaction window to avoid races.
+		minValidTime: max(h.minValidTime, h.MaxTime()-h.chunkRange/2),
 		mint:         math.MaxInt64,
 		maxt:         math.MinInt64,
 		samples:      h.getAppendBuffer(),
 	}
+}
+
+func max(a, b int64) int64 {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func (h *Head) getAppendBuffer() []RefSample {
@@ -1014,17 +1056,31 @@ func (h *headIndexReader) LabelValues(names ...string) (index.StringTuples, erro
 	if len(names) != 1 {
 		return nil, errInvalidSize
 	}
-	var sl []string
 
 	h.head.symMtx.RLock()
-	defer h.head.symMtx.RUnlock()
-
+	sl := make([]string, 0, len(h.head.values[names[0]]))
 	for s := range h.head.values[names[0]] {
 		sl = append(sl, s)
 	}
+	h.head.symMtx.RUnlock()
 	sort.Strings(sl)
 
 	return index.NewStringTuples(sl, len(names))
+}
+
+// LabelNames returns all the unique label names present in the head.
+func (h *headIndexReader) LabelNames() ([]string, error) {
+	h.head.symMtx.RLock()
+	defer h.head.symMtx.RUnlock()
+	labelNames := make([]string, 0, len(h.head.values))
+	for name := range h.head.values {
+		if name == "" {
+			continue
+		}
+		labelNames = append(labelNames, name)
+	}
+	sort.Strings(labelNames)
+	return labelNames, nil
 }
 
 // Postings returns the postings list iterator for the label pair.
@@ -1088,9 +1144,7 @@ func (h *headIndexReader) Series(ref uint64, lbls *labels.Labels, chks *[]chunks
 func (h *headIndexReader) LabelIndices() ([][]string, error) {
 	h.head.symMtx.RLock()
 	defer h.head.symMtx.RUnlock()
-
 	res := [][]string{}
-
 	for s := range h.head.values {
 		res = append(res, []string{s})
 	}
@@ -1313,6 +1367,14 @@ type sample struct {
 	v float64
 }
 
+func (s sample) T() int64 {
+	return s.t
+}
+
+func (s sample) V() float64 {
+	return s.v
+}
+
 // memSeries is the in-memory representation of a series. None of its methods
 // are goroutine safe and it is the caller's responsibility to lock it.
 type memSeries struct {
@@ -1321,11 +1383,11 @@ type memSeries struct {
 	ref          uint64
 	lset         labels.Labels
 	chunks       []*memChunk
+	headChunk    *memChunk
 	chunkRange   int64
 	firstChunkID int
 
 	nextAt        int64 // Timestamp at which to cut the next chunk.
-	lastValue     float64
 	sampleBuf     [4]sample
 	pendingCommit bool // Whether there are samples waiting to be committed to this series.
 
@@ -1354,10 +1416,11 @@ func (s *memSeries) cut(mint int64) *memChunk {
 		maxTime: math.MinInt64,
 	}
 	s.chunks = append(s.chunks, c)
+	s.headChunk = c
 
 	// Set upper bound on when the next chunk must be started. An earlier timestamp
 	// may be chosen dynamically at a later point.
-	_, s.nextAt = rangeForTimestamp(mint, s.chunkRange)
+	s.nextAt = rangeForTimestamp(mint, s.chunkRange)
 
 	app, err := c.chunk.Appender()
 	if err != nil {
@@ -1392,7 +1455,7 @@ func (s *memSeries) appendable(t int64, v float64) error {
 	}
 	// We are allowing exact duplicates as we can encounter them in valid cases
 	// like federation and erroring out at that time would be extremely noisy.
-	if math.Float64bits(s.lastValue) != math.Float64bits(v) {
+	if math.Float64bits(s.sampleBuf[3].v) != math.Float64bits(v) {
 		return ErrAmendSample
 	}
 	return nil
@@ -1422,12 +1485,20 @@ func (s *memSeries) truncateChunksBefore(mint int64) (removed int) {
 	}
 	s.chunks = append(s.chunks[:0], s.chunks[k:]...)
 	s.firstChunkID += k
+	if len(s.chunks) == 0 {
+		s.headChunk = nil
+	} else {
+		s.headChunk = s.chunks[len(s.chunks)-1]
+	}
 
 	return k
 }
 
 // append adds the sample (t, v) to the series.
 func (s *memSeries) append(t int64, v float64) (success, chunkCreated bool) {
+	// Based on Gorilla white papers this offers near-optimal compression ratio
+	// so anything bigger that this has diminishing returns and increases
+	// the time range within which we have to decompress all samples.
 	const samplesPerChunk = 120
 
 	c := s.head()
@@ -1455,8 +1526,6 @@ func (s *memSeries) append(t int64, v float64) (success, chunkCreated bool) {
 	s.app.Append(t, v)
 
 	c.maxTime = t
-
-	s.lastValue = v
 
 	s.sampleBuf[0] = s.sampleBuf[1]
 	s.sampleBuf[1] = s.sampleBuf[2]
@@ -1501,10 +1570,7 @@ func (s *memSeries) iterator(id int) chunkenc.Iterator {
 }
 
 func (s *memSeries) head() *memChunk {
-	if len(s.chunks) == 0 {
-		return nil
-	}
-	return s.chunks[len(s.chunks)-1]
+	return s.headChunk
 }
 
 type memChunk struct {

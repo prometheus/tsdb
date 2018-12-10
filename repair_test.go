@@ -1,7 +1,21 @@
+// Copyright 2018 The Prometheus Authors
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package tsdb
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/prometheus/tsdb/chunks"
@@ -45,9 +59,9 @@ func TestRepairBadIndexVersion(t *testing.T) {
 	// 		panic(err)
 	// 	}
 	// }
-	const dbDir = "testdata/repair_index_version/01BZJ9WJQPWHGNC2W4J9TA62KC"
-	tmpDir := "testdata/repair_index_version/copy"
-	tmpDbDir := tmpDir + "/3MCNSQ8S31EHGJYWK5E1GPJWJZ"
+	dbDir := filepath.Join("testdata", "repair_index_version", "01BZJ9WJQPWHGNC2W4J9TA62KC")
+	tmpDir := filepath.Join("testdata", "repair_index_version", "copy")
+	tmpDbDir := filepath.Join(tmpDir, "3MCNSQ8S31EHGJYWK5E1GPJWJZ")
 
 	// Check the current db.
 	// In its current state, lookups should fail with the fixed code.
@@ -55,10 +69,10 @@ func TestRepairBadIndexVersion(t *testing.T) {
 	testutil.NotOk(t, err)
 
 	// Touch chunks dir in block.
-	os.MkdirAll(dbDir+"/chunks", 0777)
-	defer os.RemoveAll(dbDir + "/chunks")
+	os.MkdirAll(filepath.Join(dbDir, "chunks"), 0777)
+	defer os.RemoveAll(filepath.Join(dbDir, "chunks"))
 
-	r, err := index.NewFileReader(dbDir + "/index")
+	r, err := index.NewFileReader(filepath.Join(dbDir, "index"))
 	testutil.Ok(t, err)
 	p, err := r.Postings("b", "1")
 	testutil.Ok(t, err)
@@ -81,7 +95,7 @@ func TestRepairBadIndexVersion(t *testing.T) {
 	testutil.Ok(t, err)
 	db.Close()
 
-	r, err = index.NewFileReader(tmpDbDir + "/index")
+	r, err = index.NewFileReader(filepath.Join(tmpDbDir, "index"))
 	testutil.Ok(t, err)
 	p, err = r.Postings("b", "1")
 	testutil.Ok(t, err)
