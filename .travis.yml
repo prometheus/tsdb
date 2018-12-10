@@ -22,4 +22,4 @@ install:
 
 script:
   # `staticcheck` target is omitted due to linting errors
-  - make check_license style unused test
+  - make test
