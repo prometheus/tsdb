@@ -44,7 +44,6 @@ import (
 // DefaultOptions used for the DB. They are sane for setups using
 // millisecond precision timestamps.
 var DefaultOptions = &Options{
-	WALFlushInterval:  5 * time.Second,
 	RetentionDuration: 15 * 24 * 60 * 60 * 1000, // 15 days in milliseconds
 	BlockRanges:       ExponentialBlockRanges(int64(2*time.Hour)/1e6, 3, 5),
 	NoLockfile:        false,
@@ -52,9 +51,6 @@ var DefaultOptions = &Options{
 
 // Options of the DB storage.
 type Options struct {
-	// The interval at which the write ahead log is flushed to disk.
-	WALFlushInterval time.Duration
-
 	// Duration of persisted data to keep.
 	RetentionDuration uint64
 

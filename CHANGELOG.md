@@ -1,5 +1,7 @@
 ## master / unreleased
 
+ - [CLEANUP] `Options.WALFlushInterval` is removed as it wasn't used anywhere.
+
 ## 0.3.0
 
  - [CHANGE] `LastCheckpoint()` used to return just the segment name and now it returns the full relative path.
