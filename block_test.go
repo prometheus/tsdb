@@ -77,8 +77,8 @@ func createEmptyBlock(t *testing.T, dir string, meta *BlockMeta) *Block {
 	return b
 }
 
-// createPopulatedBlock creates a block with nSeries series,
-// filled with samples of the given mint,maxt time range.
+// createPopulatedBlock creates a block with nSeries series, filled with
+// samples of the given mint,maxt time range.
 func createPopulatedBlock(tb testing.TB, dir string, nSeries int, mint, maxt int64) *Block {
 	head, err := NewHead(nil, nil, nil, 2*60*60*1000)
 	testutil.Ok(tb, err)
