@@ -480,7 +480,7 @@ func (h *Head) Init(minValidTime int64) error {
 		return nil
 	}
 	level.Warn(h.logger).Log("msg", "encountered WAL error, attempting repair", "err", err)
-
+	sr.Close() // Close the reader so that the repair can remove the corrupted file under Windows.
 	if err := h.wal.Repair(err); err != nil {
 		return errors.Wrap(err, "repair corrupted WAL")
 	}
