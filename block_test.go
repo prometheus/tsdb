@@ -78,8 +78,8 @@ func createEmptyBlock(t *testing.T, dir string, meta *BlockMeta) *Block {
 }
 
 // createPopulatedBlock creates a block with nSeries series,
-// filled with samples between blockMint and blockMaxt.
-func createPopulatedBlock(tb testing.TB, dir string, nSeries int, blockMint, blockMaxt int64) *Block {
+// filled with samples of the given mint,maxt time range.
+func createPopulatedBlock(tb testing.TB, dir string, nSeries int, mint, maxt int64) *Block {
 	head, err := NewHead(nil, nil, nil, 2*60*60*1000)
 	testutil.Ok(tb, err)
 	defer head.Close()
@@ -88,16 +88,16 @@ func createPopulatedBlock(tb testing.TB, dir string, nSeries int, blockMint, blo
 	testutil.Ok(tb, err)
 	refs := make([]uint64, nSeries)
 
-	for ; blockMint <= blockMaxt; blockMint++ {
+	for ts := mint; ts <= maxt; ts++ {
 		app := head.Appender()
 		for i, lbl := range lbls {
 			if refs[i] != 0 {
-				err := app.AddFast(refs[i], int64(blockMint), rand.Float64())
+				err := app.AddFast(refs[i], ts, rand.Float64())
 				if err == nil {
 					continue
 				}
 			}
-			ref, err := app.Add(lbl, blockMint, rand.Float64())
+			ref, err := app.Add(lbl, ts, rand.Float64())
 			testutil.Ok(tb, err)
 			refs[i] = ref
 		}

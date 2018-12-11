@@ -60,6 +60,8 @@ type Options struct {
 
 	// Maximum number of bytes in blocks to be retained.
 	// 0 or less means disabled.
+	// NOTE: For proper storage calculations need to concider
+	// the size of the WAL folder which is not affected by this option.
 	MaxBytes int64
 
 	// The sizes of the Blocks.
@@ -185,7 +187,7 @@ func newDBMetrics(db *DB, r prometheus.Registerer) *dbMetrics {
 	})
 	m.startTime = prometheus.NewGaugeFunc(prometheus.GaugeOpts{
 		Name: "prometheus_tsdb_lowest_timestamp",
-		Help: "Lowest timestamp value stored in the database.",
+		Help: "Lowest timestamp value stored in the database. The unit is decided by the library consumer.",
 	}, func() float64 {
 		db.mtx.RLock()
 		defer db.mtx.RUnlock()
@@ -281,10 +283,19 @@ func Open(dir string, l log.Logger, r prometheus.Registerer, opts *Options) (db 
 	if err != nil {
 		return nil, err
 	}
+
 	if err := db.reload(); err != nil {
 		return nil, err
 	}
-	if err := db.head.Init(); err != nil {
+	// Set the min valid time for the ingested samples
+	// to be no lower than the maxt of the last block.
+	blocks := db.Blocks()
+	minValidTime := int64(math.MinInt64)
+	if len(blocks) > 0 {
+		minValidTime = blocks[len(blocks)-1].Meta().MaxTime
+	}
+
+	if err := db.head.Init(minValidTime); err != nil {
 		return nil, errors.Wrap(err, "read WAL")
 	}
 
@@ -386,7 +397,8 @@ func (db *DB) compact() (err error) {
 		if db.head.MaxTime()-db.head.MinTime() <= db.opts.BlockRanges[0]/2*3 {
 			break
 		}
-		mint, maxt := rangeForTimestamp(db.head.MinTime(), db.opts.BlockRanges[0])
+		mint := db.head.MinTime()
+		maxt := rangeForTimestamp(mint, db.opts.BlockRanges[0])
 
 		// Wrap head into a range that bounds all reads to it.
 		head := &rangeHead{
@@ -897,9 +909,8 @@ func (db *DB) Querier(mint, maxt int64) (Querier, error) {
 	return sq, nil
 }
 
-func rangeForTimestamp(t int64, width int64) (mint, maxt int64) {
-	mint = (t / width) * width
-	return mint, mint + width
+func rangeForTimestamp(t int64, width int64) (maxt int64) {
+	return (t/width)*width + width
 }
 
 // Delete implements deletion of metrics. It only has atomicity guarantees on a per-block basis.
