@@ -1,6 +1,6 @@
 ## master / unreleased
 
- - [FEATURE]  Size base retention through `Options.MaxBytes`. As part of this change added new metrics - `prometheus_tsdb_storage_blocks_bytes_total`, `prometheus_tsdb_size_retentions_total`, `prometheus_tsdb_time_retentions_total` and new ppublic interface `SizeReader: Size() int64`
+ - [FEATURE]  Size base retention through `Options.MaxBytes`. As part of this change added new metrics - `prometheus_tsdb_storage_blocks_bytes_total`, `prometheus_tsdb_size_retentions_total`, `prometheus_tsdb_time_retentions_total` and new public interface `SizeReader: Size() int64`
 
 ## 0.3.0
 

@@ -144,7 +144,7 @@ type Appendable interface {
 
 // SizeReader returns the size of the object in bytes.
 type SizeReader interface {
-	//Size returns the size in bytes.
+	// Size returns the size in bytes.
 	Size() int64
 }
 
@@ -313,8 +313,7 @@ func blockSize(rr ...SizeReader) int64 {
 	var total int64
 	for _, r := range rr {
 		if r != nil {
-			t := r.Size()
-			total += t
+			total += r.Size()
 		}
 	}
 	return total
