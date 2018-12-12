@@ -1,5 +1,7 @@
 ## master / unreleased
 
+ - [REMOVED] `PrefixMatcher` is considered unused so was removed.
+
 ## 0.3.0
 
  - [CHANGE] `LastCheckpoint()` used to return just the segment name and now it returns the full relative path.
