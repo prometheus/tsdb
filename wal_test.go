@@ -15,8 +15,10 @@ package tsdb
 
 import (
 	"io/ioutil"
+	"math/rand"
 	"os"
 	"path"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -24,6 +26,124 @@ import (
 	"github.com/prometheus/tsdb/testutil"
 	"github.com/prometheus/tsdb/wal"
 )
+
+// Symmetrical test of reading and writing to the WAL via its main interface.
+func TestSegmentWAL_Log_Restore(t *testing.T) {
+	const (
+		numMetrics = 50
+		iterations = 5
+		stepSize   = 5
+	)
+	// Generate testing data. It does not make semantical sense but
+	// for the purpose of this test.
+	series, err := labels.ReadLabels(filepath.Join("testdata", "20kseries.json"), numMetrics)
+	testutil.Ok(t, err)
+
+	dir, err := ioutil.TempDir("", "test_wal_log_restore")
+	testutil.Ok(t, err)
+	defer os.RemoveAll(dir)
+
+	var (
+		recordedSeries  [][]RefSeries
+		recordedSamples [][]RefSample
+		recordedDeletes [][]Stone
+	)
+	var totalSamples int
+
+	// Open WAL a bunch of times, validate all previous data can be read,
+	// write more data to it, close it.
+	for k := 0; k < numMetrics; k += numMetrics / iterations {
+		w, err := OpenSegmentWAL(dir, nil, 0, nil)
+		testutil.Ok(t, err)
+
+		// Set smaller segment size so we can actually write several files.
+		w.segmentSize = 1000 * 1000
+
+		r := w.Reader()
+
+		var (
+			resultSeries  [][]RefSeries
+			resultSamples [][]RefSample
+			resultDeletes [][]Stone
+		)
+
+		serf := func(series []RefSeries) {
+			if len(series) > 0 {
+				clsets := make([]RefSeries, len(series))
+				copy(clsets, series)
+				resultSeries = append(resultSeries, clsets)
+			}
+		}
+		smplf := func(smpls []RefSample) {
+			if len(smpls) > 0 {
+				csmpls := make([]RefSample, len(smpls))
+				copy(csmpls, smpls)
+				resultSamples = append(resultSamples, csmpls)
+			}
+		}
+
+		delf := func(stones []Stone) {
+			if len(stones) > 0 {
+				cst := make([]Stone, len(stones))
+				copy(cst, stones)
+				resultDeletes = append(resultDeletes, cst)
+			}
+		}
+
+		testutil.Ok(t, r.Read(serf, smplf, delf))
+
+		testutil.Equals(t, recordedSamples, resultSamples)
+		testutil.Equals(t, recordedSeries, resultSeries)
+		testutil.Equals(t, recordedDeletes, resultDeletes)
+
+		series := series[k : k+(numMetrics/iterations)]
+
+		// Insert in batches and generate different amounts of samples for each.
+		for i := 0; i < len(series); i += stepSize {
+			var samples []RefSample
+			var stones []Stone
+
+			for j := 0; j < i*10; j++ {
+				samples = append(samples, RefSample{
+					Ref: uint64(j % 10000),
+					T:   int64(j * 2),
+					V:   rand.Float64(),
+				})
+			}
+
+			for j := 0; j < i*20; j++ {
+				ts := rand.Int63()
+				stones = append(stones, Stone{rand.Uint64(), Intervals{{ts, ts + rand.Int63n(10000)}}})
+			}
+
+			lbls := series[i : i+stepSize]
+			series := make([]RefSeries, 0, len(series))
+			for j, l := range lbls {
+				series = append(series, RefSeries{
+					Ref:    uint64(i + j),
+					Labels: l,
+				})
+			}
+
+			testutil.Ok(t, w.LogSeries(series))
+			testutil.Ok(t, w.LogSamples(samples))
+			testutil.Ok(t, w.LogDeletes(stones))
+
+			if len(lbls) > 0 {
+				recordedSeries = append(recordedSeries, series)
+			}
+			if len(samples) > 0 {
+				recordedSamples = append(recordedSamples, samples)
+				totalSamples += len(samples)
+			}
+			if len(stones) > 0 {
+				recordedDeletes = append(recordedDeletes, stones)
+			}
+		}
+
+		testutil.Ok(t, w.Close())
+	}
+}
 
 func TestMigrateWAL_Empty(t *testing.T) {
 	// The migration proecedure must properly deal with a zero-length segment,
