@@ -43,12 +43,12 @@ func main() {
 		cli                  = kingpin.New(filepath.Base(os.Args[0]), "CLI tool for tsdb")
 		benchCmd             = cli.Command("bench", "run benchmarks")
 		benchWriteCmd        = benchCmd.Command("write", "run a write performance benchmark")
-		benchWriteOutPath    = benchWriteCmd.Flag("out", "set the output path").Default("benchout/").String()
+		benchWriteOutPath    = benchWriteCmd.Flag("out", "set the output path").Default("benchout").String()
 		benchWriteNumMetrics = benchWriteCmd.Flag("metrics", "number of metrics to read").Default("10000").Int()
-		benchSamplesFile     = benchWriteCmd.Arg("file", "input file with samples data, default is (../../testdata/20kseries.json)").Default("../../testdata/20kseries.json").String()
+		benchSamplesFile     = benchWriteCmd.Arg("file", "input file with samples data, default is ("+filepath.Join("..", "testdata", "20kseries.json")+")").Default(filepath.Join("..", "testdata", "20kseries.json")).String()
 		listCmd              = cli.Command("ls", "list db blocks")
 		listCmdHumanReadable = listCmd.Flag("human-readable", "print human readable values").Short('h').Bool()
-		listPath             = listCmd.Arg("db path", "database path (default is benchout/storage)").Default("benchout/storage").String()
+		listPath             = listCmd.Arg("db path", "database path (default is "+filepath.Join("benchout", "storage")+")").Default(filepath.Join("benchout", "storage")).String()
 		scanCmd              = cli.Command("scan", "scans the db and repairs or deletes corrupted blocks")
 		scanCmdHumanReadable = scanCmd.Flag("human-readable", "print human readable values").Short('h').Bool()
 		scanPath             = scanCmd.Arg("dir", "database path (default is current dir ./)").Default("./").ExistingDir()
@@ -343,7 +343,9 @@ func (b *writeBenchmark) run() {
 		if err := b.storage.Close(); err != nil {
 			exitWithError(err)
 		}
-		b.stopProfiling()
+		if err := b.stopProfiling(); err != nil {
+			exitWithError(err)
+		}
 	})
 }
 
@@ -446,7 +448,9 @@ func (b *writeBenchmark) startProfiling() {
 	if err != nil {
 		exitWithError(errors.Wrap(err, "bench: could not create cpu profile"))
 	}
-	pprof.StartCPUProfile(b.cpuprof)
+	if err := pprof.StartCPUProfile(b.cpuprof); err != nil {
+		exitWithError(fmt.Errorf("bench: could not start CPU profile: %v", err))
+	}
 
 	// Start memory profiling.
 	b.memprof, err = os.Create(filepath.Join(b.outPath, "mem.prof"))
@@ -469,29 +473,36 @@ func (b *writeBenchmark) startProfiling() {
 	runtime.SetMutexProfileFraction(20)
 }
 
-func (b *writeBenchmark) stopProfiling() {
+func (b *writeBenchmark) stopProfiling() error {
 	if b.cpuprof != nil {
 		pprof.StopCPUProfile()
 		b.cpuprof.Close()
 		b.cpuprof = nil
 	}
 	if b.memprof != nil {
-		pprof.Lookup("heap").WriteTo(b.memprof, 0)
+		if err := pprof.Lookup("heap").WriteTo(b.memprof, 0); err != nil {
+			return fmt.Errorf("error writing mem profile: %v", err)
+		}
 		b.memprof.Close()
 		b.memprof = nil
 	}
 	if b.blockprof != nil {
-		pprof.Lookup("block").WriteTo(b.blockprof, 0)
+		if err := pprof.Lookup("block").WriteTo(b.blockprof, 0); err != nil {
+			return fmt.Errorf("error writing block profile: %v", err)
+		}
 		b.blockprof.Close()
 		b.blockprof = nil
 		runtime.SetBlockProfileRate(0)
 	}
 	if b.mtxprof != nil {
-		pprof.Lookup("mutex").WriteTo(b.mtxprof, 0)
+		if err := pprof.Lookup("mutex").WriteTo(b.mtxprof, 0); err != nil {
+			return fmt.Errorf("error writing mutex profile: %v", err)
+		}
 		b.mtxprof.Close()
 		b.mtxprof = nil
 		runtime.SetMutexProfileFraction(0)
 	}
+	return nil
 }
 
 func measureTime(stage string, f func()) time.Duration {

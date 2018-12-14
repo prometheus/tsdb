@@ -11,6 +11,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// +build !windows
+
 package tsdb
 
 import (
@@ -20,6 +22,7 @@ import (
 	"math/rand"
 	"os"
 	"path"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -66,7 +69,7 @@ func TestSegmentWAL_cut(t *testing.T) {
 		et, flag, b, err := newWALReader(nil, nil).entry(f)
 		testutil.Ok(t, err)
 		testutil.Equals(t, WALEntrySeries, et)
-		testutil.Equals(t, flag, byte(walSeriesSimple))
+		testutil.Equals(t, byte(walSeriesSimple), flag)
 		testutil.Equals(t, []byte("Hello World!!"), b)
 	}
 }
@@ -76,7 +79,7 @@ func TestSegmentWAL_Truncate(t *testing.T) {
 		numMetrics = 20000
 		batch      = 100
 	)
-	series, err := labels.ReadLabels("testdata/20kseries.json", numMetrics)
+	series, err := labels.ReadLabels(filepath.Join("testdata", "20kseries.json"), numMetrics)
 	testutil.Ok(t, err)
 
 	dir, err := ioutil.TempDir("", "test_wal_log_truncate")
@@ -155,7 +158,7 @@ func TestSegmentWAL_Log_Restore(t *testing.T) {
 	)
 	// Generate testing data. It does not make semantical sense but
 	// for the purpose of this test.
-	series, err := labels.ReadLabels("testdata/20kseries.json", numMetrics)
+	series, err := labels.ReadLabels(filepath.Join("testdata", "20kseries.json"), numMetrics)
 	testutil.Ok(t, err)
 
 	dir, err := ioutil.TempDir("", "test_wal_log_restore")
@@ -272,11 +275,11 @@ func TestWALRestoreCorrupted_invalidSegment(t *testing.T) {
 	wal, err := OpenSegmentWAL(dir, nil, 0, nil)
 	testutil.Ok(t, err)
 
-	_, err = wal.createSegmentFile(dir + "/000000")
+	_, err = wal.createSegmentFile(filepath.Join(dir, "000000"))
 	testutil.Ok(t, err)
-	f, err := wal.createSegmentFile(dir + "/000001")
+	f, err := wal.createSegmentFile(filepath.Join(dir, "000001"))
 	testutil.Ok(t, err)
-	f2, err := wal.createSegmentFile(dir + "/000002")
+	f2, err := wal.createSegmentFile(filepath.Join(dir, "000002"))
 	testutil.Ok(t, err)
 	testutil.Ok(t, f2.Close())
 

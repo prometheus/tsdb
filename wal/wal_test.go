@@ -143,7 +143,7 @@ func TestReader(t *testing.T) {
 			if j >= len(c.exp) {
 				t.Fatal("received more records than inserted")
 			}
-			testutil.Equals(t, c.exp[j], rec)
+			testutil.Equals(t, c.exp[j], rec, "Bytes within record did not match expected Bytes")
 		}
 		if !c.fail && r.Err() != nil {
 			t.Fatalf("unexpected error: %s", r.Err())
@@ -195,7 +195,7 @@ func TestWAL_FuzzWriteRead(t *testing.T) {
 	m, n, err := w.Segments()
 	testutil.Ok(t, err)
 
-	rc, err := NewSegmentsRangeReader(dir, m, n)
+	rc, err := NewSegmentsRangeReader(SegmentRange{Dir: dir, First: m, Last: n})
 	testutil.Ok(t, err)
 	defer rc.Close()
 
@@ -215,36 +215,84 @@ func TestWAL_FuzzWriteRead(t *testing.T) {
 }
 
 func TestWAL_Repair(t *testing.T) {
-	for name, cf := range map[string]func(f *os.File){
-		"bad_fragment_sequence": func(f *os.File) {
-			_, err := f.Seek(pageSize, 0)
-			testutil.Ok(t, err)
-			_, err = f.Write([]byte{byte(recLast)})
-			testutil.Ok(t, err)
+
+	for name, test := range map[string]struct {
+		corrSgm    int              // Which segment to corrupt.
+		corrFunc   func(f *os.File) // Func that applies the corruption.
+		intactRecs int              // Total expected records left after the repair.
+	}{
+		"torn_last_record": {
+			2,
+			func(f *os.File) {
+				_, err := f.Seek(pageSize*2, 0)
+				testutil.Ok(t, err)
+				_, err = f.Write([]byte{byte(recFirst)})
+				testutil.Ok(t, err)
+			},
+			8,
 		},
-		"bad_fragment_flag": func(f *os.File) {
-			_, err := f.Seek(pageSize, 0)
-			testutil.Ok(t, err)
-			_, err = f.Write([]byte{123})
-			testutil.Ok(t, err)
+		// Ensures that the page buffer is big enough to fit
+		// an entire page size without panicing.
+		// https://github.com/prometheus/tsdb/pull/414
+		"bad_header": {
+			1,
+			func(f *os.File) {
+				_, err := f.Seek(pageSize, 0)
+				testutil.Ok(t, err)
+				_, err = f.Write([]byte{byte(recPageTerm)})
+				testutil.Ok(t, err)
+			},
+			4,
 		},
-		"bad_checksum": func(f *os.File) {
-			_, err := f.Seek(pageSize+4, 0)
-			testutil.Ok(t, err)
-			_, err = f.Write([]byte{0})
-			testutil.Ok(t, err)
+		"bad_fragment_sequence": {
+			1,
+			func(f *os.File) {
+				_, err := f.Seek(pageSize, 0)
+				testutil.Ok(t, err)
+				_, err = f.Write([]byte{byte(recLast)})
+				testutil.Ok(t, err)
+			},
+			4,
 		},
-		"bad_length": func(f *os.File) {
-			_, err := f.Seek(pageSize+2, 0)
-			testutil.Ok(t, err)
-			_, err = f.Write([]byte{0})
-			testutil.Ok(t, err)
+		"bad_fragment_flag": {
+			1,
+			func(f *os.File) {
+				_, err := f.Seek(pageSize, 0)
+				testutil.Ok(t, err)
+				_, err = f.Write([]byte{123})
+				testutil.Ok(t, err)
+			},
+			4,
 		},
-		"bad_content": func(f *os.File) {
-			_, err := f.Seek(pageSize+100, 0)
-			testutil.Ok(t, err)
-			_, err = f.Write([]byte("beef"))
-			testutil.Ok(t, err)
+		"bad_checksum": {
+			1,
+			func(f *os.File) {
+				_, err := f.Seek(pageSize+4, 0)
+				testutil.Ok(t, err)
+				_, err = f.Write([]byte{0})
+				testutil.Ok(t, err)
+			},
+			4,
+		},
+		"bad_length": {
+			1,
+			func(f *os.File) {
+				_, err := f.Seek(pageSize+2, 0)
+				testutil.Ok(t, err)
+				_, err = f.Write([]byte{0})
+				testutil.Ok(t, err)
+			},
+			4,
+		},
+		"bad_content": {
+			1,
+			func(f *os.File) {
+				_, err := f.Seek(pageSize+100, 0)
+				testutil.Ok(t, err)
+				_, err = f.Write([]byte("beef"))
+				testutil.Ok(t, err)
+			},
+			4,
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -252,9 +300,9 @@ func TestWAL_Repair(t *testing.T) {
 			testutil.Ok(t, err)
 			defer os.RemoveAll(dir)
 
-			// We create 3 segments with 3 records each and then corrupt the 2nd record
-			// of the 2nd segment.
-			// As a result we want a repaired WAL with the first 4 records intact.
+			// We create 3 segments with 3 records each and
+			// then corrupt a given record in a given segment.
+			// As a result we want a repaired WAL with given intact records.
 			w, err := NewSize(nil, nil, dir, 3*pageSize)
 			testutil.Ok(t, err)
 
@@ -268,11 +316,11 @@ func TestWAL_Repair(t *testing.T) {
 			}
 			testutil.Ok(t, w.Close())
 
-			f, err := os.OpenFile(SegmentName(dir, 1), os.O_RDWR, 0666)
+			f, err := os.OpenFile(SegmentName(dir, test.corrSgm), os.O_RDWR, 0666)
 			testutil.Ok(t, err)
 
 			// Apply corruption function.
-			cf(f)
+			test.corrFunc(f)
 
 			testutil.Ok(t, f.Close())
 
@@ -286,9 +334,9 @@ func TestWAL_Repair(t *testing.T) {
 			for r.Next() {
 			}
 			testutil.NotOk(t, r.Err())
+			testutil.Ok(t, sr.Close())
 
 			testutil.Ok(t, w.Repair(r.Err()))
-
 			sr, err = NewSegmentsReader(dir)
 			testutil.Ok(t, err)
 			r = NewReader(sr)
@@ -299,7 +347,7 @@ func TestWAL_Repair(t *testing.T) {
 				result = append(result, append(b, r.Record()...))
 			}
 			testutil.Ok(t, r.Err())
-			testutil.Equals(t, 4, len(result))
+			testutil.Equals(t, test.intactRecs, len(result), "Wrong number of intact records")
 
 			for i, r := range result {
 				if !bytes.Equal(records[i], r) {
