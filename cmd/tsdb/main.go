@@ -130,13 +130,14 @@ func scanOverlappingBlocks(scan tsdb.Scanner, hformat *bool) error {
 			paths = append(paths, b.Dir())
 		}
 		printBlocks(blocksDel, hformat)
-		confirmed, err := confirm()
+		moveTo := filepath.Join(scan.Dir(), "overlappingBlocks")
+		confirmed, err := confirm("Confirm moving the overlapping blocks to: " + moveTo)
 		if err != nil {
 			return err
 		}
 		if confirmed {
 			for _, file := range paths {
-				fileutil.Replace(file, filepath.Join(scan.Dir(), "overlappingBlocks"))
+				fileutil.Replace(file, moveTo)
 			}
 		}
 	}
@@ -159,13 +160,15 @@ func scanIndexes(scan tsdb.Scanner, hformat *bool) error {
 	for cause, bdirs := range unrepairable {
 		fmt.Println("Blocks with unrepairable indexes! \n", cause)
 		printFiles(bdirs, hformat)
-		confirmed, err := confirm()
+
+		moveTo := filepath.Join(scan.Dir(), "blocksWithInvalidIndexes")
+		confirmed, err := confirm("Confirm moving unrepairable indexes to: " + moveTo)
 		if err != nil {
 			return err
 		}
 		if confirmed {
 			for _, file := range bdirs {
-				fileutil.Replace(file, filepath.Join(scan.Dir(), "blocksWithInvalidIndexes"))
+				fileutil.Replace(file, moveTo)
 			}
 		}
 	}
@@ -189,13 +192,14 @@ func scanTombstones(scan tsdb.Scanner, hformat *bool) error {
 			}
 			fmt.Println("invalid tombstones:", cause)
 			printFiles(files, hformat)
-			confirmed, err := confirm()
+			moveTo := filepath.Join(scan.Dir(), "badTombstones")
+			confirmed, err := confirm("Confirm moving unrepairable tombstones to: " + moveTo)
 			if err != nil {
 				return err
 			}
 			if confirmed {
 				for _, file := range files {
-					fileutil.Replace(file, filepath.Join(scan.Dir(), "badTombstones"))
+					fileutil.Replace(file, moveTo)
 				}
 			}
 		}
@@ -221,7 +225,7 @@ func scanTmps(scanPath string, hformat *bool) error {
 			}
 		}
 		printFiles(files, hformat)
-		confirmed, err := confirm()
+		confirmed, err := confirm("DELETE")
 		if err != nil {
 			return err
 		}
@@ -243,9 +247,9 @@ func delAll(paths []string) error {
 	return nil
 }
 
-func confirm() (bool, error) {
+func confirm(action string) (bool, error) {
 	for x := 0; x < 3; x++ {
-		fmt.Println("DELETE (y/N)?")
+		fmt.Println(action, " (y/N)?")
 		var s string
 		_, err := fmt.Scanln(&s)
 		if err != nil {
