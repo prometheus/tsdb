@@ -450,9 +450,8 @@ func (b *writeBenchmark) startProfiling() {
 		exitWithError(errors.Wrap(err, "bench: could not create cpu profile"))
 	}
 	if err := pprof.StartCPUProfile(b.cpuprof); err != nil {
-		exitWithError(fmt.Errorf("bench: could not start CPU profile: %v", err))
+		exitWithError(errors.Wrap(err, "bench: could not start CPU profile"))
 	}
-
 	// Start memory profiling.
 	b.memprof, err = os.Create(filepath.Join(b.outPath, "mem.prof"))
 	if err != nil {
