@@ -20,7 +20,6 @@ import (
 	"io"
 	"io/ioutil"
 	"os"
-	"path"
 	"path/filepath"
 	"runtime"
 	"runtime/pprof"
@@ -33,7 +32,6 @@ import (
 
 	"github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/log/level"
-	"github.com/oklog/ulid"
 	"github.com/pkg/errors"
 	"github.com/prometheus/tsdb"
 	"github.com/prometheus/tsdb/labels"
@@ -51,7 +49,7 @@ func main() {
 		listCmd              = cli.Command("ls", "list db blocks")
 		listCmdHumanReadable = listCmd.Flag("human-readable", "print human readable values").Short('h').Bool()
 		listPath             = listCmd.Arg("db path", "database path (default is benchout/storage)").Default("benchout/storage").String()
-		scanCmd              = cli.Command("scan", "scans the db and lists corrupted blocks")
+		scanCmd              = cli.Command("scan", "scans the db and repairs or deletes corrupted blocks")
 		scanCmdHumanReadable = scanCmd.Flag("human-readable", "print human readable values").Short('h').Bool()
 		scanPath             = scanCmd.Arg("dir", "database path (default is current dir ./)").Default("./").ExistingDir()
 		logger               = level.NewFilter(log.NewLogfmtLogger(log.NewSyncWriter(os.Stderr)), level.AllowError())
@@ -74,33 +72,44 @@ func main() {
 		printBlocks(db.Blocks(), listCmdHumanReadable)
 
 	case scanCmd.FullCommand():
-		scanTmps(*scanPath, scanCmdHumanReadable)
+		if err := scanTmps(*scanPath, scanCmdHumanReadable); err != nil {
+			exitWithError(err)
+		}
 
 		scan, err := tsdb.NewDBScanner(*scanPath, logger)
 		if err != nil {
 			exitWithError(err)
 		}
-		scanTmbst(scan, scanCmdHumanReadable)
-		scanIndexes(scan, scanCmdHumanReadable)
-		scanOverlapping(scan, scanCmdHumanReadable)
+		if err := scanTombstones(scan, scanCmdHumanReadable); err != nil {
+			exitWithError(err)
+		}
+		if err := scanIndexes(scan, scanCmdHumanReadable); err != nil {
+			exitWithError(err)
+		}
+		if err := scanOverlappingBlocks(scan, scanCmdHumanReadable); err != nil {
+			exitWithError(err)
+		}
 
 		fmt.Println("Scan complete!")
-		fmt.Println("Hooray! The db is clean(or the scan tool is broken):\U0001f638")
 	}
 	flag.CommandLine.Set("log.level", "debug")
 }
 
-func scanOverlapping(scan tsdb.Scanner, hformat *bool) {
+func scanOverlappingBlocks(scan tsdb.Scanner, hformat *bool) error {
 	overlaps, err := scan.Overlapping()
 	if err != nil {
-		exitWithError(err)
+		return err
 	}
 	if len(overlaps) > 0 {
 		fmt.Println("Overlaping blocks.")
 		fmt.Println("Deleting these will remove all data in the listed time range.")
 		var blocksDel []*tsdb.Block
 		for t, overBcks := range overlaps {
-			fmt.Printf("overlapping blocks : %v-%v \n", time.Unix(t.Min/1000, 0).Format("06/01/02 15:04:05"), time.Unix(t.Max/1000, 0).Format("15:04:05 06/01/02"))
+			var ULIDS string
+			for _, b := range overBcks {
+				ULIDS = ULIDS + b.Meta().ULID.String() + " "
+			}
+			fmt.Printf("overlapping blocks : %v %v-%v \n", ULIDS, time.Unix(t.Min/1000, 0).Format("06/01/02 15:04:05"), time.Unix(t.Max/1000, 0).Format("15:04:05 06/01/02"))
 
 			var largest int
 			for i, b := range overBcks {
@@ -109,7 +118,7 @@ func scanOverlapping(scan tsdb.Scanner, hformat *bool) {
 				}
 			}
 			fmt.Printf("\nBlock %v contains highest samples count and is ommited from the deletion list! \n\n", overBcks[largest])
-			//Remove the largest block from the slice.
+			// Remove the largest block from the slice.
 			o := append(overBcks[:largest], overBcks[largest+1:]...)
 			// Add this range to all blocks for deletion.
 			blocksDel = append(blocksDel, o...)
@@ -117,26 +126,26 @@ func scanOverlapping(scan tsdb.Scanner, hformat *bool) {
 
 		var paths []string
 		for _, b := range blocksDel {
-			_, folder := path.Split(b.Dir())
-			if _, err := ulid.Parse(folder); err != nil {
-				fmt.Printf("\nskipping invalid block dir: %v :%v \n\n", b.Dir(), err)
-				continue
-			}
 			paths = append(paths, b.Dir())
 		}
 		printBlocks(blocksDel, hformat)
-		if confirm() {
-			if err = dellAll(paths); err != nil {
-				exitWithError(errors.Wrap(err, "deleting overlapping blocks"))
+		confirmed, err := confirm()
+		if err != nil {
+			return err
+		}
+		if confirmed {
+			if err = delAll(paths); err != nil {
+				return errors.Wrap(err, "deleting overlapping blocks")
 			}
 		}
 	}
+	return nil
 }
 
-func scanIndexes(scan tsdb.Scanner, hformat *bool) {
+func scanIndexes(scan tsdb.Scanner, hformat *bool) error {
 	unrepairable, repaired, err := scan.Indexes()
 	if err != nil {
-		exitWithError(err)
+		return err
 	}
 
 	if len(repaired) > 0 {
@@ -146,23 +155,26 @@ func scanIndexes(scan tsdb.Scanner, hformat *bool) {
 		}
 	}
 
-	if len(unrepairable) > 0 {
-		for cause, bdirs := range unrepairable {
-			fmt.Println("Blocks with unrepairable indexes! \n", cause)
-			printFiles(bdirs, hformat)
-			if confirm() {
-				if err = dellAll(bdirs); err != nil {
-					exitWithError(errors.Wrap(err, "deleting blocks with invalid indexes"))
-				}
+	for cause, bdirs := range unrepairable {
+		fmt.Println("Blocks with unrepairable indexes! \n", cause)
+		printFiles(bdirs, hformat)
+		confirmed, err := confirm()
+		if err != nil {
+			return err
+		}
+		if confirmed {
+			if err = delAll(bdirs); err != nil {
+				return errors.Wrap(err, "deleting blocks with invalid indexes")
 			}
 		}
 	}
+	return nil
 }
 
-func scanTmbst(scan tsdb.Scanner, hformat *bool) {
+func scanTombstones(scan tsdb.Scanner, hformat *bool) error {
 	invalid, err := scan.Tombstones()
 	if err != nil {
-		exitWithError(errors.Wrap(err, "scannings Tombstones"))
+		return errors.Wrap(err, "scannings Tombstones")
 	}
 
 	if len(invalid) > 0 {
@@ -171,21 +183,26 @@ func scanTmbst(scan tsdb.Scanner, hformat *bool) {
 			for _, p := range files {
 				_, file := filepath.Split(p)
 				if file != "tombstone" {
-					exitWithError(fmt.Errorf("path doesn't contain a valid tombstone filename: %v", p))
+					return fmt.Errorf("path doesn't contain a valid tombstone filename: %v", p)
 				}
 			}
 			fmt.Println("invalid tombstones:", cause)
 			printFiles(files, hformat)
-			if confirm() {
-				if err = dellAll(files); err != nil {
-					exitWithError(errors.Wrap(err, "deleting Tombstones"))
+			confirmed, err := confirm()
+			if err != nil {
+				return err
+			}
+			if confirmed {
+				if err = delAll(files); err != nil {
+					return errors.Wrap(err, "deleting Tombstones")
 				}
 			}
 		}
 	}
+	return nil
 }
 
-func scanTmps(scanPath string, hformat *bool) {
+func scanTmps(scanPath string, hformat *bool) error {
 	var files []string
 	filepath.Walk(scanPath, func(path string, f os.FileInfo, _ error) error {
 		if filepath.Ext(path) == ".tmp" {
@@ -195,53 +212,58 @@ func scanTmps(scanPath string, hformat *bool) {
 	})
 	if len(files) > 0 {
 		fmt.Println(`
-			These are usually caused by a crash or incomplete compaction and 
+			These are usually caused by a crash or some incomplete operation and 
 			are safe to delete as long as no other application is currently using this database.`)
 		for _, p := range files {
 			if filepath.Ext(p) != ".tmp" {
-				exitWithError(fmt.Errorf("path doesn't contain a valid tmp extension: %v", p))
+				return fmt.Errorf("path doesn't contain a valid tmp extension: %v", p)
 			}
 		}
 		printFiles(files, hformat)
-		if confirm() {
-			if err := dellAll(files); err != nil {
-				exitWithError(errors.Wrap(err, "deleting temp files"))
-			}
+		confirmed, err := confirm()
+		if err != nil {
+			return err
 		}
-	}
-}
-
-func dellAll(paths []string) error {
-	for _, p := range paths {
-		if err := os.RemoveAll(p); err != nil {
-			return fmt.Errorf("error deleting: %v, %v", p, err)
+		if confirmed {
+			if err := delAll(files); err != nil {
+				return errors.Wrap(err, "deleting temp files")
+			}
 		}
 	}
 	return nil
 }
 
-func confirm() bool {
+func delAll(paths []string) error {
+	for _, p := range paths {
+		if err := os.RemoveAll(p); err != nil {
+			return errors.Wrapf(err, "error deleting:%v", p)
+		}
+	}
+	return nil
+}
+
+func confirm() (bool, error) {
 	for x := 0; x < 3; x++ {
 		fmt.Println("DELETE (y/N)?")
 		var s string
 		_, err := fmt.Scanln(&s)
 		if err != nil {
-			exitWithError(err)
+			return false, err
 		}
 
 		s = strings.TrimSpace(s)
 		s = strings.ToLower(s)
 
 		if s == "y" || s == "yes" {
-			return true
+			return true, nil
 		}
 		if s == "n" || s == "no" {
-			return false
+			return false, nil
 		}
 		fmt.Println(s, "is not a valid answer")
 	}
 	fmt.Printf("Bailing out, too many invalid answers! \n\n")
-	return false
+	return false, nil
 }
 
 type writeBenchmark struct {
@@ -422,21 +444,21 @@ func (b *writeBenchmark) startProfiling() {
 	// Start CPU profiling.
 	b.cpuprof, err = os.Create(filepath.Join(b.outPath, "cpu.prof"))
 	if err != nil {
-		exitWithError(fmt.Errorf("bench: could not create cpu profile: %v", err))
+		exitWithError(errors.Wrap(err, "bench: could not create cpu profile"))
 	}
 	pprof.StartCPUProfile(b.cpuprof)
 
 	// Start memory profiling.
 	b.memprof, err = os.Create(filepath.Join(b.outPath, "mem.prof"))
 	if err != nil {
-		exitWithError(fmt.Errorf("bench: could not create memory profile: %v", err))
+		exitWithError(errors.Wrap(err, "bench: could not create memory profile: %v"))
 	}
 	runtime.MemProfileRate = 64 * 1024
 
 	// Start fatal profiling.
 	b.blockprof, err = os.Create(filepath.Join(b.outPath, "block.prof"))
 	if err != nil {
-		exitWithError(fmt.Errorf("bench: could not create block profile: %v", err))
+		exitWithError(errors.Wrap(err, "bench: could not create block profile: %v"))
 	}
 	runtime.SetBlockProfileRate(20)
 
