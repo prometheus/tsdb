@@ -182,7 +182,7 @@ func repairBlock(dbDir string, bdir string) (err error) {
 		}
 	}()
 
-	chunkw, err := chunks.NewWriter(filepath.Join(newBlockDir, chunksDirname))
+	chunkw, err := chunks.NewWriter(chunkDir(newBlockDir))
 	if err != nil {
 		err = errors.Wrap(err, "opening new chunk writer")
 		return
