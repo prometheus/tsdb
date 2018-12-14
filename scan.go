@@ -58,6 +58,13 @@ type DBScanner struct {
 
 // NewDBScanner initializes a new database scanner.
 func NewDBScanner(dir string, l log.Logger) (*DBScanner, error) {
+	blocks, err := blockDirs(dir)
+	if err != nil {
+		return nil, errors.Wrapf(err, "listing blocks")
+	}
+	if len(blocks) == 0 {
+		return nil, fmt.Errorf("directory doesn't include any blocks:%v", dir)
+	}
 	dbScanner := &DBScanner{
 		db: &DB{
 			dir:    dir,
