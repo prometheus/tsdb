@@ -34,6 +34,7 @@ import (
 	"github.com/go-kit/kit/log/level"
 	"github.com/pkg/errors"
 	"github.com/prometheus/tsdb"
+	"github.com/prometheus/tsdb/fileutil"
 	"github.com/prometheus/tsdb/labels"
 	"gopkg.in/alecthomas/kingpin.v2"
 )
@@ -134,8 +135,8 @@ func scanOverlappingBlocks(scan tsdb.Scanner, hformat *bool) error {
 			return err
 		}
 		if confirmed {
-			if err = delAll(paths); err != nil {
-				return errors.Wrap(err, "deleting overlapping blocks")
+			for _, file := range paths {
+				fileutil.Replace(file, filepath.Join(scan.Dir(), "overlappingBlocks"))
 			}
 		}
 	}
@@ -163,8 +164,8 @@ func scanIndexes(scan tsdb.Scanner, hformat *bool) error {
 			return err
 		}
 		if confirmed {
-			if err = delAll(bdirs); err != nil {
-				return errors.Wrap(err, "deleting blocks with invalid indexes")
+			for _, file := range bdirs {
+				fileutil.Replace(file, filepath.Join(scan.Dir(), "blocksWithInvalidIndexes"))
 			}
 		}
 	}
@@ -193,8 +194,8 @@ func scanTombstones(scan tsdb.Scanner, hformat *bool) error {
 				return err
 			}
 			if confirmed {
-				if err = delAll(files); err != nil {
-					return errors.Wrap(err, "deleting Tombstones")
+				for _, file := range files {
+					fileutil.Replace(file, filepath.Join(scan.Dir(), "badTombstones"))
 				}
 			}
 		}

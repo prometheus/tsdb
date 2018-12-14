@@ -33,10 +33,21 @@ import (
 
 // Scanner provides an interface for scanning different building components of a block.
 type Scanner interface {
+	// Tombstones returns all invalid Tombstones grouped by the returned error while opening it.
 	Tombstones() (map[string][]string, error)
+	// Meta returns all block paths with invalid meta file grouped by the returned error while opening.
 	Meta() (map[string][]string, error)
+	// Indexes attempts to repair all blocks with invalid indexes.
+	// Returns a map of unrepairable and repaired indexes.
+	// The list of unrepairable indexes is grouped by the returned error while opening the index.
+	// During the rewrite it drops all chunks that are completely outside the block range,
+	// drops all but one overlapping chunks,
+	// chunks with times partially outside the block range are rewritten by removing the outsider samples.
 	Indexes() (map[string][]string, []IndexStats, error)
+	// Overlapping returns all blocks with overlapping time ranges.
 	Overlapping() (Overlaps, error)
+	// Dir returns the scanned directory.
+	Dir() string
 }
 
 // DBScanner is the main struct for the scanner.
@@ -58,7 +69,10 @@ func NewDBScanner(dir string, l log.Logger) (*DBScanner, error) {
 	return dbScanner, nil
 }
 
-// Tombstones returns all invalid Tombstones grouped by the returned error while opening it.
+func (s *DBScanner) Dir() string {
+	return s.db.Dir()
+}
+
 func (s *DBScanner) Tombstones() (map[string][]string, error) {
 	dirs, err := blockDirs(s.db.dir)
 	if err != nil {
@@ -74,7 +88,6 @@ func (s *DBScanner) Tombstones() (map[string][]string, error) {
 	return inv, nil
 }
 
-// Meta returns all block paths with invalid meta file grouped by the returned error while opening.
 func (s *DBScanner) Meta() (map[string][]string, error) {
 	dirs, err := blockDirs(s.db.dir)
 	if err != nil {
@@ -90,12 +103,6 @@ func (s *DBScanner) Meta() (map[string][]string, error) {
 	return inv, nil
 }
 
-// Indexes attempts to repair all blocks with invalid indexes.
-// Returns a map of unrepairable and repaired indexes.
-// The list of unrepairable indexes is grouped by the returned error while opening the index.
-// During the rewrite it drops all chunks that are completely outside the block range,
-// drops all but one overlapping chunks,
-// chunks with times partially outside the block range are rewritten by removing the outsider samples.
 func (s *DBScanner) Indexes() (map[string][]string, []IndexStats, error) {
 	unrepairable := make(map[string][]string)
 	var repaired []IndexStats
@@ -127,7 +134,6 @@ func (s *DBScanner) Indexes() (map[string][]string, []IndexStats, error) {
 	return unrepairable, repaired, nil
 }
 
-// Overlapping returns all blocks with overlapping time ranges.
 func (s *DBScanner) Overlapping() (Overlaps, error) {
 	dirs, err := blockDirs(s.db.dir)
 	if err != nil {
