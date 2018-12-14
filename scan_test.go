@@ -61,9 +61,12 @@ func TestRepairIndex(t *testing.T) {
 		dbCopy, err := Open(tmpdir, nil, nil, DefaultOptions)
 		testutil.Ok(t, err)
 
+		blocks := dbCopy.Blocks()
+		dbCopy.Close() // Close the db so that the scanner can read/write/delete blocks under windows.
+
 		// Read the block index to make sure it includes invalid chunks.
 		testutil.Equals(t, true, len(dbCopy.blocks) > 0)
-		for _, block := range dbCopy.blocks {
+		for _, block := range blocks {
 			stats, err := indexStats(block.Dir())
 			testutil.Ok(t, err)
 			stats.BlockDir = "" // Reset so that it matches with the expected stats.

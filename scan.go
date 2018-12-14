@@ -200,6 +200,7 @@ func repairBlock(dbDir string, bdir string) (err error) {
 		err = errors.Wrap(err, "opening new chunk writer")
 		return
 	}
+	defer chunkw.Close()
 
 	newIndexPath := filepath.Join(newBlockDir, indexFilename)
 	indexw, err := index.NewWriter(newIndexPath)
@@ -207,6 +208,7 @@ func repairBlock(dbDir string, bdir string) (err error) {
 		err = errors.Wrap(err, "opening new index writer")
 		return
 	}
+	defer indexw.Close()
 
 	symbols, err := indexr.Symbols()
 	if err != nil {
