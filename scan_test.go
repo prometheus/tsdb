@@ -14,11 +14,14 @@
 package tsdb
 
 import (
+	"io/ioutil"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/log/level"
+	"github.com/prometheus/tsdb/fileutil"
 	"github.com/prometheus/tsdb/testutil"
 )
 
@@ -51,14 +54,10 @@ func TestRepairIndex(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		db, err := Open("testdata/repair_index_chunks/", nil, nil, DefaultOptions)
+		tmpdir, err := ioutil.TempDir("", "test_scanner")
 		testutil.Ok(t, err)
-		defer db.Close()
-
-		// Create and work on the db copy so we can run the test many times.
-		tmpdir := "testdata/repair_index_chunks/snapshot"
 		defer os.RemoveAll(tmpdir)
-		testutil.Ok(t, db.Snapshot(tmpdir, false))
+		testutil.Ok(t, fileutil.CopyDirs(filepath.Join("testdata", "repair_index_chunks"), tmpdir))
 		dbCopy, err := Open(tmpdir, nil, nil, DefaultOptions)
 		testutil.Ok(t, err)
 
