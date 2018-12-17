@@ -1,5 +1,6 @@
 ## master / unreleased
-
+  - [FEATURE] New public `Scanner interface` for allowing to build custom CLI tools to repair or handle unrepairable blocks.
+  - [FEATURE] New `scan` command for the `tsdb cli` tool that used the new tsdb scan interface to run a repair and move all unrepairable blocks out of the data folder to unblock Prometheus at the next startup.
 
 ## 0.3.1
 - [BUGFIX] Fixed most windows test and some actual bugs for unclosed file readers.
