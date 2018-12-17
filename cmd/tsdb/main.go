@@ -219,11 +219,6 @@ func scanTmps(scanPath string, hformat *bool) error {
 		fmt.Println(`
 			These are usually caused by a crash or some incomplete operation and 
 			are safe to delete as long as no other application is currently using this database.`)
-		for _, p := range files {
-			if filepath.Ext(p) != ".tmp" {
-				return fmt.Errorf("path doesn't contain a valid tmp extension: %v", p)
-			}
-		}
 		printFiles(files, hformat)
 		confirmed, err := confirm("DELETE")
 		if err != nil {
