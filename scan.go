@@ -170,12 +170,12 @@ func repairBlock(dbDir string, bdir string) (err error) {
 
 	indexr, err := block.Index()
 	if err != nil {
-		return
+		return err
 	}
 	defer indexr.Close()
 	chunkr, err := block.Chunks()
 	if err != nil {
-		return
+		return err
 	}
 	defer chunkr.Close()
 
@@ -197,33 +197,28 @@ func repairBlock(dbDir string, bdir string) (err error) {
 
 	chunkw, err := chunks.NewWriter(chunkDir(newBlockDir))
 	if err != nil {
-		err = errors.Wrap(err, "opening new chunk writer")
-		return
+		return errors.Wrap(err, "opening new chunk writer")
 	}
 	defer chunkw.Close()
 
 	newIndexPath := filepath.Join(newBlockDir, indexFilename)
 	indexw, err := index.NewWriter(newIndexPath)
 	if err != nil {
-		err = errors.Wrap(err, "opening new index writer")
-		return
+		return errors.Wrap(err, "opening new index writer")
 	}
 	defer indexw.Close()
 
 	symbols, err := indexr.Symbols()
 	if err != nil {
-		err = errors.Wrap(err, "writing new chunks")
-		return
+		return errors.Wrap(err, "writing new chunks")
 	}
 	if err = indexw.AddSymbols(symbols); err != nil {
-		err = errors.Wrap(err, "add symbols to new index")
-		return
+		return errors.Wrap(err, "add symbols to new index")
 	}
 
 	all, err := indexr.Postings(index.AllPostingsKey())
 	if err != nil {
-		err = errors.Wrap(err, "getting all postings from the corrupted index")
-		return
+		return errors.Wrap(err, "getting all postings from the corrupted index")
 	}
 	all = indexr.SortedPostings(all)
 
@@ -241,37 +236,32 @@ func repairBlock(dbDir string, bdir string) (err error) {
 		id := all.At()
 
 		if err = indexr.Series(id, &lset, &chks); err != nil {
-			err = errors.Wrap(err, "reading index series from the corrupted index")
-			return
+			return errors.Wrap(err, "reading index series from the corrupted index")
 		}
 		for i, c := range chks {
 			chks[i].Chunk, err = chunkr.Chunk(c.Ref)
 			if err != nil {
-				err = errors.Wrap(err, "reading chunk from the source block")
-				return
+				return errors.Wrap(err, "reading chunk from the source block")
 			}
 		}
 		chks, err = removeCompleteOutsiders(chks, newBlockMeta.MinTime, newBlockMeta.MaxTime)
 		if err != nil {
-			return
+			return err
 		}
 		chks, err = repairPartialOutsiders(chks, newBlockMeta.MinTime, newBlockMeta.MaxTime)
 		if err != nil {
-			return
+			return err
 		}
 
 		if len(chks) == 0 {
-			err = fmt.Errorf("new block includes no chunks")
-			return
+			return fmt.Errorf("new block includes no chunks")
 		}
 
 		if err = chunkw.WriteChunks(chks...); err != nil {
-			err = errors.Wrap(err, "write chunks for the new block")
-			return
+			return errors.Wrap(err, "write chunks for the new block")
 		}
 		if err = indexw.AddSeries(i, lset, chks...); err != nil {
-			err = errors.Wrap(err, "add series to the new index")
-			return
+			return errors.Wrap(err, "add series to the new index")
 		}
 
 		newBlockMeta.Stats.NumChunks += uint64(len(chks))
@@ -293,8 +283,7 @@ func repairBlock(dbDir string, bdir string) (err error) {
 		i++
 	}
 	if err = all.Err(); err != nil {
-		err = errors.Wrap(err, "iterate series from the corrupted index")
-		return
+		return errors.Wrap(err, "iterate series from the corrupted index")
 	}
 
 	s := make([]string, 0, 256)
@@ -305,15 +294,13 @@ func repairBlock(dbDir string, bdir string) (err error) {
 			s = append(s, x)
 		}
 		if err = indexw.WriteLabelIndex([]string{n}, s); err != nil {
-			err = errors.Wrap(err, "write label to the new index")
-			return
+			return errors.Wrap(err, "write label to the new index")
 		}
 	}
 
 	for _, l := range postings.SortedKeys() {
 		if err = indexw.WritePostings(l.Name, l.Value, postings.Get(l.Name, l.Value)); err != nil {
-			err = errors.Wrap(err, "write postings to the index")
-			return
+			return errors.Wrap(err, "write postings to the index")
 		}
 	}
 
@@ -321,22 +308,19 @@ func repairBlock(dbDir string, bdir string) (err error) {
 	indexw.Close()
 	chunkw.Close()
 	if err = writeMetaFile(newBlockDir, &newBlockMeta); err != nil {
-		err = errors.Wrap(err, "write the new block meta file")
-		return
+		return errors.Wrap(err, "write the new block meta file")
 	}
 
 	// The repair is successful only when the new block is clean.
 	stats, err := indexStats(newBlockDir)
 	if err != nil {
-		err = errors.Wrap(err, "getting  new index stats")
-		return
+		return errors.Wrap(err, "getting  new index stats")
 	}
 	if stats.ErrSummary() != nil {
-		err = fmt.Errorf("new block index still includes invalid chunks: %+v", stats.ErrSummary())
-		return
+		return fmt.Errorf("new block index still includes invalid chunks: %+v", stats.ErrSummary())
 	}
 
-	return
+	return err
 }
 
 func removeCompleteOutsiders(chks []chunks.Meta, mint int64, maxt int64) ([]chunks.Meta, error) {
