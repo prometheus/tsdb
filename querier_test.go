@@ -15,8 +15,11 @@ package tsdb
 
 import (
 	"fmt"
+	"io/ioutil"
 	"math"
 	"math/rand"
+	"os"
+	"path/filepath"
 	"sort"
 	"testing"
 
@@ -26,7 +29,32 @@ import (
 	"github.com/prometheus/tsdb/index"
 	"github.com/prometheus/tsdb/labels"
 	"github.com/prometheus/tsdb/testutil"
+	"github.com/prometheus/tsdb/tsdbutil"
 )
+
+type mockSeriesSet struct {
+	next   func() bool
+	series func() Series
+	err    func() error
+}
+
+func (m *mockSeriesSet) Next() bool { return m.next() }
+func (m *mockSeriesSet) At() Series { return m.series() }
+func (m *mockSeriesSet) Err() error { return m.err() }
+
+func newMockSeriesSet(list []Series) *mockSeriesSet {
+	i := -1
+	return &mockSeriesSet{
+		next: func() bool {
+			i++
+			return i < len(list)
+		},
+		series: func() Series {
+			return list[i]
+		},
+		err: func() error { return nil },
+	}
+}
 
 type mockSeriesIterator struct {
 	seek func(int64) bool
@@ -45,7 +73,9 @@ type mockSeries struct {
 	iterator func() SeriesIterator
 }
 
-func newSeries(l map[string]string, s []sample) Series {
+type Sample = tsdbutil.Sample
+
+func newSeries(l map[string]string, s []Sample) Series {
 	return &mockSeries{
 		labels:   func() labels.Labels { return labels.FromMap(l) },
 		iterator: func() SeriesIterator { return newListSeriesIterator(s) },
@@ -55,17 +85,17 @@ func (m *mockSeries) Labels() labels.Labels    { return m.labels() }
 func (m *mockSeries) Iterator() SeriesIterator { return m.iterator() }
 
 type listSeriesIterator struct {
-	list []sample
+	list []Sample
 	idx  int
 }
 
-func newListSeriesIterator(list []sample) *listSeriesIterator {
+func newListSeriesIterator(list []Sample) *listSeriesIterator {
 	return &listSeriesIterator{list: list, idx: -1}
 }
 
 func (it *listSeriesIterator) At() (int64, float64) {
 	s := it.list[it.idx]
-	return s.t, s.v
+	return s.T(), s.V()
 }
 
 func (it *listSeriesIterator) Next() bool {
@@ -80,7 +110,7 @@ func (it *listSeriesIterator) Seek(t int64) bool {
 	// Do binary search between current position and end.
 	it.idx = sort.Search(len(it.list)-it.idx, func(i int) bool {
 		s := it.list[i+it.idx]
-		return s.t >= t
+		return s.T() >= t
 	})
 
 	return it.idx < len(it.list)
@@ -101,87 +131,87 @@ func TestMergedSeriesSet(t *testing.T) {
 		exp SeriesSet
 	}{
 		{
-			a: newListSeriesSet([]Series{
+			a: newMockSeriesSet([]Series{
 				newSeries(map[string]string{
 					"a": "a",
-				}, []sample{
-					{t: 1, v: 1},
+				}, []Sample{
+					sample{t: 1, v: 1},
 				}),
 			}),
-			b: newListSeriesSet([]Series{
+			b: newMockSeriesSet([]Series{
 				newSeries(map[string]string{
 					"a": "a",
-				}, []sample{
-					{t: 2, v: 2},
+				}, []Sample{
+					sample{t: 2, v: 2},
 				}),
 				newSeries(map[string]string{
 					"b": "b",
-				}, []sample{
-					{t: 1, v: 1},
+				}, []Sample{
+					sample{t: 1, v: 1},
 				}),
 			}),
-			exp: newListSeriesSet([]Series{
+			exp: newMockSeriesSet([]Series{
 				newSeries(map[string]string{
 					"a": "a",
-				}, []sample{
-					{t: 1, v: 1},
-					{t: 2, v: 2},
+				}, []Sample{
+					sample{t: 1, v: 1},
+					sample{t: 2, v: 2},
 				}),
 				newSeries(map[string]string{
 					"b": "b",
-				}, []sample{
-					{t: 1, v: 1},
+				}, []Sample{
+					sample{t: 1, v: 1},
 				}),
 			}),
 		},
 		{
-			a: newListSeriesSet([]Series{
+			a: newMockSeriesSet([]Series{
 				newSeries(map[string]string{
 					"handler":  "prometheus",
 					"instance": "127.0.0.1:9090",
-				}, []sample{
-					{t: 1, v: 1},
+				}, []Sample{
+					sample{t: 1, v: 1},
 				}),
 				newSeries(map[string]string{
 					"handler":  "prometheus",
 					"instance": "localhost:9090",
-				}, []sample{
-					{t: 1, v: 2},
+				}, []Sample{
+					sample{t: 1, v: 2},
 				}),
 			}),
-			b: newListSeriesSet([]Series{
+			b: newMockSeriesSet([]Series{
 				newSeries(map[string]string{
 					"handler":  "prometheus",
 					"instance": "127.0.0.1:9090",
-				}, []sample{
-					{t: 2, v: 1},
+				}, []Sample{
+					sample{t: 2, v: 1},
 				}),
 				newSeries(map[string]string{
 					"handler":  "query",
 					"instance": "localhost:9090",
-				}, []sample{
-					{t: 2, v: 2},
+				}, []Sample{
+					sample{t: 2, v: 2},
 				}),
 			}),
-			exp: newListSeriesSet([]Series{
+			exp: newMockSeriesSet([]Series{
 				newSeries(map[string]string{
 					"handler":  "prometheus",
 					"instance": "127.0.0.1:9090",
-				}, []sample{
-					{t: 1, v: 1},
-					{t: 2, v: 1},
+				}, []Sample{
+					sample{t: 1, v: 1},
+					sample{t: 2, v: 1},
 				}),
 				newSeries(map[string]string{
 					"handler":  "prometheus",
 					"instance": "localhost:9090",
-				}, []sample{
-					{t: 1, v: 2},
+				}, []Sample{
+					sample{t: 1, v: 2},
 				}),
 				newSeries(map[string]string{
 					"handler":  "query",
 					"instance": "localhost:9090",
-				}, []sample{
-					{t: 2, v: 2},
+				}, []Sample{
+					sample{t: 2, v: 2},
 				}),
 			}),
 		},
@@ -221,12 +251,14 @@ func expandSeriesIterator(it SeriesIterator) (r []sample, err error) {
 	return r, it.Err()
 }
 
-// Index: labels -> postings -> chunkMetas -> chunkRef
-// ChunkReader: ref -> vals
-func createIdxChkReaders(tc []struct {
+type seriesSamples struct {
 	lset   map[string]string
 	chunks [][]sample
-}) (IndexReader, ChunkReader) {
+}
+
+// Index: labels -> postings -> chunkMetas -> chunkRef
+// ChunkReader: ref -> vals
+func createIdxChkReaders(tc []seriesSamples) (IndexReader, ChunkReader) {
 	sort.Slice(tc, func(i, j int) bool {
 		return labels.Compare(labels.FromMap(tc[i].lset), labels.FromMap(tc[i].lset)) < 0
 	})
@@ -284,7 +316,7 @@ func createIdxChkReaders(tc []struct {
 }
 
 func TestBlockQuerier(t *testing.T) {
-	newSeries := func(l map[string]string, s []sample) Series {
+	newSeries := func(l map[string]string, s []Sample) Series {
 		return &mockSeries{
 			labels:   func() labels.Labels { return labels.FromMap(l) },
 			iterator: func() SeriesIterator { return newListSeriesIterator(s) },
@@ -298,17 +330,11 @@ func TestBlockQuerier(t *testing.T) {
 	}
 
 	cases := struct {
-		data []struct {
-			lset   map[string]string
-			chunks [][]sample
-		}
+		data []seriesSamples
 
 		queries []query
 	}{
-		data: []struct {
-			lset   map[string]string
-			chunks [][]sample
-		}{
+		data: []seriesSamples{
 			{
 				lset: map[string]string{
 					"a": "a",
@@ -397,35 +423,35 @@ func TestBlockQuerier(t *testing.T) {
 				mint: 0,
 				maxt: 0,
 				ms:   []labels.Matcher{},
-				exp:  newListSeriesSet([]Series{}),
+				exp:  newMockSeriesSet([]Series{}),
 			},
 			{
 				mint: 0,
 				maxt: 0,
 				ms:   []labels.Matcher{labels.NewEqualMatcher("a", "a")},
-				exp:  newListSeriesSet([]Series{}),
+				exp:  newMockSeriesSet([]Series{}),
 			},
 			{
 				mint: 1,
 				maxt: 0,
 				ms:   []labels.Matcher{labels.NewEqualMatcher("a", "a")},
-				exp:  newListSeriesSet([]Series{}),
+				exp:  newMockSeriesSet([]Series{}),
 			},
 			{
 				mint: 2,
 				maxt: 6,
 				ms:   []labels.Matcher{labels.NewEqualMatcher("a", "a")},
-				exp: newListSeriesSet([]Series{
+				exp: newMockSeriesSet([]Series{
 					newSeries(map[string]string{
 						"a": "a",
 					},
-						[]sample{{2, 3}, {3, 4}, {5, 2}, {6, 3}},
+						[]Sample{sample{2, 3}, sample{3, 4}, sample{5, 2}, sample{6, 3}},
 					),
 					newSeries(map[string]string{
 						"a": "a",
 						"b": "b",
 					},
-						[]sample{{2, 2}, {3, 3}, {5, 3}, {6, 6}},
+						[]Sample{sample{2, 2}, sample{3, 3}, sample{5, 3}, sample{6, 6}},
 					),
 				}),
 			},
@@ -433,18 +459,18 @@ func TestBlockQuerier(t *testing.T) {
 				mint: 2,
 				maxt: 6,
 				ms:   []labels.Matcher{labels.NewPrefixMatcher("p", "abc")},
-				exp: newListSeriesSet([]Series{
+				exp: newMockSeriesSet([]Series{
 					newSeries(map[string]string{
 						"a": "ab",
 						"p": "abce",
 					},
-						[]sample{{2, 2}, {3, 3}, {5, 3}, {6, 6}},
+						[]Sample{sample{2, 2}, sample{3, 3}, sample{5, 3}, sample{6, 6}},
 					),
 					newSeries(map[string]string{
 						"p": "abcd",
 						"x": "xyz",
 					},
-						[]sample{{2, 3}, {3, 4}, {5, 2}, {6, 3}},
+						[]Sample{sample{2, 3}, sample{3, 4}, sample{5, 2}, sample{6, 3}},
 					),
 				}),
 			},
@@ -457,7 +483,7 @@ Outer:
 		querier := &blockQuerier{
 			index:      ir,
 			chunks:     cr,
-			tombstones: EmptyTombstoneReader(),
+			tombstones: newMemTombstones(),
 
 			mint: c.mint,
 			maxt: c.maxt,
@@ -490,7 +516,7 @@ Outer:
 }
 
 func TestBlockQuerierDelete(t *testing.T) {
-	newSeries := func(l map[string]string, s []sample) Series {
+	newSeries := func(l map[string]string, s []Sample) Series {
 		return &mockSeries{
 			labels:   func() labels.Labels { return labels.FromMap(l) },
 			iterator: func() SeriesIterator { return newListSeriesIterator(s) },
@@ -504,18 +530,12 @@ func TestBlockQuerierDelete(t *testing.T) {
 	}
 
 	cases := struct {
-		data []struct {
-			lset   map[string]string
-			chunks [][]sample
-		}
+		data []seriesSamples
 
 		tombstones TombstoneReader
 		queries    []query
 	}{
-		data: []struct {
-			lset   map[string]string
-			chunks [][]sample
-		}{
+		data: []seriesSamples{
 			{
 				lset: map[string]string{
 					"a": "a",
@@ -557,28 +577,27 @@ func TestBlockQuerierDelete(t *testing.T) {
 				},
 			},
 		},
-		tombstones: memTombstones{
+		tombstones: &memTombstones{intvlGroups: map[uint64]Intervals{
 			1: Intervals{{1, 3}},
 			2: Intervals{{1, 3}, {6, 10}},
 			3: Intervals{{6, 10}},
-		},
-
+		}},
 		queries: []query{
 			{
 				mint: 2,
 				maxt: 7,
 				ms:   []labels.Matcher{labels.NewEqualMatcher("a", "a")},
-				exp: newListSeriesSet([]Series{
+				exp: newMockSeriesSet([]Series{
 					newSeries(map[string]string{
 						"a": "a",
 					},
-						[]sample{{5, 2}, {6, 3}, {7, 4}},
+						[]Sample{sample{5, 2}, sample{6, 3}, sample{7, 4}},
 					),
 					newSeries(map[string]string{
 						"a": "a",
 						"b": "b",
 					},
-						[]sample{{4, 15}, {5, 3}},
+						[]Sample{sample{4, 15}, sample{5, 3}},
 					),
 				}),
 			},
@@ -586,17 +605,17 @@ func TestBlockQuerierDelete(t *testing.T) {
 				mint: 2,
 				maxt: 7,
 				ms:   []labels.Matcher{labels.NewEqualMatcher("b", "b")},
-				exp: newListSeriesSet([]Series{
+				exp: newMockSeriesSet([]Series{
 					newSeries(map[string]string{
 						"a": "a",
 						"b": "b",
 					},
-						[]sample{{4, 15}, {5, 3}},
+						[]Sample{sample{4, 15}, sample{5, 3}},
 					),
 					newSeries(map[string]string{
 						"b": "b",
 					},
-						[]sample{{2, 2}, {3, 6}, {5, 1}},
+						[]Sample{sample{2, 2}, sample{3, 6}, sample{5, 1}},
 					),
 				}),
 			},
@@ -604,12 +623,12 @@ func TestBlockQuerierDelete(t *testing.T) {
 				mint: 1,
 				maxt: 4,
 				ms:   []labels.Matcher{labels.NewEqualMatcher("a", "a")},
-				exp: newListSeriesSet([]Series{
+				exp: newMockSeriesSet([]Series{
 					newSeries(map[string]string{
 						"a": "a",
 						"b": "b",
 					},
-						[]sample{{4, 15}},
+						[]Sample{sample{4, 15}},
 					),
 				}),
 			},
@@ -617,7 +636,7 @@ func TestBlockQuerierDelete(t *testing.T) {
 				mint: 1,
 				maxt: 3,
 				ms:   []labels.Matcher{labels.NewEqualMatcher("a", "a")},
-				exp:  newListSeriesSet([]Series{}),
+				exp:  newMockSeriesSet([]Series{}),
 			},
 		},
 	}
@@ -737,7 +756,7 @@ func TestBaseChunkSeries(t *testing.T) {
 		bcs := &baseChunkSeries{
 			p:          index.NewListPostings(tc.postings),
 			index:      mi,
-			tombstones: EmptyTombstoneReader(),
+			tombstones: newMemTombstones(),
 		}
 
 		i := 0
@@ -766,86 +785,69 @@ type itSeries struct {
 func (s itSeries) Iterator() SeriesIterator { return s.si }
 func (s itSeries) Labels() labels.Labels    { return labels.Labels{} }
 
-func chunkFromSamples(s []sample) chunks.Meta {
-	mint, maxt := int64(0), int64(0)
-
-	if len(s) > 0 {
-		mint, maxt = s[0].t, s[len(s)-1].t
-	}
-
-	c := chunkenc.NewXORChunk()
-	ca, _ := c.Appender()
-
-	for _, s := range s {
-		ca.Append(s.t, s.v)
-	}
-	return chunks.Meta{
-		MinTime: mint,
-		MaxTime: maxt,
-		Chunk:   c,
-	}
-}
-
 func TestSeriesIterator(t *testing.T) {
 	itcases := []struct {
-		a, b, c []sample
-		exp     []sample
+		a, b, c []Sample
+		exp     []Sample
 
 		mint, maxt int64
 	}{
 		{
-			a: []sample{},
-			b: []sample{},
-			c: []sample{},
+			a: []Sample{},
+			b: []Sample{},
+			c: []Sample{},
 
-			exp: []sample{},
+			exp: []Sample{},
 
 			mint: math.MinInt64,
 			maxt: math.MaxInt64,
 		},
 		{
-			a: []sample{
-				{1, 2}, {2, 3}, {3, 5}, {6, 1},
+			a: []Sample{
+				sample{1, 2},
+				sample{2, 3},
+				sample{3, 5},
+				sample{6, 1},
 			},
-			b: []sample{},
-			c: []sample{
-				{7, 89}, {9, 8},
+			b: []Sample{},
+			c: []Sample{
+				sample{7, 89}, sample{9, 8},
 			},
 
-			exp: []sample{
-				{1, 2}, {2, 3}, {3, 5}, {6, 1}, {7, 89}, {9, 8},
+			exp: []Sample{
+				sample{1, 2}, sample{2, 3}, sample{3, 5}, sample{6, 1}, sample{7, 89}, sample{9, 8},
 			},
 			mint: math.MinInt64,
 			maxt: math.MaxInt64,
 		},
 		{
-			a: []sample{},
-			b: []sample{
-				{1, 2}, {2, 3}, {3, 5}, {6, 1},
+			a: []Sample{},
+			b: []Sample{
+				sample{1, 2}, sample{2, 3}, sample{3, 5}, sample{6, 1},
 			},
-			c: []sample{
-				{7, 89}, {9, 8},
+			c: []Sample{
+				sample{7, 89}, sample{9, 8},
 			},
 
-			exp: []sample{
-				{1, 2}, {2, 3}, {3, 5}, {6, 1}, {7, 89}, {9, 8},
+			exp: []Sample{
+				sample{1, 2}, sample{2, 3}, sample{3, 5}, sample{6, 1}, sample{7, 89}, sample{9, 8},
 			},
 			mint: 2,
 			maxt: 8,
 		},
 		{
-			a: []sample{
-				{1, 2}, {2, 3}, {3, 5}, {6, 1},
+			a: []Sample{
+				sample{1, 2}, sample{2, 3}, sample{3, 5}, sample{6, 1},
 			},
-			b: []sample{
-				{7, 89}, {9, 8},
+			b: []Sample{
+				sample{7, 89}, sample{9, 8},
 			},
-			c: []sample{
-				{10, 22}, {203, 3493},
+			c: []Sample{
+				sample{10, 22}, sample{203, 3493},
 			},
 
-			exp: []sample{
-				{1, 2}, {2, 3}, {3, 5}, {6, 1}, {7, 89}, {9, 8}, {10, 22}, {203, 3493},
+			exp: []Sample{
+				sample{1, 2}, sample{2, 3}, sample{3, 5}, sample{6, 1}, sample{7, 89}, sample{9, 8}, sample{10, 22}, sample{203, 3493},
 			},
 			mint: 6,
 			maxt: 10,
@@ -853,30 +855,30 @@ func TestSeriesIterator(t *testing.T) {
 	}
 
 	seekcases := []struct {
-		a, b, c []sample
+		a, b, c []Sample
 
 		seek    int64
 		success bool
-		exp     []sample
+		exp     []Sample
 
 		mint, maxt int64
 	}{
 		{
-			a: []sample{},
-			b: []sample{},
-			c: []sample{},
+			a: []Sample{},
+			b: []Sample{},
+			c: []Sample{},
 
 			seek:    0,
 			success: false,
 			exp:     nil,
 		},
 		{
-			a: []sample{
-				{2, 3},
+			a: []Sample{
+				sample{2, 3},
 			},
-			b: []sample{},
-			c: []sample{
-				{7, 89}, {9, 8},
+			b: []Sample{},
+			c: []Sample{
+				sample{7, 89}, sample{9, 8},
 			},
 
 			seek:    10,
@@ -886,56 +888,56 @@ func TestSeriesIterator(t *testing.T) {
 			maxt:    math.MaxInt64,
 		},
 		{
-			a: []sample{},
-			b: []sample{
-				{1, 2}, {3, 5}, {6, 1},
+			a: []Sample{},
+			b: []Sample{
+				sample{1, 2}, sample{3, 5}, sample{6, 1},
 			},
-			c: []sample{
-				{7, 89}, {9, 8},
+			c: []Sample{
+				sample{7, 89}, sample{9, 8},
 			},
 
 			seek:    2,
 			success: true,
-			exp: []sample{
-				{3, 5}, {6, 1}, {7, 89}, {9, 8},
+			exp: []Sample{
+				sample{3, 5}, sample{6, 1}, sample{7, 89}, sample{9, 8},
 			},
 			mint: 5,
 			maxt: 8,
 		},
 		{
-			a: []sample{
-				{6, 1},
+			a: []Sample{
+				sample{6, 1},
 			},
-			b: []sample{
-				{9, 8},
+			b: []Sample{
+				sample{9, 8},
 			},
-			c: []sample{
-				{10, 22}, {203, 3493},
+			c: []Sample{
+				sample{10, 22}, sample{203, 3493},
 			},
 
 			seek:    10,
 			success: true,
-			exp: []sample{
-				{10, 22}, {203, 3493},
+			exp: []Sample{
+				sample{10, 22}, sample{203, 3493},
 			},
 			mint: 10,
 			maxt: 203,
 		},
 		{
-			a: []sample{
-				{6, 1},
+			a: []Sample{
+				sample{6, 1},
 			},
-			b: []sample{
-				{9, 8},
+			b: []Sample{
+				sample{9, 8},
 			},
-			c: []sample{
-				{10, 22}, {203, 3493},
+			c: []Sample{
+				sample{10, 22}, sample{203, 3493},
 			},
 
 			seek:    203,
 			success: true,
-			exp: []sample{
-				{203, 3493},
+			exp: []Sample{
+				sample{203, 3493},
 			},
 			mint: 7,
 			maxt: 203,
@@ -945,16 +947,16 @@ func TestSeriesIterator(t *testing.T) {
 	t.Run("Chunk", func(t *testing.T) {
 		for _, tc := range itcases {
 			chkMetas := []chunks.Meta{
-				chunkFromSamples(tc.a),
-				chunkFromSamples(tc.b),
-				chunkFromSamples(tc.c),
+				tsdbutil.ChunkFromSamples(tc.a),
+				tsdbutil.ChunkFromSamples(tc.b),
+				tsdbutil.ChunkFromSamples(tc.c),
 			}
 			res := newChunkSeriesIterator(chkMetas, nil, tc.mint, tc.maxt)
 
-			smplValid := make([]sample, 0)
+			smplValid := make([]Sample, 0)
 			for _, s := range tc.exp {
-				if s.t >= tc.mint && s.t <= tc.maxt {
-					smplValid = append(smplValid, s)
+				if s.T() >= tc.mint && s.T() <= tc.maxt {
+					smplValid = append(smplValid, Sample(s))
 				}
 			}
 			exp := newListSeriesIterator(smplValid)
@@ -968,23 +970,23 @@ func TestSeriesIterator(t *testing.T) {
 
 		t.Run("Seek", func(t *testing.T) {
 			extra := []struct {
-				a, b, c []sample
+				a, b, c []Sample
 
 				seek    int64
 				success bool
-				exp     []sample
+				exp     []Sample
 
 				mint, maxt int64
 			}{
 				{
-					a: []sample{
-						{6, 1},
+					a: []Sample{
+						sample{6, 1},
 					},
-					b: []sample{
-						{9, 8},
+					b: []Sample{
+						sample{9, 8},
 					},
-					c: []sample{
-						{10, 22}, {203, 3493},
+					c: []Sample{
+						sample{10, 22}, sample{203, 3493},
 					},
 
 					seek:    203,
@@ -994,19 +996,19 @@ func TestSeriesIterator(t *testing.T) {
 					maxt:    202,
 				},
 				{
-					a: []sample{
-						{6, 1},
+					a: []Sample{
+						sample{6, 1},
 					},
-					b: []sample{
-						{9, 8},
+					b: []Sample{
+						sample{9, 8},
 					},
-					c: []sample{
-						{10, 22}, {203, 3493},
+					c: []Sample{
+						sample{10, 22}, sample{203, 3493},
 					},
 
 					seek:    5,
 					success: true,
-					exp:     []sample{{10, 22}},
+					exp:     []Sample{sample{10, 22}},
 					mint:    10,
 					maxt:    202,
 				},
@@ -1016,16 +1018,16 @@ func TestSeriesIterator(t *testing.T) {
 
 			for _, tc := range seekcases2 {
 				chkMetas := []chunks.Meta{
-					chunkFromSamples(tc.a),
-					chunkFromSamples(tc.b),
-					chunkFromSamples(tc.c),
+					tsdbutil.ChunkFromSamples(tc.a),
+					tsdbutil.ChunkFromSamples(tc.b),
+					tsdbutil.ChunkFromSamples(tc.c),
 				}
 				res := newChunkSeriesIterator(chkMetas, nil, tc.mint, tc.maxt)
 
-				smplValid := make([]sample, 0)
+				smplValid := make([]Sample, 0)
 				for _, s := range tc.exp {
-					if s.t >= tc.mint && s.t <= tc.maxt {
-						smplValid = append(smplValid, s)
+					if s.T() >= tc.mint && s.T() <= tc.maxt {
+						smplValid = append(smplValid, Sample(s))
 					}
 				}
 				exp := newListSeriesIterator(smplValid)
@@ -1058,7 +1060,7 @@ func TestSeriesIterator(t *testing.T) {
 				itSeries{newListSeriesIterator(tc.c)}
 
 			res := newChainedSeriesIterator(a, b, c)
-			exp := newListSeriesIterator(tc.exp)
+			exp := newListSeriesIterator([]Sample(tc.exp))
 
 			smplExp, errExp := expandSeriesIterator(exp)
 			smplRes, errRes := expandSeriesIterator(res)
@@ -1103,9 +1105,9 @@ func TestSeriesIterator(t *testing.T) {
 // Regression for: https://github.com/prometheus/tsdb/pull/97
 func TestChunkSeriesIterator_DoubleSeek(t *testing.T) {
 	chkMetas := []chunks.Meta{
-		chunkFromSamples([]sample{}),
-		chunkFromSamples([]sample{{1, 1}, {2, 2}, {3, 3}}),
-		chunkFromSamples([]sample{{4, 4}, {5, 5}}),
+		tsdbutil.ChunkFromSamples([]Sample{}),
+		tsdbutil.ChunkFromSamples([]Sample{sample{1, 1}, sample{2, 2}, sample{3, 3}}),
+		tsdbutil.ChunkFromSamples([]Sample{sample{4, 4}, sample{5, 5}}),
 	}
 
 	res := newChunkSeriesIterator(chkMetas, nil, 2, 8)
@@ -1120,9 +1122,9 @@ func TestChunkSeriesIterator_DoubleSeek(t *testing.T) {
 // skipped to the end when seeking a value in the current chunk.
 func TestChunkSeriesIterator_SeekInCurrentChunk(t *testing.T) {
 	metas := []chunks.Meta{
-		chunkFromSamples([]sample{}),
-		chunkFromSamples([]sample{{1, 2}, {3, 4}, {5, 6}, {7, 8}}),
-		chunkFromSamples([]sample{}),
+		tsdbutil.ChunkFromSamples([]Sample{}),
+		tsdbutil.ChunkFromSamples([]Sample{sample{1, 2}, sample{3, 4}, sample{5, 6}, sample{7, 8}}),
+		tsdbutil.ChunkFromSamples([]Sample{}),
 	}
 
 	it := newChunkSeriesIterator(metas, nil, 1, 7)
@@ -1142,7 +1144,7 @@ func TestChunkSeriesIterator_SeekInCurrentChunk(t *testing.T) {
 // Seek gets called and advances beyond the max time, which was just accepted as a valid sample.
 func TestChunkSeriesIterator_NextWithMinTime(t *testing.T) {
 	metas := []chunks.Meta{
-		chunkFromSamples([]sample{{1, 6}, {5, 6}, {7, 8}}),
+		tsdbutil.ChunkFromSamples([]Sample{sample{1, 6}, sample{5, 6}, sample{7, 8}}),
 	}
 
 	it := newChunkSeriesIterator(metas, nil, 2, 4)
@@ -1244,11 +1246,11 @@ func BenchmarkMergedSeriesSet(b *testing.B) {
 		100,
 		1000,
 		10000,
-		100000,
+		20000,
 	} {
 		for _, j := range []int{1, 2, 4, 8, 16, 32} {
 			b.Run(fmt.Sprintf("series=%d,blocks=%d", k, j), func(b *testing.B) {
-				lbls, err := labels.ReadLabels("testdata/1m.series", k)
+				lbls, err := labels.ReadLabels(filepath.Join("testdata", "20kseries.json"), k)
 				testutil.Ok(b, err)
 
 				sort.Sort(labels.Slice(lbls))
@@ -1267,7 +1269,7 @@ func BenchmarkMergedSeriesSet(b *testing.B) {
 				for i := 0; i < b.N; i++ {
 					var sets []SeriesSet
 					for _, s := range in {
-						sets = append(sets, newListSeriesSet(s))
+						sets = append(sets, newMockSeriesSet(s))
 					}
 					ms := sel(sets)
 
@@ -1277,6 +1279,41 @@ func BenchmarkMergedSeriesSet(b *testing.B) {
 					}
 					testutil.Ok(b, ms.Err())
 					testutil.Equals(b, len(lbls), i)
+				}
+			})
+		}
+	}
+}
+
+func BenchmarkPersistedQueries(b *testing.B) {
+	for _, nSeries := range []int{10, 100} {
+		for _, nSamples := range []int{1000, 10000, 100000} {
+			b.Run(fmt.Sprintf("series=%d,samplesPerSeries=%d", nSeries, nSamples), func(b *testing.B) {
+				dir, err := ioutil.TempDir("", "bench_persisted")
+				testutil.Ok(b, err)
+				defer os.RemoveAll(dir)
+				block := createPopulatedBlock(b, dir, nSeries, 1, int64(nSamples))
+				defer block.Close()
+
+				q, err := NewBlockQuerier(block, block.Meta().MinTime, block.Meta().MaxTime)
+				testutil.Ok(b, err)
+				defer q.Close()
+
+				b.ResetTimer()
+				b.ReportAllocs()
+
+				for i := 0; i < b.N; i++ {
+					ss, err := q.Select(labels.NewMustRegexpMatcher("__name__", ".+"))
+					for ss.Next() {
+						s := ss.At()
+						s.Labels()
+						it := s.Iterator()
+						for it.Next() {
+						}
+						testutil.Ok(b, it.Err())
+					}
+					testutil.Ok(b, ss.Err())
+					testutil.Ok(b, err)
 				}
 			})
 		}
@@ -1470,10 +1507,17 @@ func (m mockIndex) Series(ref uint64, lset *labels.Labels, chks *[]chunks.Meta) 
 
 func (m mockIndex) LabelIndices() ([][]string, error) {
 	res := make([][]string, 0, len(m.labelIndex))
-
 	for k := range m.labelIndex {
 		res = append(res, []string{k})
 	}
-
 	return res, nil
+}
+
+func (m mockIndex) LabelNames() ([]string, error) {
+	labelNames := make([]string, 0, len(m.labelIndex))
+	for name := range m.labelIndex {
+		labelNames = append(labelNames, name)
+	}
+	sort.Strings(labelNames)
+	return labelNames, nil
 }

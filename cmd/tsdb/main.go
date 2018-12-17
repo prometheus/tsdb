@@ -24,6 +24,7 @@ import (
 	"runtime"
 	"runtime/pprof"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"text/tabwriter"
@@ -41,11 +42,12 @@ func main() {
 		cli                  = kingpin.New(filepath.Base(os.Args[0]), "CLI tool for tsdb")
 		benchCmd             = cli.Command("bench", "run benchmarks")
 		benchWriteCmd        = benchCmd.Command("write", "run a write performance benchmark")
-		benchWriteOutPath    = benchWriteCmd.Flag("out", "set the output path").Default("benchout/").String()
+		benchWriteOutPath    = benchWriteCmd.Flag("out", "set the output path").Default("benchout").String()
 		benchWriteNumMetrics = benchWriteCmd.Flag("metrics", "number of metrics to read").Default("10000").Int()
-		benchSamplesFile     = benchWriteCmd.Arg("file", "input file with samples data, default is (../../testdata/20k.series)").Default("../../testdata/20k.series").String()
+		benchSamplesFile     = benchWriteCmd.Arg("file", "input file with samples data, default is ("+filepath.Join("..", "testdata", "20kseries.json")+")").Default(filepath.Join("..", "testdata", "20kseries.json")).String()
 		listCmd              = cli.Command("ls", "list db blocks")
-		listPath             = listCmd.Arg("db path", "database path (default is benchout/storage)").Default("benchout/storage").String()
+		listCmdHumanReadable = listCmd.Flag("human-readable", "print human readable values").Short('h').Bool()
+		listPath             = listCmd.Arg("db path", "database path (default is "+filepath.Join("benchout", "storage")+")").Default(filepath.Join("benchout", "storage")).String()
 	)
 
 	switch kingpin.MustParse(cli.Parse(os.Args[1:])) {
@@ -61,7 +63,7 @@ func main() {
 		if err != nil {
 			exitWithError(err)
 		}
-		printBlocks(db.Blocks())
+		printBlocks(db.Blocks(), listCmdHumanReadable)
 	}
 	flag.CommandLine.Set("log.level", "debug")
 }
@@ -143,7 +145,9 @@ func (b *writeBenchmark) run() {
 		if err := b.storage.Close(); err != nil {
 			exitWithError(err)
 		}
-		b.stopProfiling()
+		if err := b.stopProfiling(); err != nil {
+			exitWithError(err)
+		}
 	})
 }
 
@@ -246,7 +250,9 @@ func (b *writeBenchmark) startProfiling() {
 	if err != nil {
 		exitWithError(fmt.Errorf("bench: could not create cpu profile: %v", err))
 	}
-	pprof.StartCPUProfile(b.cpuprof)
+	if err := pprof.StartCPUProfile(b.cpuprof); err != nil {
+		exitWithError(fmt.Errorf("bench: could not start CPU profile: %v", err))
+	}
 
 	// Start memory profiling.
 	b.memprof, err = os.Create(filepath.Join(b.outPath, "mem.prof"))
@@ -269,29 +275,36 @@ func (b *writeBenchmark) startProfiling() {
 	runtime.SetMutexProfileFraction(20)
 }
 
-func (b *writeBenchmark) stopProfiling() {
+func (b *writeBenchmark) stopProfiling() error {
 	if b.cpuprof != nil {
 		pprof.StopCPUProfile()
 		b.cpuprof.Close()
 		b.cpuprof = nil
 	}
 	if b.memprof != nil {
-		pprof.Lookup("heap").WriteTo(b.memprof, 0)
+		if err := pprof.Lookup("heap").WriteTo(b.memprof, 0); err != nil {
+			return fmt.Errorf("error writing mem profile: %v", err)
+		}
 		b.memprof.Close()
 		b.memprof = nil
 	}
 	if b.blockprof != nil {
-		pprof.Lookup("block").WriteTo(b.blockprof, 0)
+		if err := pprof.Lookup("block").WriteTo(b.blockprof, 0); err != nil {
+			return fmt.Errorf("error writing block profile: %v", err)
+		}
 		b.blockprof.Close()
 		b.blockprof = nil
 		runtime.SetBlockProfileRate(0)
 	}
 	if b.mtxprof != nil {
-		pprof.Lookup("mutex").WriteTo(b.mtxprof, 0)
+		if err := pprof.Lookup("mutex").WriteTo(b.mtxprof, 0); err != nil {
+			return fmt.Errorf("error writing mutex profile: %v", err)
+		}
 		b.mtxprof.Close()
 		b.mtxprof = nil
 		runtime.SetMutexProfileFraction(0)
 	}
+	return nil
 }
 
 func measureTime(stage string, f func()) time.Duration {
@@ -344,7 +357,7 @@ func exitWithError(err error) {
 	os.Exit(1)
 }
 
-func printBlocks(blocks []*tsdb.Block) {
+func printBlocks(blocks []*tsdb.Block, humanReadable *bool) {
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	defer tw.Flush()
 
@@ -355,11 +368,18 @@ func printBlocks(blocks []*tsdb.Block) {
 		fmt.Fprintf(tw,
 			"%v\t%v\t%v\t%v\t%v\t%v\n",
 			meta.ULID,
-			meta.MinTime,
-			meta.MaxTime,
+			getFormatedTime(meta.MinTime, humanReadable),
+			getFormatedTime(meta.MaxTime, humanReadable),
 			meta.Stats.NumSamples,
 			meta.Stats.NumChunks,
 			meta.Stats.NumSeries,
 		)
 	}
+}
+
+func getFormatedTime(timestamp int64, humanReadable *bool) string {
+	if *humanReadable {
+		return time.Unix(timestamp/1000, 0).String()
+	}
+	return strconv.FormatInt(timestamp, 10)
 }

@@ -11,13 +11,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// +build !windows
+
 package tsdb
 
 import (
 	"encoding/binary"
+	"io"
 	"io/ioutil"
 	"math/rand"
 	"os"
+	"path"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -25,6 +30,7 @@ import (
 	"github.com/prometheus/tsdb/fileutil"
 	"github.com/prometheus/tsdb/labels"
 	"github.com/prometheus/tsdb/testutil"
+	"github.com/prometheus/tsdb/wal"
 )
 
 func TestSegmentWAL_cut(t *testing.T) {
@@ -63,7 +69,7 @@ func TestSegmentWAL_cut(t *testing.T) {
 		et, flag, b, err := newWALReader(nil, nil).entry(f)
 		testutil.Ok(t, err)
 		testutil.Equals(t, WALEntrySeries, et)
-		testutil.Equals(t, flag, byte(walSeriesSimple))
+		testutil.Equals(t, byte(walSeriesSimple), flag)
 		testutil.Equals(t, []byte("Hello World!!"), b)
 	}
 }
@@ -73,7 +79,7 @@ func TestSegmentWAL_Truncate(t *testing.T) {
 		numMetrics = 20000
 		batch      = 100
 	)
-	series, err := labels.ReadLabels("testdata/20kseries.json", numMetrics)
+	series, err := labels.ReadLabels(filepath.Join("testdata", "20kseries.json"), numMetrics)
 	testutil.Ok(t, err)
 
 	dir, err := ioutil.TempDir("", "test_wal_log_truncate")
@@ -152,7 +158,7 @@ func TestSegmentWAL_Log_Restore(t *testing.T) {
 	)
 	// Generate testing data. It does not make semantical sense but
 	// for the purpose of this test.
-	series, err := labels.ReadLabels("testdata/20kseries.json", numMetrics)
+	series, err := labels.ReadLabels(filepath.Join("testdata", "20kseries.json"), numMetrics)
 	testutil.Ok(t, err)
 
 	dir, err := ioutil.TempDir("", "test_wal_log_restore")
@@ -269,11 +275,11 @@ func TestWALRestoreCorrupted_invalidSegment(t *testing.T) {
 	wal, err := OpenSegmentWAL(dir, nil, 0, nil)
 	testutil.Ok(t, err)
 
-	_, err = wal.createSegmentFile(dir + "/000000")
+	_, err = wal.createSegmentFile(filepath.Join(dir, "000000"))
 	testutil.Ok(t, err)
-	f, err := wal.createSegmentFile(dir + "/000001")
+	f, err := wal.createSegmentFile(filepath.Join(dir, "000001"))
 	testutil.Ok(t, err)
-	f2, err := wal.createSegmentFile(dir + "/000002")
+	f2, err := wal.createSegmentFile(filepath.Join(dir, "000002"))
 	testutil.Ok(t, err)
 	testutil.Ok(t, f2.Close())
 
@@ -305,7 +311,7 @@ func TestWALRestoreCorrupted(t *testing.T) {
 				testutil.Ok(t, err)
 				defer f.Close()
 
-				off, err := f.Seek(0, os.SEEK_END)
+				off, err := f.Seek(0, io.SeekEnd)
 				testutil.Ok(t, err)
 
 				testutil.Ok(t, f.Truncate(off-1))
@@ -318,7 +324,7 @@ func TestWALRestoreCorrupted(t *testing.T) {
 				testutil.Ok(t, err)
 				defer f.Close()
 
-				off, err := f.Seek(0, os.SEEK_END)
+				off, err := f.Seek(0, io.SeekEnd)
 				testutil.Ok(t, err)
 
 				testutil.Ok(t, f.Truncate(off-8))
@@ -331,7 +337,7 @@ func TestWALRestoreCorrupted(t *testing.T) {
 				testutil.Ok(t, err)
 				defer f.Close()
 
-				off, err := f.Seek(0, os.SEEK_END)
+				off, err := f.Seek(0, io.SeekEnd)
 				testutil.Ok(t, err)
 
 				// Write junk before checksum starts.
@@ -346,7 +352,7 @@ func TestWALRestoreCorrupted(t *testing.T) {
 				testutil.Ok(t, err)
 				defer f.Close()
 
-				off, err := f.Seek(0, os.SEEK_END)
+				off, err := f.Seek(0, io.SeekEnd)
 				testutil.Ok(t, err)
 
 				// Write junk into checksum
@@ -429,4 +435,118 @@ func TestWALRestoreCorrupted(t *testing.T) {
 			testutil.Ok(t, r.Read(serf, samplf, nil))
 		})
 	}
+}
+
+func TestMigrateWAL_Empty(t *testing.T) {
+	// The migration proecedure must properly deal with a zero-length segment,
+	// which is valid in the new format.
+	dir, err := ioutil.TempDir("", "walmigrate")
+	testutil.Ok(t, err)
+	defer os.RemoveAll(dir)
+
+	wdir := path.Join(dir, "wal")
+
+	// Initialize empty WAL.
+	w, err := wal.New(nil, nil, wdir)
+	testutil.Ok(t, err)
+	testutil.Ok(t, w.Close())
+
+	testutil.Ok(t, MigrateWAL(nil, wdir))
+}
+
+func TestMigrateWAL_Fuzz(t *testing.T) {
+	dir, err := ioutil.TempDir("", "walmigrate")
+	testutil.Ok(t, err)
+	defer os.RemoveAll(dir)
+
+	wdir := path.Join(dir, "wal")
+
+	// Should pass if no WAL exists yet.
+	testutil.Ok(t, MigrateWAL(nil, wdir))
+
+	oldWAL, err := OpenSegmentWAL(wdir, nil, time.Minute, nil)
+	testutil.Ok(t, err)
+
+	// Write some data.
+	testutil.Ok(t, oldWAL.LogSeries([]RefSeries{
+		{Ref: 100, Labels: labels.FromStrings("abc", "def", "123", "456")},
+		{Ref: 1, Labels: labels.FromStrings("abc", "def2", "1234", "4567")},
+	}))
+	testutil.Ok(t, oldWAL.LogSamples([]RefSample{
+		{Ref: 1, T: 100, V: 200},
+		{Ref: 2, T: 300, V: 400},
+	}))
+	testutil.Ok(t, oldWAL.LogSeries([]RefSeries{
+		{Ref: 200, Labels: labels.FromStrings("xyz", "def", "foo", "bar")},
+	}))
+	testutil.Ok(t, oldWAL.LogSamples([]RefSample{
+		{Ref: 3, T: 100, V: 200},
+		{Ref: 4, T: 300, V: 400},
+	}))
+	testutil.Ok(t, oldWAL.LogDeletes([]Stone{
+		{ref: 1, intervals: []Interval{{100, 200}}},
+	}))
+
+	testutil.Ok(t, oldWAL.Close())
+
+	// Perform migration.
+	testutil.Ok(t, MigrateWAL(nil, wdir))
+
+	w, err := wal.New(nil, nil, wdir)
+	testutil.Ok(t, err)
+
+	// We can properly write some new data after migration.
+	var enc RecordEncoder
+	testutil.Ok(t, w.Log(enc.Samples([]RefSample{
+		{Ref: 500, T: 1, V: 1},
+	}, nil)))
+
+	testutil.Ok(t, w.Close())
+
+	// Read back all data.
+	sr, err := wal.NewSegmentsReader(wdir)
+	testutil.Ok(t, err)
+
+	r := wal.NewReader(sr)
+	var res []interface{}
+	var dec RecordDecoder
+
+	for r.Next() {
+		rec := r.Record()
+
+		switch dec.Type(rec) {
+		case RecordSeries:
+			s, err := dec.Series(rec, nil)
+			testutil.Ok(t, err)
+			res = append(res, s)
+		case RecordSamples:
+			s, err := dec.Samples(rec, nil)
+			testutil.Ok(t, err)
+			res = append(res, s)
+		case RecordTombstones:
+			s, err := dec.Tombstones(rec, nil)
+			testutil.Ok(t, err)
+			res = append(res, s)
+		default:
+			t.Fatalf("unknown record type %d", dec.Type(rec))
+		}
+	}
+	testutil.Ok(t, r.Err())
+
+	testutil.Equals(t, []interface{}{
+		[]RefSeries{
+			{Ref: 100, Labels: labels.FromStrings("abc", "def", "123", "456")},
+			{Ref: 1, Labels: labels.FromStrings("abc", "def2", "1234", "4567")},
+		},
+		[]RefSample{{Ref: 1, T: 100, V: 200}, {Ref: 2, T: 300, V: 400}},
+		[]RefSeries{
+			{Ref: 200, Labels: labels.FromStrings("xyz", "def", "foo", "bar")},
+		},
+		[]RefSample{{Ref: 3, T: 100, V: 200}, {Ref: 4, T: 300, V: 400}},
+		[]Stone{{ref: 1, intervals: []Interval{{100, 200}}}},
+		[]RefSample{{Ref: 500, T: 1, V: 1}},
+	}, res)
+
+	// Migrating an already migrated WAL shouldn't do anything.
+	testutil.Ok(t, MigrateWAL(nil, wdir))
 }
