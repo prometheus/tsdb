@@ -82,7 +82,11 @@ type IndexReader interface {
 	Series(ref uint64, lset *labels.Labels, chks *[]chunks.Meta) error
 
 	// LabelIndices returns a list of string tuples for which a label value index exists.
+	// NOTE: This is deprecated. Use `LabelNames()` instead.
 	LabelIndices() ([][]string, error)
+
+	// LabelNames returns all the unique label names present in the index in sorted order.
+	LabelNames() ([]string, error)
 
 	// Close releases the underlying resources of the reader.
 	Close() error
@@ -184,16 +188,10 @@ type BlockMetaCompaction struct {
 	Failed  bool        `json:"failed,omitempty"`
 }
 
-const (
-	flagNone = 0
-	flagStd  = 1
-)
-
 const indexFilename = "index"
 const metaFilename = "meta.json"
 
 func chunkDir(dir string) string { return filepath.Join(dir, "chunks") }
-func walDir(dir string) string   { return filepath.Join(dir, "wal") }
 
 func readMetaFile(dir string) (*BlockMeta, error) {
 	b, err := ioutil.ReadFile(filepath.Join(dir, metaFilename))
@@ -248,6 +246,10 @@ type Block struct {
 	dir  string
 	meta BlockMeta
 
+	// Symbol Table Size in bytes.
+	// We maintain this variable to avoid recalculation everytime.
+	symbolTableSize uint64
+
 	chunkr     ChunkReader
 	indexr     IndexReader
 	tombstones TombstoneReader
@@ -276,11 +278,12 @@ func OpenBlock(dir string, pool chunkenc.Pool) (*Block, error) {
 	}
 
 	pb := &Block{
-		dir:        dir,
-		meta:       *meta,
-		chunkr:     cr,
-		indexr:     ir,
-		tombstones: tr,
+		dir:             dir,
+		meta:            *meta,
+		chunkr:          cr,
+		indexr:          ir,
+		tombstones:      tr,
+		symbolTableSize: ir.SymbolTableSize(),
 	}
 	return pb, nil
 }
@@ -350,6 +353,11 @@ func (pb *Block) Tombstones() (TombstoneReader, error) {
 	return blockTombstoneReader{TombstoneReader: pb.tombstones, b: pb}, nil
 }
 
+// GetSymbolTableSize returns the Symbol Table Size in the index of this block.
+func (pb *Block) GetSymbolTableSize() uint64 {
+	return pb.symbolTableSize
+}
+
 func (pb *Block) setCompactionFailed() error {
 	pb.meta.Compaction.Failed = true
 	return writeMetaFile(pb.dir, &pb.meta)
@@ -390,6 +398,10 @@ func (r blockIndexReader) Series(ref uint64, lset *labels.Labels, chks *[]chunks
 func (r blockIndexReader) LabelIndices() ([][]string, error) {
 	ss, err := r.ir.LabelIndices()
 	return ss, errors.Wrapf(err, "block: %s", r.b.Meta().ULID)
+}
+
+func (r blockIndexReader) LabelNames() ([]string, error) {
+	return r.b.LabelNames()
 }
 
 func (r blockIndexReader) Close() error {
@@ -434,7 +446,7 @@ func (pb *Block) Delete(mint, maxt int64, ms ...labels.Matcher) error {
 	ir := pb.indexr
 
 	// Choose only valid postings which have chunks in the time-range.
-	stones := memTombstones{}
+	stones := newMemTombstones()
 
 	var lset labels.Labels
 	var chks []chunks.Meta
@@ -447,10 +459,10 @@ Outer:
 		}
 
 		for _, chk := range chks {
-			if intervalOverlap(mint, maxt, chk.MinTime, chk.MaxTime) {
+			if chk.OverlapsClosedInterval(mint, maxt) {
 				// Delete only until the current values and not beyond.
 				tmin, tmax := clampInterval(mint, maxt, chks[0].MinTime, chks[len(chks)-1].MaxTime)
-				stones[p.At()] = Intervals{{tmin, tmax}}
+				stones.addInterval(p.At(), Interval{tmin, tmax})
 				continue Outer
 			}
 		}
@@ -462,8 +474,7 @@ Outer:
 
 	err = pb.tombstones.Iter(func(id uint64, ivs Intervals) error {
 		for _, iv := range ivs {
-			stones.add(id, iv)
-			pb.meta.Stats.NumTombstones++
+			stones.addInterval(id, iv)
 		}
 		return nil
 	})
@@ -471,6 +482,7 @@ Outer:
 		return err
 	}
 	pb.tombstones = stones
+	pb.meta.Stats.NumTombstones = pb.tombstones.Total()
 
 	if err := writeTombstoneFile(pb.dir, pb.tombstones); err != nil {
 		return err
@@ -483,10 +495,13 @@ Outer:
 func (pb *Block) CleanTombstones(dest string, c Compactor) (*ulid.ULID, error) {
 	numStones := 0
 
-	pb.tombstones.Iter(func(id uint64, ivs Intervals) error {
+	if err := pb.tombstones.Iter(func(id uint64, ivs Intervals) error {
 		numStones += len(ivs)
 		return nil
-	})
+	}); err != nil {
+		// This should never happen, as the iteration function only returns nil.
+		panic(err)
+	}
 	if numStones == 0 {
 		return nil, nil
 	}
@@ -537,6 +552,18 @@ func (pb *Block) Snapshot(dir string) error {
 	}
 
 	return nil
+}
+
+// OverlapsClosedInterval returns true if the block overlaps [mint, maxt].
+func (pb *Block) OverlapsClosedInterval(mint, maxt int64) bool {
+	// The block itself is a half-open interval
+	// [pb.meta.MinTime, pb.meta.MaxTime).
+	return pb.meta.MinTime <= maxt && mint < pb.meta.MaxTime
+}
+
+// LabelNames returns all the unique label names present in the Block in sorted order.
+func (pb *Block) LabelNames() ([]string, error) {
+	return pb.indexr.LabelNames()
 }
 
 func clampInterval(a, b, mint, maxt int64) (int64, int64) {

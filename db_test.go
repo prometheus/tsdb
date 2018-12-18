@@ -19,15 +19,22 @@ import (
 	"math"
 	"math/rand"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"testing"
 	"time"
 
+	"github.com/go-kit/kit/log"
 	"github.com/oklog/ulid"
 	"github.com/pkg/errors"
+	"github.com/prometheus/client_golang/prometheus"
+	prom_testutil "github.com/prometheus/client_golang/prometheus/testutil"
+	"github.com/prometheus/tsdb/chunks"
+	"github.com/prometheus/tsdb/index"
 	"github.com/prometheus/tsdb/labels"
 	"github.com/prometheus/tsdb/testutil"
+	"github.com/prometheus/tsdb/wal"
 )
 
 func openTestDB(t testing.TB, opts *Options) (db *DB, close func()) {
@@ -106,7 +113,7 @@ func TestDataAvailableOnlyAfterCommit(t *testing.T) {
 	testutil.Ok(t, err)
 	seriesSet := query(t, querier, labels.NewEqualMatcher("foo", "bar"))
 
-	testutil.Equals(t, seriesSet, map[string][]sample{})
+	testutil.Equals(t, map[string][]sample{}, seriesSet)
 	testutil.Ok(t, querier.Close())
 
 	err = app.Commit()
@@ -118,7 +125,7 @@ func TestDataAvailableOnlyAfterCommit(t *testing.T) {
 
 	seriesSet = query(t, querier, labels.NewEqualMatcher("foo", "bar"))
 
-	testutil.Equals(t, seriesSet, map[string][]sample{`{foo="bar"}`: {{t: 0, v: 0}}})
+	testutil.Equals(t, map[string][]sample{`{foo="bar"}`: {{t: 0, v: 0}}}, seriesSet)
 }
 
 func TestDataNotAvailableAfterRollback(t *testing.T) {
@@ -139,7 +146,7 @@ func TestDataNotAvailableAfterRollback(t *testing.T) {
 
 	seriesSet := query(t, querier, labels.NewEqualMatcher("foo", "bar"))
 
-	testutil.Equals(t, seriesSet, map[string][]sample{})
+	testutil.Equals(t, map[string][]sample{}, seriesSet)
 }
 
 func TestDBAppenderAddRef(t *testing.T) {
@@ -175,7 +182,7 @@ func TestDBAppenderAddRef(t *testing.T) {
 	testutil.Ok(t, err)
 
 	err = app2.AddFast(9999999, 1, 1)
-	testutil.Equals(t, errors.Cause(err), ErrNotFound)
+	testutil.Equals(t, ErrNotFound, errors.Cause(err))
 
 	testutil.Ok(t, app2.Commit())
 
@@ -238,12 +245,12 @@ Outer:
 		res, err := q.Select(labels.NewEqualMatcher("a", "b"))
 		testutil.Ok(t, err)
 
-		expSamples := make([]sample, 0, len(c.remaint))
+		expSamples := make([]Sample, 0, len(c.remaint))
 		for _, ts := range c.remaint {
 			expSamples = append(expSamples, sample{ts, smpls[ts]})
 		}
 
-		expss := newListSeriesSet([]Series{
+		expss := newMockSeriesSet([]Series{
 			newSeries(map[string]string{"a": "b"}, expSamples),
 		})
 
@@ -408,7 +415,7 @@ func TestDB_Snapshot(t *testing.T) {
 		testutil.Ok(t, series.Err())
 	}
 	testutil.Ok(t, seriesSet.Err())
-	testutil.Equals(t, sum, 1000.0)
+	testutil.Equals(t, 1000.0, sum)
 }
 
 func TestDB_SnapshotWithDelete(t *testing.T) {
@@ -465,12 +472,12 @@ Outer:
 		res, err := q.Select(labels.NewEqualMatcher("a", "b"))
 		testutil.Ok(t, err)
 
-		expSamples := make([]sample, 0, len(c.remaint))
+		expSamples := make([]Sample, 0, len(c.remaint))
 		for _, ts := range c.remaint {
 			expSamples = append(expSamples, sample{ts, smpls[ts]})
 		}
 
-		expss := newListSeriesSet([]Series{
+		expss := newMockSeriesSet([]Series{
 			newSeries(map[string]string{"a": "b"}, expSamples),
 		})
 
@@ -685,7 +692,7 @@ func TestWALFlushedOnDBClose(t *testing.T) {
 
 	values, err := q.LabelValues("labelname")
 	testutil.Ok(t, err)
-	testutil.Equals(t, values, []string{"labelvalue"})
+	testutil.Equals(t, []string{"labelvalue"}, values)
 }
 
 func TestTombstoneClean(t *testing.T) {
@@ -744,12 +751,12 @@ func TestTombstoneClean(t *testing.T) {
 		res, err := q.Select(labels.NewEqualMatcher("a", "b"))
 		testutil.Ok(t, err)
 
-		expSamples := make([]sample, 0, len(c.remaint))
+		expSamples := make([]Sample, 0, len(c.remaint))
 		for _, ts := range c.remaint {
 			expSamples = append(expSamples, sample{ts, smpls[ts]})
 		}
 
-		expss := newListSeriesSet([]Series{
+		expss := newMockSeriesSet([]Series{
 			newSeries(map[string]string{"a": "b"}, expSamples),
 		})
 
@@ -777,8 +784,8 @@ func TestTombstoneClean(t *testing.T) {
 			testutil.Equals(t, smplExp, smplRes)
 		}
 
-		for _, b := range db.blocks {
-			testutil.Equals(t, emptyTombstoneReader, b.tombstones)
+		for _, b := range db.Blocks() {
+			testutil.Equals(t, newMemTombstones(), b.tombstones)
 		}
 	}
 }
@@ -807,8 +814,8 @@ func TestTombstoneCleanFail(t *testing.T) {
 		block := createEmptyBlock(t, blockDir, meta)
 
 		// Add some some fake tombstones to trigger the compaction.
-		tomb := memTombstones{}
-		tomb[0] = Intervals{{0, 1}}
+		tomb := newMemTombstones()
+		tomb.addInterval(0, Interval{0, 1})
 		block.tombstones = tomb
 
 		db.blocks = append(db.blocks, block)
@@ -855,6 +862,7 @@ func (c *mockCompactorFailing) Write(dest string, b BlockReader, mint, maxt int6
 	}
 
 	block := createEmptyBlock(c.t, filepath.Join(dest, meta.ULID.String()), meta)
+	testutil.Ok(c.t, block.Close()) // Close block as we won't be using anywhere.
 	c.blocks = append(c.blocks, block)
 
 	// Now check that all expected blocks are actually persisted on disk.
@@ -871,7 +879,7 @@ func (c *mockCompactorFailing) Write(dest string, b BlockReader, mint, maxt int6
 	return block.Meta().ULID, nil
 }
 
-func (*mockCompactorFailing) Compact(dest string, dirs ...string) (ulid.ULID, error) {
+func (*mockCompactorFailing) Compact(dest string, dirs []string, open []*Block) (ulid.ULID, error) {
 	return ulid.ULID{}, nil
 
 }
@@ -1023,33 +1031,41 @@ func TestOverlappingBlocksDetectsAllOverlaps(t *testing.T) {
 
 	testutil.Assert(t, len(OverlappingBlocks(metas)) == 0, "we found unexpected overlaps")
 
-	// Add overlapping blocks.
+	// Add overlapping blocks. We've to establish order again since we aren't interested
+	// in trivial overlaps caused by unorderedness.
+	add := func(ms ...BlockMeta) []BlockMeta {
+		repl := append(append([]BlockMeta{}, metas...), ms...)
+		sort.Slice(repl, func(i, j int) bool {
+			return repl[i].MinTime < repl[j].MinTime
+		})
+		return repl
+	}
 
 	// o1 overlaps with 10-20.
 	o1 := BlockMeta{MinTime: 15, MaxTime: 17}
 	testutil.Equals(t, Overlaps{
 		{Min: 15, Max: 17}: {metas[1], o1},
-	}, OverlappingBlocks(append(metas, o1)))
+	}, OverlappingBlocks(add(o1)))
 
 	// o2 overlaps with 20-30 and 30-40.
 	o2 := BlockMeta{MinTime: 21, MaxTime: 31}
 	testutil.Equals(t, Overlaps{
 		{Min: 21, Max: 30}: {metas[2], o2},
 		{Min: 30, Max: 31}: {o2, metas[3]},
-	}, OverlappingBlocks(append(metas, o2)))
+	}, OverlappingBlocks(add(o2)))
 
 	// o3a and o3b overlaps with 30-40 and each other.
 	o3a := BlockMeta{MinTime: 33, MaxTime: 39}
 	o3b := BlockMeta{MinTime: 34, MaxTime: 36}
 	testutil.Equals(t, Overlaps{
 		{Min: 34, Max: 36}: {metas[3], o3a, o3b},
-	}, OverlappingBlocks(append(metas, o3a, o3b)))
+	}, OverlappingBlocks(add(o3a, o3b)))
 
 	// o4 is 1:1 overlap with 50-60.
 	o4 := BlockMeta{MinTime: 50, MaxTime: 60}
 	testutil.Equals(t, Overlaps{
 		{Min: 50, Max: 60}: {metas[5], o4},
-	}, OverlappingBlocks(append(metas, o4)))
+	}, OverlappingBlocks(add(o4)))
 
 	// o5 overlaps with 60-70, 70-80 and 80-90.
 	o5 := BlockMeta{MinTime: 61, MaxTime: 85}
@@ -1057,7 +1073,7 @@ func TestOverlappingBlocksDetectsAllOverlaps(t *testing.T) {
 		{Min: 61, Max: 70}: {metas[6], o5},
 		{Min: 70, Max: 80}: {o5, metas[7]},
 		{Min: 80, Max: 85}: {o5, metas[8]},
-	}, OverlappingBlocks(append(metas, o5)))
+	}, OverlappingBlocks(add(o5)))
 
 	// o6a overlaps with 90-100, 100-110 and o6b, o6b overlaps with 90-100 and o6a.
 	o6a := BlockMeta{MinTime: 92, MaxTime: 105}
@@ -1065,7 +1081,7 @@ func TestOverlappingBlocksDetectsAllOverlaps(t *testing.T) {
 	testutil.Equals(t, Overlaps{
 		{Min: 94, Max: 99}:   {metas[9], o6a, o6b},
 		{Min: 100, Max: 105}: {o6a, metas[10]},
-	}, OverlappingBlocks(append(metas, o6a, o6b)))
+	}, OverlappingBlocks(add(o6a, o6b)))
 
 	// All together.
 	testutil.Equals(t, Overlaps{
@@ -1075,7 +1091,7 @@ func TestOverlappingBlocksDetectsAllOverlaps(t *testing.T) {
 		{Min: 50, Max: 60}: {metas[5], o4},
 		{Min: 61, Max: 70}: {metas[6], o5}, {Min: 70, Max: 80}: {o5, metas[7]}, {Min: 80, Max: 85}: {o5, metas[8]},
 		{Min: 94, Max: 99}: {metas[9], o6a, o6b}, {Min: 100, Max: 105}: {o6a, metas[10]},
-	}, OverlappingBlocks(append(metas, o1, o2, o3a, o3b, o4, o5, o6a, o6b)))
+	}, OverlappingBlocks(add(o1, o2, o3a, o3b, o4, o5, o6a, o6b)))
 
 	// Additional case.
 	var nc1 []BlockMeta
@@ -1095,4 +1111,438 @@ func TestOverlappingBlocksDetectsAllOverlaps(t *testing.T) {
 		{Min: 5, Max: 6}: {nc1[5], nc1[7]},                                 // 2-6, 5-7
 		{Min: 8, Max: 9}: {nc1[8], nc1[9]},                                 // 7-10, 8-9
 	}, OverlappingBlocks(nc1))
+}
+
+// Regression test for https://github.com/prometheus/tsdb/issues/347
+func TestChunkAtBlockBoundary(t *testing.T) {
+	db, close := openTestDB(t, nil)
+	defer close()
+	defer db.Close()
+
+	app := db.Appender()
+
+	blockRange := DefaultOptions.BlockRanges[0]
+	label := labels.FromStrings("foo", "bar")
+
+	for i := int64(0); i < 3; i++ {
+		_, err := app.Add(label, i*blockRange, 0)
+		testutil.Ok(t, err)
+		_, err = app.Add(label, i*blockRange+1000, 0)
+		testutil.Ok(t, err)
+	}
+
+	err := app.Commit()
+	testutil.Ok(t, err)
+
+	err = db.compact()
+	testutil.Ok(t, err)
+
+	for _, block := range db.Blocks() {
+		r, err := block.Index()
+		testutil.Ok(t, err)
+		defer r.Close()
+
+		meta := block.Meta()
+
+		p, err := r.Postings(index.AllPostingsKey())
+		testutil.Ok(t, err)
+
+		var (
+			lset labels.Labels
+			chks []chunks.Meta
+		)
+
+		chunkCount := 0
+
+		for p.Next() {
+			err = r.Series(p.At(), &lset, &chks)
+			testutil.Ok(t, err)
+			for _, c := range chks {
+				testutil.Assert(t, meta.MinTime <= c.MinTime && c.MaxTime <= meta.MaxTime,
+					"chunk spans beyond block boundaries: [block.MinTime=%d, block.MaxTime=%d]; [chunk.MinTime=%d, chunk.MaxTime=%d]",
+					meta.MinTime, meta.MaxTime, c.MinTime, c.MaxTime)
+				chunkCount++
+			}
+		}
+		testutil.Assert(t, chunkCount == 1, "expected 1 chunk in block %s, got %d", meta.ULID, chunkCount)
+	}
+}
+
+func TestQuerierWithBoundaryChunks(t *testing.T) {
+	db, close := openTestDB(t, nil)
+	defer close()
+	defer db.Close()
+
+	app := db.Appender()
+
+	blockRange := DefaultOptions.BlockRanges[0]
+	label := labels.FromStrings("foo", "bar")
+
+	for i := int64(0); i < 5; i++ {
+		_, err := app.Add(label, i*blockRange, 0)
+		testutil.Ok(t, err)
+	}
+
+	err := app.Commit()
+	testutil.Ok(t, err)
+
+	err = db.compact()
+	testutil.Ok(t, err)
+
+	testutil.Assert(t, len(db.blocks) >= 3, "invalid test, less than three blocks in DB")
+
+	q, err := db.Querier(blockRange, 2*blockRange)
+	testutil.Ok(t, err)
+	defer q.Close()
+
+	// The requested interval covers 2 blocks, so the querier should contain 2 blocks.
+	count := len(q.(*querier).blocks)
+	testutil.Assert(t, count == 2, "expected 2 blocks in querier, got %d", count)
+}
+
+// TestInitializeHeadTimestamp ensures that the h.minTime is set properly.
+// 	- no blocks no WAL: set to the time of the first  appended sample
+// 	- no blocks with WAL: set to the smallest sample from the WAL
+//	- with blocks no WAL: set to the last block maxT
+// 	- with blocks with WAL: same as above
+func TestInitializeHeadTimestamp(t *testing.T) {
+	t.Run("clean", func(t *testing.T) {
+		dir, err := ioutil.TempDir("", "test_head_init")
+		testutil.Ok(t, err)
+		defer os.RemoveAll(dir)
+
+		db, err := Open(dir, nil, nil, nil)
+		testutil.Ok(t, err)
+
+		// Should be set to init values if no WAL or blocks exist so far.
+		testutil.Equals(t, int64(math.MaxInt64), db.head.MinTime())
+		testutil.Equals(t, int64(math.MinInt64), db.head.MaxTime())
+
+		// First added sample initializes the writable range.
+		app := db.Appender()
+		_, err = app.Add(labels.FromStrings("a", "b"), 1000, 1)
+		testutil.Ok(t, err)
+
+		testutil.Equals(t, int64(1000), db.head.MinTime())
+		testutil.Equals(t, int64(1000), db.head.MaxTime())
+	})
+	t.Run("wal-only", func(t *testing.T) {
+		dir, err := ioutil.TempDir("", "test_head_init")
+		testutil.Ok(t, err)
+		defer os.RemoveAll(dir)
+
+		testutil.Ok(t, os.MkdirAll(path.Join(dir, "wal"), 0777))
+		w, err := wal.New(nil, nil, path.Join(dir, "wal"))
+		testutil.Ok(t, err)
+
+		var enc RecordEncoder
+		err = w.Log(
+			enc.Series([]RefSeries{
+				{Ref: 123, Labels: labels.FromStrings("a", "1")},
+				{Ref: 124, Labels: labels.FromStrings("a", "2")},
+			}, nil),
+			enc.Samples([]RefSample{
+				{Ref: 123, T: 5000, V: 1},
+				{Ref: 124, T: 15000, V: 1},
+			}, nil),
+		)
+		testutil.Ok(t, err)
+		testutil.Ok(t, w.Close())
+
+		db, err := Open(dir, nil, nil, nil)
+		testutil.Ok(t, err)
+
+		testutil.Equals(t, int64(5000), db.head.MinTime())
+		testutil.Equals(t, int64(15000), db.head.MaxTime())
+	})
+	t.Run("existing-block", func(t *testing.T) {
+		dir, err := ioutil.TempDir("", "test_head_init")
+		testutil.Ok(t, err)
+		defer os.RemoveAll(dir)
+
+		id := ulid.MustNew(2000, nil)
+		createEmptyBlock(t, path.Join(dir, id.String()), &BlockMeta{
+			ULID:    id,
+			MinTime: 1000,
+			MaxTime: 2000,
+		})
+
+		db, err := Open(dir, nil, nil, nil)
+		testutil.Ok(t, err)
+
+		testutil.Equals(t, int64(2000), db.head.MinTime())
+		testutil.Equals(t, int64(2000), db.head.MaxTime())
+	})
+	t.Run("existing-block-and-wal", func(t *testing.T) {
+		dir, err := ioutil.TempDir("", "test_head_init")
+		testutil.Ok(t, err)
+		defer os.RemoveAll(dir)
+
+		id := ulid.MustNew(2000, nil)
+		createEmptyBlock(t, path.Join(dir, id.String()), &BlockMeta{
+			ULID:    id,
+			MinTime: 1000,
+			MaxTime: 6000,
+		})
+
+		testutil.Ok(t, os.MkdirAll(path.Join(dir, "wal"), 0777))
+		w, err := wal.New(nil, nil, path.Join(dir, "wal"))
+		testutil.Ok(t, err)
+
+		var enc RecordEncoder
+		err = w.Log(
+			enc.Series([]RefSeries{
+				{Ref: 123, Labels: labels.FromStrings("a", "1")},
+				{Ref: 124, Labels: labels.FromStrings("a", "2")},
+			}, nil),
+			enc.Samples([]RefSample{
+				{Ref: 123, T: 5000, V: 1},
+				{Ref: 124, T: 15000, V: 1},
+			}, nil),
+		)
+		testutil.Ok(t, err)
+		testutil.Ok(t, w.Close())
+
+		r := prometheus.NewRegistry()
+
+		db, err := Open(dir, nil, r, nil)
+		testutil.Ok(t, err)
+
+		testutil.Equals(t, int64(6000), db.head.MinTime())
+		testutil.Equals(t, int64(15000), db.head.MaxTime())
+		// Check that old series has been GCed.
+		testutil.Equals(t, 1.0, prom_testutil.ToFloat64(db.head.metrics.series))
+	})
+}
+
+func TestDB_LabelNames(t *testing.T) {
+	tests := []struct {
+		// Add 'sampleLabels1' -> Test Head -> Compact -> Test Disk ->
+		// -> Add 'sampleLabels2' -> Test Head+Disk
+
+		sampleLabels1 [][2]string // For checking head and disk separately.
+		// To test Head+Disk, sampleLabels2 should have
+		// at least 1 unique label name which is not in sampleLabels1.
+		sampleLabels2 [][2]string // // For checking head and disk together.
+		exp1          []string    // after adding sampleLabels1.
+		exp2          []string    // after adding sampleLabels1 and sampleLabels2.
+	}{
+		{
+			sampleLabels1: [][2]string{
+				[2]string{"name1", ""},
+				[2]string{"name3", ""},
+				[2]string{"name2", ""},
+			},
+			sampleLabels2: [][2]string{
+				[2]string{"name4", ""},
+				[2]string{"name1", ""},
+			},
+			exp1: []string{"name1", "name2", "name3"},
+			exp2: []string{"name1", "name2", "name3", "name4"},
+		},
+		{
+			sampleLabels1: [][2]string{
+				[2]string{"name2", ""},
+				[2]string{"name1", ""},
+				[2]string{"name2", ""},
+			},
+			sampleLabels2: [][2]string{
+				[2]string{"name6", ""},
+				[2]string{"name0", ""},
+			},
+			exp1: []string{"name1", "name2"},
+			exp2: []string{"name0", "name1", "name2", "name6"},
+		},
+	}
+
+	blockRange := DefaultOptions.BlockRanges[0]
+	// Appends samples into the database.
+	appendSamples := func(db *DB, mint, maxt int64, sampleLabels [][2]string) {
+		t.Helper()
+		app := db.Appender()
+		for i := mint; i <= maxt; i++ {
+			for _, tuple := range sampleLabels {
+				label := labels.FromStrings(tuple[0], tuple[1])
+				_, err := app.Add(label, i*blockRange, 0)
+				testutil.Ok(t, err)
+			}
+		}
+		err := app.Commit()
+		testutil.Ok(t, err)
+	}
+	for _, tst := range tests {
+		db, close := openTestDB(t, nil)
+		defer close()
+		defer db.Close()
+
+		appendSamples(db, 0, 4, tst.sampleLabels1)
+
+		// Testing head.
+		headIndexr, err := db.head.Index()
+		testutil.Ok(t, err)
+		labelNames, err := headIndexr.LabelNames()
+		testutil.Ok(t, err)
+		testutil.Equals(t, tst.exp1, labelNames)
+		testutil.Ok(t, headIndexr.Close())
+
+		// Testing disk.
+		err = db.compact()
+		testutil.Ok(t, err)
+		// All blocks have same label names, hence check them individually.
+		// No need to aggregrate and check.
+		for _, b := range db.Blocks() {
+			blockIndexr, err := b.Index()
+			testutil.Ok(t, err)
+			labelNames, err = blockIndexr.LabelNames()
+			testutil.Ok(t, err)
+			testutil.Equals(t, tst.exp1, labelNames)
+			testutil.Ok(t, blockIndexr.Close())
+		}
+
+		// Addings more samples to head with new label names
+		// so that we can test (head+disk).LabelNames() (the union).
+		appendSamples(db, 5, 9, tst.sampleLabels2)
+
+		// Testing DB (union).
+		q, err := db.Querier(math.MinInt64, math.MaxInt64)
+		testutil.Ok(t, err)
+		labelNames, err = q.LabelNames()
+		testutil.Ok(t, err)
+		testutil.Ok(t, q.Close())
+		testutil.Equals(t, tst.exp2, labelNames)
+	}
+}
+
+func TestCorrectNumTombstones(t *testing.T) {
+	db, close := openTestDB(t, nil)
+	defer close()
+	defer db.Close()
+
+	blockRange := DefaultOptions.BlockRanges[0]
+	label := labels.FromStrings("foo", "bar")
+
+	app := db.Appender()
+	for i := int64(0); i < 3; i++ {
+		for j := int64(0); j < 15; j++ {
+			_, err := app.Add(label, i*blockRange+j, 0)
+			testutil.Ok(t, err)
+		}
+	}
+	testutil.Ok(t, app.Commit())
+
+	err := db.compact()
+	testutil.Ok(t, err)
+	testutil.Equals(t, 1, len(db.blocks))
+
+	testutil.Ok(t, db.Delete(0, 1, labels.NewEqualMatcher("foo", "bar")))
+	testutil.Equals(t, uint64(1), db.blocks[0].meta.Stats.NumTombstones)
+
+	// {0, 1} and {2, 3} are merged to form 1 tombstone.
+	testutil.Ok(t, db.Delete(2, 3, labels.NewEqualMatcher("foo", "bar")))
+	testutil.Equals(t, uint64(1), db.blocks[0].meta.Stats.NumTombstones)
+
+	testutil.Ok(t, db.Delete(5, 6, labels.NewEqualMatcher("foo", "bar")))
+	testutil.Equals(t, uint64(2), db.blocks[0].meta.Stats.NumTombstones)
+
+	testutil.Ok(t, db.Delete(9, 11, labels.NewEqualMatcher("foo", "bar")))
+	testutil.Equals(t, uint64(3), db.blocks[0].meta.Stats.NumTombstones)
+}
+
+// TestBlockRanges checks the following use cases:
+//  - No samples can be added with timestamps lower than the last block maxt.
+//  - The compactor doesn't create overlaping blocks
+// even when the last blocks is not within the default boundaries.
+//	- Lower bondary is based on the smallest sample in the head and
+// upper boundary is rounded to the configured block range.
+//
+// This ensures that a snapshot that includes the head and creates a block with a custom time range
+// will not overlap with the first block created by the next compaction.
+func TestBlockRanges(t *testing.T) {
+	logger := log.NewLogfmtLogger(log.NewSyncWriter(os.Stderr))
+
+	dir, err := ioutil.TempDir("", "test_storage")
+	if err != nil {
+		t.Fatalf("Opening test dir failed: %s", err)
+	}
+
+	rangeToTriggercompaction := DefaultOptions.BlockRanges[0]/2*3 + 1
+
+	// Test that the compactor doesn't create overlapping blocks
+	// when a non standard block already exists.
+	firstBlockMaxT := int64(3)
+	createPopulatedBlock(t, dir, 1, 0, firstBlockMaxT)
+	db, err := Open(dir, logger, nil, DefaultOptions)
+	if err != nil {
+		t.Fatalf("Opening test storage failed: %s", err)
+	}
+	defer func() {
+		os.RemoveAll(dir)
+	}()
+	app := db.Appender()
+	lbl := labels.Labels{{"a", "b"}}
+	_, err = app.Add(lbl, firstBlockMaxT-1, rand.Float64())
+	if err == nil {
+		t.Fatalf("appending a sample with a timestamp covered by a previous block shouldn't be possible")
+	}
+	_, err = app.Add(lbl, firstBlockMaxT+1, rand.Float64())
+	testutil.Ok(t, err)
+	_, err = app.Add(lbl, firstBlockMaxT+2, rand.Float64())
+	testutil.Ok(t, err)
+	secondBlockMaxt := firstBlockMaxT + rangeToTriggercompaction
+	_, err = app.Add(lbl, secondBlockMaxt, rand.Float64()) // Add samples to trigger a new compaction
+
+	testutil.Ok(t, err)
+	testutil.Ok(t, app.Commit())
+	for x := 0; x < 100; x++ {
+		if len(db.Blocks()) == 2 {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	testutil.Equals(t, 2, len(db.Blocks()), "no new block created after the set timeout")
+
+	if db.Blocks()[0].Meta().MaxTime > db.Blocks()[1].Meta().MinTime {
+		t.Fatalf("new block overlaps  old:%v,new:%v", db.Blocks()[0].Meta(), db.Blocks()[1].Meta())
+	}
+
+	// Test that wal records are skipped when an existing block covers the same time ranges
+	// and compaction doesn't create an overlapping block.
+	db.DisableCompactions()
+	_, err = app.Add(lbl, secondBlockMaxt+1, rand.Float64())
+	testutil.Ok(t, err)
+	_, err = app.Add(lbl, secondBlockMaxt+2, rand.Float64())
+	testutil.Ok(t, err)
+	_, err = app.Add(lbl, secondBlockMaxt+3, rand.Float64())
+	testutil.Ok(t, err)
+	_, err = app.Add(lbl, secondBlockMaxt+4, rand.Float64())
+	testutil.Ok(t, app.Commit())
+	testutil.Ok(t, db.Close())
+
+	thirdBlockMaxt := secondBlockMaxt + 2
+	createPopulatedBlock(t, dir, 1, secondBlockMaxt+1, thirdBlockMaxt)
+
+	db, err = Open(dir, logger, nil, DefaultOptions)
+	if err != nil {
+		t.Fatalf("Opening test storage failed: %s", err)
+	}
+	defer db.Close()
+	testutil.Equals(t, 3, len(db.Blocks()), "db doesn't include expected number of blocks")
+	testutil.Equals(t, db.Blocks()[2].Meta().MaxTime, thirdBlockMaxt, "unexpected maxt of the last block")
+
+	app = db.Appender()
+	_, err = app.Add(lbl, thirdBlockMaxt+rangeToTriggercompaction, rand.Float64()) // Trigger a compaction
+	testutil.Ok(t, err)
+	testutil.Ok(t, app.Commit())
+	for x := 0; x < 100; x++ {
+		if len(db.Blocks()) == 4 {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	testutil.Equals(t, 4, len(db.Blocks()), "no new block created after the set timeout")
+
+	if db.Blocks()[2].Meta().MaxTime > db.Blocks()[3].Meta().MinTime {
+		t.Fatalf("new block overlaps  old:%v,new:%v", db.Blocks()[2].Meta(), db.Blocks()[3].Meta())
+	}
 }
