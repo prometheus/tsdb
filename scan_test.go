@@ -27,7 +27,9 @@ func TestScanning(t *testing.T) {
 	tmp := testutil.NewTemporaryDirectory("scanTest", t)
 	defer tmp.Close()
 	block := createPopulatedBlock(t, tmp.Path(), 1, 1, 10)
-	createPopulatedBlock(t, tmp.Path(), 1, 10, 20)
+	defer block.Close()
+	b := createPopulatedBlock(t, tmp.Path(), 1, 10, 20)
+	defer b.Close()
 
 	scanner, err := NewDBScanner(tmp.Path(), log.NewLogfmtLogger(os.Stderr))
 	testutil.Ok(t, err)
@@ -86,7 +88,7 @@ func TestScanning(t *testing.T) {
 	testutil.Ok(t, err)
 	_, err = f.Write([]byte{0})
 	testutil.Ok(t, err)
-	f.Close()
+	testutil.Ok(t, f.Close())
 
 	corr, err = scanner.Tombstones()
 	testutil.Ok(t, err)
@@ -99,6 +101,7 @@ func TestScanning(t *testing.T) {
 
 	// Create an overlapping block and check that the scanner reports it.
 	overlapExp := createPopulatedBlock(t, tmp.Path(), 1, 15, 20)
+	defer overlapExp.Close()
 	corrO, err = scanner.Overlapping()
 	testutil.Ok(t, err)
 	testutil.Equals(t, 1, len(corrO))
