@@ -15,7 +15,7 @@ package tsdb
 
 import (
 	"fmt"
-	"path/filepath"
+	"sort"
 
 	"github.com/go-kit/kit/log"
 	"github.com/pkg/errors"
@@ -30,8 +30,8 @@ type Scanner interface {
 	Tombstones() (map[string][]string, error)
 	// Meta returns a list of block paths with invalid Meta file grouped by the error.
 	Meta() (map[string][]string, error)
-	// Indexes returns a list of block paths with invalid Index grouped by the error.
-	Indexes() (map[string][]string, error)
+	// Index returns a list of block paths with invalid Index grouped by the error.
+	Index() (map[string][]string, error)
 	// Overlapping returns a list of blocks with overlapping time ranges.
 	Overlapping() (Overlaps, error)
 	// Dir returns the scanned directory.
@@ -77,7 +77,7 @@ func (s *DBScanner) Tombstones() (map[string][]string, error) {
 	inv := make(map[string][]string)
 	for _, dir := range dirs {
 		if _, err = readTombstones(dir); err != nil {
-			inv[err.Error()] = append(inv[err.Error()], filepath.Join(dir, tombstoneFilename))
+			inv[err.Error()] = append(inv[err.Error()], dir)
 		}
 	}
 	return inv, nil
@@ -98,28 +98,6 @@ func (s *DBScanner) Meta() (map[string][]string, error) {
 	return inv, nil
 }
 
-func (s *DBScanner) Indexes() (map[string][]string, error) {
-	inv := make(map[string][]string)
-	dirs, err := blockDirs(s.db.dir)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, bdir := range dirs {
-		stats, err := indexStats(bdir)
-		if err != nil {
-			inv[err.Error()] = append(inv[err.Error()], bdir)
-			continue
-		}
-
-		if stats.ErrSummary() != nil {
-			inv[err.Error()] = append(inv[err.Error()], bdir)
-			continue
-		}
-	}
-	return inv, nil
-}
-
 func (s *DBScanner) Overlapping() (Overlaps, error) {
 	dirs, err := blockDirs(s.db.dir)
 	if err != nil {
@@ -135,7 +113,32 @@ func (s *DBScanner) Overlapping() (Overlaps, error) {
 			})
 		}
 	}
+	sort.Slice(blocks, func(i, j int) bool {
+		return blocks[i].Meta().MinTime < blocks[j].Meta().MinTime
+	})
 	return OverlappingBlocks(blocks), nil
+}
+
+func (s *DBScanner) Index() (map[string][]string, error) {
+	inv := make(map[string][]string)
+	dirs, err := blockDirs(s.db.dir)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, dir := range dirs {
+		stats, err := indexStats(dir)
+		if err != nil {
+			inv[err.Error()] = append(inv[err.Error()], dir)
+			continue
+		}
+
+		if stats.ErrSummary() != nil {
+			inv[err.Error()] = append(inv[err.Error()], dir)
+			continue
+		}
+	}
+	return inv, nil
 }
 
 func indexStats(bdir string) (IndexStats, error) {

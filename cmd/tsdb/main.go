@@ -145,13 +145,13 @@ func scanOverlappingBlocks(scan tsdb.Scanner, hformat *bool) error {
 }
 
 func scanIndexes(scan tsdb.Scanner, hformat *bool) error {
-	corrupted, err := scan.Indexes()
+	corrupted, err := scan.Index()
 	if err != nil {
 		return err
 	}
 
 	for cause, bdirs := range corrupted {
-		fmt.Println("Blocks with corrupted indexes! \n", cause)
+		fmt.Println("Blocks with corrupted index! \n", cause)
 		printFiles(bdirs, hformat)
 
 		moveTo := filepath.Join(scan.Dir(), "blocksWithInvalidIndexes")

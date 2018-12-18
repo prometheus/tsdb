@@ -14,79 +14,99 @@
 package tsdb
 
 import (
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/go-kit/kit/log"
-	"github.com/go-kit/kit/log/level"
-	"github.com/prometheus/tsdb/fileutil"
 	"github.com/prometheus/tsdb/testutil"
 )
 
-func TestRepairIndex(t *testing.T) {
+func TestScanning(t *testing.T) {
+	// Create some blocks to work with.
+	tmp := testutil.NewTemporaryDirectory("scanTest", t)
+	defer tmp.Close()
+	block := createPopulatedBlock(t, tmp.Path(), 1, 1, 10)
+	createPopulatedBlock(t, tmp.Path(), 1, 10, 20)
 
-	defaultBlockMinTime := int64(1)
-	defaultBlockMaxTime := DefaultOptions.BlockRanges[0]
-	tests := []struct {
-		IndexStatsBad  IndexStats
-		IndexStatsGood IndexStats
-	}{
-		{
-			IndexStatsBad: IndexStats{
-				ChunksTotal:            5,
-				ChunksOverlapingTotal:  1,
-				ChunksPartialOutsiders: 1,
-				ChunksEntireOutsiders:  1,
-				MinTime:                defaultBlockMinTime,
-				MaxTime:                defaultBlockMaxTime,
-			},
-			IndexStatsGood: IndexStats{
-				ChunksTotal:            3,
-				ChunksOverlapingTotal:  0,
-				ChunksPartialOutsiders: 0,
-				ChunksEntireOutsiders:  0,
-				MinTime:                defaultBlockMinTime,
-				MaxTime:                defaultBlockMaxTime,
-			},
-		},
+	scanner, err := NewDBScanner(tmp.Path(), log.NewLogfmtLogger(os.Stderr))
+	testutil.Ok(t, err)
+
+	// Test that the scanner reports all current blocks as healthy.
+	corr, err := scanner.Index()
+	testutil.Ok(t, err)
+	testutil.Equals(t, 0, len(corr))
+
+	corr, err = scanner.Tombstones()
+	testutil.Ok(t, err)
+	testutil.Equals(t, 0, len(corr))
+
+	corr, err = scanner.Meta()
+	testutil.Ok(t, err)
+	testutil.Equals(t, 0, len(corr))
+
+	corrO, err := scanner.Overlapping()
+	testutil.Ok(t, err)
+	testutil.Equals(t, 0, len(corrO))
+
+	// Corrupt the block Meta file and check that the scanner reports it.
+	f, err := os.OpenFile(filepath.Join(block.Dir(), metaFilename), os.O_WRONLY, 0666)
+	testutil.Ok(t, err)
+	_, err = f.Write([]byte{0})
+	testutil.Ok(t, err)
+	f.Close()
+
+	corr, err = scanner.Meta()
+	testutil.Ok(t, err)
+	testutil.Equals(t, 1, len(corr))
+	for _, blocks := range corr {
+		for _, fname := range blocks {
+			testutil.Equals(t, block.Dir(), fname)
+		}
 	}
 
-	for _, test := range tests {
-		tmpdir, err := ioutil.TempDir("", "test_scanner")
-		testutil.Ok(t, err)
-		defer os.RemoveAll(tmpdir)
-		testutil.Ok(t, fileutil.CopyDirs(filepath.Join("testdata", "repair_index_chunks"), tmpdir))
-		dbCopy, err := Open(tmpdir, nil, nil, DefaultOptions)
-		testutil.Ok(t, err)
+	// Corrupt the block Index and check that the scanner reports it.
+	f, err = os.OpenFile(filepath.Join(block.Dir(), indexFilename), os.O_WRONLY, 0666)
+	testutil.Ok(t, err)
+	_, err = f.Write([]byte{0})
+	testutil.Ok(t, err)
+	f.Close()
 
-		blocks := dbCopy.Blocks()
-		dbCopy.Close() // Close the db so that the scanner can read/write/delete blocks under windows.
-
-		// Read the block index to make sure it includes invalid chunks.
-		testutil.Equals(t, true, len(dbCopy.blocks) > 0)
-		for _, block := range blocks {
-			stats, err := indexStats(block.Dir())
-			testutil.Ok(t, err)
-			stats.BlockDir = "" // Reset so that it matches with the expected stats.
-			testutil.Equals(t, test.IndexStatsBad, stats)
+	corr, err = scanner.Index()
+	testutil.Ok(t, err)
+	testutil.Equals(t, 1, len(corr))
+	for _, blocks := range corr {
+		for _, fname := range blocks {
+			testutil.Equals(t, block.Dir(), fname)
 		}
+	}
 
-		// Repair the index.
-		scanner, err := NewDBScanner(dbCopy.dir, level.NewFilter(log.NewLogfmtLogger(log.NewSyncWriter(os.Stderr)), level.AllowError()))
-		testutil.Ok(t, err)
-		unrepairable, _, err := scanner.Indexes()
-		testutil.Ok(t, err)
-		testutil.Assert(t, len(unrepairable) == 0, "expected 0 unrepairable indexes but got: %+v", unrepairable)
+	// Corrupt the block Tombstone and check that the scanner reports it.
+	f, err = os.OpenFile(filepath.Join(block.Dir(), tombstoneFilename), os.O_WRONLY, 0666)
+	testutil.Ok(t, err)
+	_, err = f.Write([]byte{0})
+	testutil.Ok(t, err)
+	f.Close()
 
-		// Check that all invalid chunks have been removed.
-		testutil.Ok(t, dbCopy.reload())
-		for _, block := range dbCopy.blocks {
-			stats, err := indexStats(block.Dir())
-			testutil.Ok(t, err)
-			stats.BlockDir = "" // Blockdir will be different so lets set it to "" and compare the rest of the values.
-			testutil.Equals(t, test.IndexStatsGood, stats)
+	corr, err = scanner.Tombstones()
+	testutil.Ok(t, err)
+	testutil.Equals(t, 1, len(corr))
+	for _, blocks := range corr {
+		for _, fname := range blocks {
+			testutil.Equals(t, block.Dir(), fname)
+		}
+	}
+
+	// Create an overlapping block and check that the scanner reports it.
+	overlapExp := createPopulatedBlock(t, tmp.Path(), 1, 15, 20)
+	corrO, err = scanner.Overlapping()
+	testutil.Ok(t, err)
+	testutil.Equals(t, 1, len(corrO))
+	for overlap, blocks := range corrO {
+		for _, overlapAct := range blocks[1:] { // Skip the original block that overlaps.
+			testutil.Equals(t, overlapExp.Dir(), overlapAct.Dir())
+			testutil.Equals(t, overlapExp.Meta().MinTime, overlap.Min)
+			testutil.Equals(t, overlapExp.Meta().MaxTime, overlap.Max)
 		}
 	}
 }
