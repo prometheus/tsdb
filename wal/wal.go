@@ -832,27 +832,12 @@ func (r *Reader) next() (err error) {
 		}
 		r.rec = append(r.rec, buf[:length]...)
 
-		switch r.curRecTyp {
-		case recFull:
-			if i != 0 {
-				return errors.New("unexpected full record")
-			}
+		fullRec, err := validateRecord(r.curRecTyp, i)
+		if err != nil {
+			return err
+		}
+		if fullRec {
 			return nil
-		case recFirst:
-			if i != 0 {
-				return errors.New("unexpected first record")
-			}
-		case recMiddle:
-			if i == 0 {
-				return errors.New("unexpected middle record")
-			}
-		case recLast:
-			if i == 0 {
-				return errors.New("unexpected last record")
-			}
-			return nil
-		default:
-			return errors.Errorf("unexpected record type %d", r.curRecTyp)
 		}
 		// Only increment i for non-zero records since we use it
 		// to determine valid content record sequences.
@@ -902,6 +887,223 @@ func (r *Reader) Offset() int64 {
 		return int64(b.off)
 	}
 	return r.total
+}
+
+// NewLiveReader returns a new live reader.
+func NewLiveReader(r io.Reader) *LiveReader {
+	return &LiveReader{rdr: r}
+}
+
+// Reader reads WAL records from an io.Reader. It buffers partial record data for
+// the next read.
+type LiveReader struct {
+	rdr        io.Reader
+	err        error
+	rec        []byte
+	hdr        [recordHeaderSize]byte
+	buf        [pageSize]byte
+	readIndex  int   // index in buf to start at for next read
+	writeIndex int   // index in buf to start at for next write
+	total      int64 // total bytes processed.
+	index      int   // used to track partial records
+}
+
+func (r *LiveReader) Err() error {
+	return r.err
+}
+
+func (r *LiveReader) TotalRead() int64 {
+	return r.total
+}
+
+func (r *LiveReader) fillBuffer() error {
+	n, err := r.rdr.Read(r.buf[r.writeIndex:len(r.buf)])
+	// We expect to get EOF, since we're reading the segment file as it's being written.
+	if err != nil && err != io.EOF {
+		return err
+	}
+	r.writeIndex += n
+	return nil
+}
+
+// Shift the buffer up to the read index.
+func (r *LiveReader) shiftBuffer() {
+	copied := copy(r.buf[0:], r.buf[r.readIndex:r.writeIndex])
+	r.readIndex = 0
+	r.writeIndex = copied
+}
+
+func (r *LiveReader) ReadIndex() int {
+	return r.readIndex
+}
+
+func (r *LiveReader) Header() [7]byte {
+	return r.hdr
+}
+
+// Next returns true if r.rec will contain a full record.
+func (r *LiveReader) Next() bool {
+	r.err = nil
+	// Only shift the buffer if we've proceesed all the records in the current page.
+	if r.readIndex == pageSize {
+		r.shiftBuffer()
+	}
+	// Read up to a page at a time from the buffer.
+	if r.writeIndex != pageSize {
+		if err := r.fillBuffer(); err != nil {
+			r.err = err
+			return false
+		}
+	}
+	return r.buildRecord()
+}
+
+// Record returns the current record. The internal buffer is cleared when Record is called,
+// the caller must store the value if they want to keep it.
+func (r *LiveReader) Record() []byte {
+	temp := make([]byte, len(r.rec))
+	copy(temp, r.rec)
+	r.rec = r.rec[:0]
+	return temp
+}
+
+// Rebuild a full record from potentially partial records. Returns false
+// if there was an error or if we weren't able to read a record for any reason.
+// Returns true if we read a full record. Any record data is appeneded to
+// LiveReader.rec
+func (r *LiveReader) buildRecord() bool {
+	for {
+		// Do we have data to read?
+		if r.writeIndex <= r.readIndex {
+			return false
+		}
+
+		// Attempt to read a record, partial or otherwise.
+		temp, n, err := readRecord(r.buf[r.readIndex:r.writeIndex], r.hdr[:], r.total)
+		r.readIndex += n
+		r.total += int64(n)
+		if err != nil {
+			r.err = err
+			return false
+		}
+		if temp == nil {
+			return false
+		}
+		fullRec, err := validateRecord(recType(r.hdr[0]), r.index)
+		if err != nil {
+			r.err = err
+			r.index = 0
+			return false
+		}
+		r.rec = append(r.rec, temp...)
+		if fullRec {
+			r.index = 0
+			return true
+		}
+		// Only increment i for non-zero records since we use it
+		// to determine valid content record sequences.
+		r.index++
+	}
+}
+
+// Returns true if we have a full record, false if it's partial. Returns an
+// error if the full or partial record is invalid based on i, true otherwise.
+func validateRecord(typ recType, i int) (bool, error) {
+	switch typ {
+	case recFull:
+		if i != 0 {
+			return false, errors.New("unexpected full record")
+		}
+		return true, nil
+	case recFirst:
+		if i != 0 {
+			return false, errors.New("unexpected first record, dropping buffer")
+		}
+		return false, nil
+	case recMiddle:
+		if i == 0 {
+			return false, errors.New("unexpected middle record, dropping buffer")
+		}
+		return false, nil
+	case recLast:
+		if i == 0 {
+			return false, errors.New("unexpected last record, dropping buffer")
+		}
+		return true, nil
+	default:
+		return false, errors.Errorf("unexpected record type %d", typ)
+	}
+}
+
+// Read a sub-record (see recType) from the buffer. It could potentially
+// be a full record (recFull) if the record fits within the bounds of a single page.
+// Returns a byte slice of the record data read, the number of bytes read, and an error
+// if there's a non-zero byte in a pager term record or the record checksum fails.
+func readRecord(buf []byte, header []byte, total int64) ([]byte, int, error) {
+	readIndex := 0
+	header[0] = buf[0]
+	readIndex++
+	total++
+
+	// This rest of this function is mostly from Reader.Next
+	typ := recType(header[0])
+	// Gobble up zero bytes.
+	if typ == recPageTerm {
+		// We are pedantic and check whether the zeros are actually up to a page boundary.
+		// It's not strictly necessary but may catch sketchy state early.
+		k := pageSize - (total % pageSize)
+		if k == pageSize {
+			return nil, 1, nil // Initial 0 byte was last page byte.
+		}
+
+		if k <= int64(len(buf)-readIndex) {
+			temp := make([]byte, k)
+			copied := copy(temp, buf[readIndex:int64(readIndex)+k])
+			readIndex += copied
+			for _, v := range temp {
+				if v != 0 {
+					return nil, readIndex, errors.New("unexpected non-zero byte in page term bytes")
+				}
+			}
+			return nil, readIndex, nil
+		}
+		// Not enough bytes to read the rest of the page term rec.
+		// This theoretically should never happen, since we're now always reading a page at a time
+		// and then processing sub-records from that page.
+		// Treat this the same as an EOF, it's an error we would expect to see.
+		return nil, readIndex, nil
+	}
+
+	// we probably don't need this anymore
+	if readIndex+recordHeaderSize-1 > len(buf) {
+		// Treat this the same as an EOF, it's an error we would expect to see.
+		return nil, 0, nil
+	}
+
+	copy(header[1:], buf[readIndex:readIndex+len(header[1:])])
+	readIndex += recordHeaderSize - 1
+	total += int64(recordHeaderSize - 1)
+	var (
+		length = binary.BigEndian.Uint16(header[1:])
+		crc    = binary.BigEndian.Uint32(header[3:])
+	)
+	readTo := int(length) + readIndex
+	if readTo > len(buf) {
+		if readTo > len(buf)+recordHeaderSize {
+			return nil, 0, errors.Errorf("invalid record, record size would be larger than max page size: %d", readTo-readIndex)
+		}
+		// Treat this the same as an EOF, it's an error we would expect to see.
+		return nil, 0, nil
+	}
+	recData := buf[readIndex:readTo]
+	readIndex += int(length)
+	total += int64(length)
+
+	// what should we do here? throw out the record?
+	if c := crc32.Checksum(recData, castagnoliTable); c != crc {
+		return recData, readIndex, errors.Errorf("unexpected checksum %x, expected %x", c, crc)
+	}
+	return recData, readIndex, nil
 }
 
 func min(i, j int) int {
