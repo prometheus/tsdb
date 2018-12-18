@@ -50,7 +50,7 @@ func main() {
 		listCmd              = cli.Command("ls", "list db blocks")
 		listCmdHumanReadable = listCmd.Flag("human-readable", "print human readable values").Short('h').Bool()
 		listPath             = listCmd.Arg("db path", "database path (default is "+filepath.Join("benchout", "storage")+")").Default(filepath.Join("benchout", "storage")).String()
-		scanCmd              = cli.Command("scan", "scans the db and repairs or deletes corrupted blocks")
+		scanCmd              = cli.Command("scan", "scans the db and promts to remove corrupted blocks")
 		scanCmdHumanReadable = scanCmd.Flag("human-readable", "print human readable values").Short('h').Bool()
 		scanPath             = scanCmd.Arg("dir", "database path (default is current dir ./)").Default("./").ExistingDir()
 		logger               = level.NewFilter(log.NewLogfmtLogger(log.NewSyncWriter(os.Stderr)), level.AllowError())
@@ -145,24 +145,17 @@ func scanOverlappingBlocks(scan tsdb.Scanner, hformat *bool) error {
 }
 
 func scanIndexes(scan tsdb.Scanner, hformat *bool) error {
-	unrepairable, repaired, err := scan.Indexes()
+	corrupted, err := scan.Indexes()
 	if err != nil {
 		return err
 	}
 
-	if len(repaired) > 0 {
-		fmt.Println("Corrupted indexes that were repaired.")
-		for _, stats := range repaired {
-			fmt.Printf("path:%v stats:%+v  \n", stats.BlockDir, stats)
-		}
-	}
-
-	for cause, bdirs := range unrepairable {
-		fmt.Println("Blocks with unrepairable indexes! \n", cause)
+	for cause, bdirs := range corrupted {
+		fmt.Println("Blocks with corrupted indexes! \n", cause)
 		printFiles(bdirs, hformat)
 
 		moveTo := filepath.Join(scan.Dir(), "blocksWithInvalidIndexes")
-		confirmed, err := confirm("Confirm moving unrepairable indexes to: " + moveTo)
+		confirmed, err := confirm("Confirm moving corrupted indexes to: " + moveTo)
 		if err != nil {
 			return err
 		}
@@ -193,7 +186,7 @@ func scanTombstones(scan tsdb.Scanner, hformat *bool) error {
 			fmt.Println("invalid tombstones:", cause)
 			printFiles(files, hformat)
 			moveTo := filepath.Join(scan.Dir(), "badTombstones")
-			confirmed, err := confirm("Confirm moving unrepairable tombstones to: " + moveTo)
+			confirmed, err := confirm("Confirm moving corrupted tombstones to: " + moveTo)
 			if err != nil {
 				return err
 			}
