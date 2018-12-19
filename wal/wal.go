@@ -995,6 +995,7 @@ func (r *LiveReader) buildRecord() bool {
 			r.index = 0
 			return false
 		}
+
 		r.rec = append(r.rec, temp...)
 		if fullRec {
 			r.index = 0
