@@ -311,6 +311,7 @@ func TestWAL_FuzzWriteReadLive(t *testing.T) {
 	const count = 25000
 	const segmentSize = int64(128 * 1024 * 1204)
 	var input [][]byte
+	lock := sync.RWMutex{}
 	var recs [][]byte
 	var index int
 
@@ -328,13 +329,18 @@ func TestWAL_FuzzWriteReadLive(t *testing.T) {
 		for r.Next() {
 			rec := r.Record()
 			testutil.Ok(t, r.Err())
-			if index >= len(input) {
+			lock.RLock()
+			l := len(input)
+			lock.RUnlock()
+			if index >= l {
 				t.Fatalf("read too many records")
 			}
+			lock.RLock()
 			if !bytes.Equal(input[index], rec) {
 				t.Fatalf("record %d (len %d) does not match (expected len %d)",
 					index, len(rec), len(input[index]))
 			}
+			lock.RUnlock()
 			index++
 		}
 		testutil.Ok(t, r.Err())
@@ -347,7 +353,6 @@ func TestWAL_FuzzWriteReadLive(t *testing.T) {
 
 	w, err := NewSize(nil, nil, dir, 128*pageSize)
 	testutil.Ok(t, err)
-	numWrite := 0
 	go func() {
 		for i := 0; i < count; i++ {
 			var sz int64
@@ -363,18 +368,18 @@ func TestWAL_FuzzWriteReadLive(t *testing.T) {
 			rec := make([]byte, rand.Int63n(sz))
 			_, err := rand.Read(rec)
 			testutil.Ok(t, err)
+			lock.Lock()
 			input = append(input, rec)
+			lock.Unlock()
 			recs = append(recs, rec)
 
 			// Randomly batch up records.
 			if rand.Intn(4) < 3 {
 				testutil.Ok(t, w.Log(recs...))
-				numWrite++
 				recs = recs[:0]
 			}
 		}
 		testutil.Ok(t, w.Log(recs...))
-		numWrite++
 	}()
 
 	m, _, err := w.Segments()
@@ -411,8 +416,10 @@ func TestWAL_FuzzWriteReadLive(t *testing.T) {
 			readSegment(r)
 			testutil.Ok(t, r.Err())
 		}
-
-		if index == len(input) {
+		lock.RLock()
+		l := len(input)
+		lock.RUnlock()
+		if index == l {
 			break
 		}
 	}
