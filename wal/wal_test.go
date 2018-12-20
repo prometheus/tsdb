@@ -298,7 +298,7 @@ func TestReader_Live(t *testing.T) {
 				t.Fatalf("unexpected error: %s", lr.Err())
 			}
 			if c.fail && lr.Err() == nil {
-				t.Fatalf("expected error but got none")
+				t.Fatalf("expected error but got none:\n\tinput: %+v", c.t[j])
 			}
 			if lr.Err() != nil {
 				break
@@ -307,7 +307,7 @@ func TestReader_Live(t *testing.T) {
 	}
 }
 
-func TestWAL_FuzzWriteReadLive(t *testing.T) {
+func TestWAL_FuzzWriteRead_Live(t *testing.T) {
 	const count = 25000
 	const segmentSize = int64(128 * 1024 * 1204)
 	var input [][]byte
