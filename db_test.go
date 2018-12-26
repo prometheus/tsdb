@@ -1383,7 +1383,7 @@ func TestDB_LabelNames(t *testing.T) {
 		err = db.compact()
 		testutil.Ok(t, err)
 		// All blocks have same label names, hence check them individually.
-		// No need to aggregrate and check.
+		// No need to aggregate and check.
 		for _, b := range db.Blocks() {
 			blockIndexr, err := b.Index()
 			testutil.Ok(t, err)
