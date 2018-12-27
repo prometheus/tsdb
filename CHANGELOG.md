@@ -1,5 +1,7 @@
 ## master / unreleased
  - [CHANGE] New `WALSegmentSize` option to override the `DefaultOptions.WALSegmentSize`. Added to allow using smaller wal files. For example using tmpfs on a RPI to minimise the SD card wear out from the constant WAL writes. As part of this change the `DefaultOptions.WALSegmentSize` constant was also exposed.
+ - [ENHANCEMENT] Added `MergeChunks` function in `chunkenc/xor.go` to merge 2 time-overlapping chunks.
+ - [ENHANCEMENT] Added `MergeOverlappingChunks` function in `chunks/chunks.go` to merge multiple time-overlapping Chunk Metas.
 
 ## 0.3.1
 - [BUGFIX] Fixed most windows test and some actual bugs for unclosed file readers.
