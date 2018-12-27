@@ -423,28 +423,21 @@ func (c *LeveledCompactor) Compact(dest string, dirs []string, open []*Block) (u
 	meta := compactBlockMetas(uid, metas...)
 	err = c.write(dest, meta, overlapping, blocks...)
 	if err == nil {
+		overlaps := "false"
 		if overlapping {
 			c.metrics.overlappingBlocks.Inc()
-			level.Info(c.logger).Log(
-				"msg", "compact blocks [overlapping]",
-				"count", len(blocks),
-				"mint", meta.MinTime,
-				"maxt", meta.MaxTime,
-				"ulid", meta.ULID,
-				"sources", fmt.Sprintf("%v", uids),
-				"duration", time.Since(start),
-			)
-		} else {
-			level.Info(c.logger).Log(
-				"msg", "compact blocks",
-				"count", len(blocks),
-				"mint", meta.MinTime,
-				"maxt", meta.MaxTime,
-				"ulid", meta.ULID,
-				"sources", fmt.Sprintf("%v", uids),
-				"duration", time.Since(start),
-			)
+			overlaps = "true"
 		}
+		level.Info(c.logger).Log(
+			"msg", "compact blocks",
+			"count", len(blocks),
+			"mint", meta.MinTime,
+			"maxt", meta.MaxTime,
+			"ulid", meta.ULID,
+			"sources", fmt.Sprintf("%v", uids),
+			"duration", time.Since(start),
+			"overlapping", overlaps,
+		)
 		return uid, nil
 	}
 
@@ -508,7 +501,6 @@ func (w *instrumentedChunkWriter) WriteChunks(chunks ...chunks.Meta) error {
 
 // write creates a new block that is the union of the provided blocks into dir.
 // It cleans up all files of the old blocks after completing successfully.
-// The returned bool 'overlapping' is true if the parent blocks were overlapping.
 func (c *LeveledCompactor) write(dest string, meta *BlockMeta, overlapping bool, blocks ...BlockReader) (err error) {
 	dir := filepath.Join(dest, meta.ULID.String())
 	tmp := dir + ".tmp"
