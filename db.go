@@ -44,6 +44,7 @@ import (
 // DefaultOptions used for the DB. They are sane for setups using
 // millisecond precision timestamps.
 var DefaultOptions = &Options{
+	WALSegmentSize:    wal.DefaultSegmentSize,
 	RetentionDuration: 15 * 24 * 60 * 60 * 1000, // 15 days in milliseconds
 	BlockRanges:       ExponentialBlockRanges(int64(2*time.Hour)/1e6, 3, 5),
 	NoLockfile:        false,
@@ -51,6 +52,9 @@ var DefaultOptions = &Options{
 
 // Options of the DB storage.
 type Options struct {
+	// Segments (wal files) max size
+	WALSegmentSize int
+
 	// Duration of persisted data to keep.
 	RetentionDuration uint64
 
@@ -259,7 +263,11 @@ func Open(dir string, l log.Logger, r prometheus.Registerer, opts *Options) (db 
 		return nil, errors.Wrap(err, "create leveled compactor")
 	}
 
-	wlog, err := wal.New(l, r, filepath.Join(dir, "wal"))
+	segmentSize := wal.DefaultSegmentSize
+	if opts.WALSegmentSize > 0 {
+		segmentSize = opts.WALSegmentSize
+	}
+	wlog, err := wal.NewSize(l, r, filepath.Join(dir, "wal"), segmentSize)
 	if err != nil {
 		return nil, err
 	}

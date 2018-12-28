@@ -695,6 +695,32 @@ func TestWALFlushedOnDBClose(t *testing.T) {
 	testutil.Equals(t, []string{"labelvalue"}, values)
 }
 
+func TestWALSegmentSizeOption(t *testing.T) {
+	options := *DefaultOptions
+	options.WALSegmentSize = 2 * 32 * 1024
+	db, close := openTestDB(t, &options)
+	defer close()
+	app := db.Appender()
+	for i := int64(0); i < 155; i++ {
+		_, err := app.Add(labels.Labels{labels.Label{Name: "wal", Value: "size"}}, i, rand.Float64())
+		testutil.Ok(t, err)
+		testutil.Ok(t, app.Commit())
+	}
+
+	dbDir := db.Dir()
+	db.Close()
+	files, err := ioutil.ReadDir(filepath.Join(dbDir, "wal"))
+	testutil.Assert(t, len(files) > 1, "current WALSegmentSize should result in more than a single WAL file.")
+	testutil.Ok(t, err)
+	for i, f := range files {
+		if len(files)-1 != i {
+			testutil.Equals(t, int64(options.WALSegmentSize), f.Size(), "WAL file size doesn't match WALSegmentSize option, filename: %v", f.Name())
+			continue
+		}
+		testutil.Assert(t, int64(options.WALSegmentSize) > f.Size(), "last WAL file size is not smaller than the WALSegmentSize option, filename: %v", f.Name())
+	}
+}
+
 func TestTombstoneClean(t *testing.T) {
 	numSamples := int64(10)
 
@@ -1493,7 +1519,7 @@ func TestBlockRanges(t *testing.T) {
 
 	testutil.Ok(t, err)
 	testutil.Ok(t, app.Commit())
-	for x := 1; x < 10; x++ {
+	for x := 0; x < 100; x++ {
 		if len(db.Blocks()) == 2 {
 			break
 		}
@@ -1533,7 +1559,7 @@ func TestBlockRanges(t *testing.T) {
 	_, err = app.Add(lbl, thirdBlockMaxt+rangeToTriggercompaction, rand.Float64()) // Trigger a compaction
 	testutil.Ok(t, err)
 	testutil.Ok(t, app.Commit())
-	for x := 1; x < 10; x++ {
+	for x := 0; x < 100; x++ {
 		if len(db.Blocks()) == 4 {
 			break
 		}
