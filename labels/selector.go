@@ -98,8 +98,3 @@ func (m *notMatcher) Matches(v string) bool { return !m.Matcher.Matches(v) }
 func Not(m Matcher) Matcher {
 	return &notMatcher{m}
 }
-
-// PrefixMatcher implements Matcher for labels which values matches prefix.
-type PrefixMatcher struct {
-	name, prefix string
-}
