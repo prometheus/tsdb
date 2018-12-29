@@ -30,7 +30,6 @@ import (
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	prom_testutil "github.com/prometheus/client_golang/prometheus/testutil"
-	dto "github.com/prometheus/client_model/go"
 	"github.com/prometheus/tsdb/chunks"
 	"github.com/prometheus/tsdb/index"
 	"github.com/prometheus/tsdb/labels"
@@ -933,17 +932,14 @@ func TestTimeRetention(t *testing.T) {
 
 	testutil.Ok(t, db.reload())                       // Reload the db to register the new blocks.
 	testutil.Equals(t, len(blocks), len(db.Blocks())) // Ensure all blocks are registered.
-	metrics := &dto.Metric{}                          // Also check the internal metrics.
 
 	db.opts.RetentionDuration = uint64(blocks[2].MaxTime - blocks[1].MinTime)
 	testutil.Ok(t, db.reload())
-	testutil.Ok(t, db.metrics.timeRetentionCount.Write(metrics))
 
 	expBlocks := blocks[1:]
 	actBlocks := db.Blocks()
-	actRetentCount := int(metrics.Counter.GetValue())
 
-	testutil.Equals(t, 1, actRetentCount, "metric retention count mismatch")
+	testutil.Equals(t, 1, int(prom_testutil.ToFloat64(db.metrics.timeRetentionCount)), "metric retention count mismatch")
 	testutil.Equals(t, len(expBlocks), len(actBlocks))
 	testutil.Equals(t, expBlocks[0].MaxTime, actBlocks[0].meta.MaxTime)
 	testutil.Equals(t, expBlocks[len(expBlocks)-1].MaxTime, actBlocks[len(actBlocks)-1].meta.MaxTime)
