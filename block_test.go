@@ -19,11 +19,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/go-kit/kit/log"
-	"github.com/oklog/ulid"
-	"github.com/prometheus/tsdb/index"
 	"github.com/prometheus/tsdb/labels"
 	"github.com/prometheus/tsdb/testutil"
 )
@@ -48,7 +45,7 @@ func TestSetCompactionFailed(t *testing.T) {
 	testutil.Ok(t, err)
 	defer os.RemoveAll(tmpdir)
 
-	blockDir := createEmptyBlock(t, tmpdir, 0, 0)
+	blockDir := createBlock(t, tmpdir, 0, 0, 0)
 	b, err := OpenBlock(blockDir, nil)
 	testutil.Ok(t, err)
 	testutil.Equals(t, false, b.meta.Compaction.Failed)
@@ -62,54 +59,26 @@ func TestSetCompactionFailed(t *testing.T) {
 	testutil.Ok(t, b.Close())
 }
 
-// createEmptyBlock creates an empty block with the given mint,maxt time range and returns its dir.
-func createEmptyBlock(t *testing.T, dir string, mint, maxt int64) string {
-	uid := ulid.MustNew(ulid.Now(), rand.New(rand.NewSource(time.Now().UnixNano())))
-	blockDir := filepath.Join(dir, uid.String())
-	testutil.Ok(t, os.MkdirAll(blockDir, 0777))
-
-	meta := &BlockMeta{
-		Version: 2,
-		ULID:    uid,
-		MinTime: mint,
-		MaxTime: maxt,
-	}
-	testutil.Ok(t, writeMetaFile(blockDir, meta))
-
-	ir, err := index.NewWriter(filepath.Join(blockDir, indexFilename))
-	testutil.Ok(t, err)
-	testutil.Ok(t, ir.Close())
-
-	testutil.Ok(t, os.MkdirAll(chunkDir(blockDir), 0777))
-
-	testutil.Ok(t, writeTombstoneFile(blockDir, newMemTombstones()))
-
-	return blockDir
-}
-
-// createPopulatedBlock creates a block with nSeries series, filled with
+// createBlock creates a block with nSeries series, filled with
 // samples of the given mint,maxt time range and returns its dir.
-func createPopulatedBlock(tb testing.TB, dir string, nSeries int, mint, maxt int64) string {
+func createBlock(tb testing.TB, dir string, nSeries int, mint, maxt int64) string {
 	head, err := NewHead(nil, nil, nil, 2*60*60*1000)
 	testutil.Ok(tb, err)
 	defer head.Close()
 
 	lbls, err := labels.ReadLabels(filepath.Join("testdata", "20kseries.json"), nSeries)
 	testutil.Ok(tb, err)
-	refs := make([]uint64, nSeries)
+	var ref uint64
 
 	for ts := mint; ts <= maxt; ts++ {
 		app := head.Appender()
-		for i, lbl := range lbls {
-			if refs[i] != 0 {
-				err := app.AddFast(refs[i], ts, rand.Float64())
-				if err == nil {
-					continue
-				}
+		for _, lbl := range lbls {
+			err := app.AddFast(ref, ts, rand.Float64())
+			if err == nil {
+				continue
 			}
-			ref, err := app.Add(lbl, int64(ts), rand.Float64())
+			ref, err = app.Add(lbl, int64(ts), rand.Float64())
 			testutil.Ok(tb, err)
-			refs[i] = ref
 		}
 		err := app.Commit()
 		testutil.Ok(tb, err)
