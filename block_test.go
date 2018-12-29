@@ -19,8 +19,10 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/go-kit/kit/log"
+	"github.com/oklog/ulid"
 	"github.com/prometheus/tsdb/index"
 	"github.com/prometheus/tsdb/labels"
 	"github.com/prometheus/tsdb/testutil"
@@ -46,35 +48,43 @@ func TestSetCompactionFailed(t *testing.T) {
 	testutil.Ok(t, err)
 	defer os.RemoveAll(tmpdir)
 
-	b := createEmptyBlock(t, tmpdir, &BlockMeta{Version: 2})
-
+	blockDir := createEmptyBlock(t, tmpdir, 0, 0)
+	b, err := OpenBlock(blockDir, nil)
+	testutil.Ok(t, err)
 	testutil.Equals(t, false, b.meta.Compaction.Failed)
 	testutil.Ok(t, b.setCompactionFailed())
 	testutil.Equals(t, true, b.meta.Compaction.Failed)
 	testutil.Ok(t, b.Close())
 
-	b, err = OpenBlock(tmpdir, nil)
+	b, err = OpenBlock(blockDir, nil)
 	testutil.Ok(t, err)
 	testutil.Equals(t, true, b.meta.Compaction.Failed)
+	testutil.Ok(t, b.Close())
 }
 
-// createEmpty block creates a block with the given meta but without any data.
-func createEmptyBlock(t *testing.T, dir string, meta *BlockMeta) *Block {
-	testutil.Ok(t, os.MkdirAll(dir, 0777))
+// createEmptyBlock creates an empty block with the given mint,maxt time range and returns its dir.
+func createEmptyBlock(t *testing.T, dir string, mint, maxt int64) string {
+	uid := ulid.MustNew(ulid.Now(), rand.New(rand.NewSource(time.Now().UnixNano())))
+	blockDir := filepath.Join(dir, uid.String())
+	testutil.Ok(t, os.MkdirAll(blockDir, 0777))
 
-	testutil.Ok(t, writeMetaFile(dir, meta))
+	meta := &BlockMeta{
+		Version: 2,
+		ULID:    uid,
+		MinTime: mint,
+		MaxTime: maxt,
+	}
+	testutil.Ok(t, writeMetaFile(blockDir, meta))
 
-	ir, err := index.NewWriter(filepath.Join(dir, indexFilename))
+	ir, err := index.NewWriter(filepath.Join(blockDir, indexFilename))
 	testutil.Ok(t, err)
 	testutil.Ok(t, ir.Close())
 
-	testutil.Ok(t, os.MkdirAll(chunkDir(dir), 0777))
+	testutil.Ok(t, os.MkdirAll(chunkDir(blockDir), 0777))
 
-	testutil.Ok(t, writeTombstoneFile(dir, newMemTombstones()))
+	testutil.Ok(t, writeTombstoneFile(blockDir, newMemTombstones()))
 
-	b, err := OpenBlock(dir, nil)
-	testutil.Ok(t, err)
-	return b
+	return blockDir
 }
 
 // createPopulatedBlock creates a block with nSeries series, filled with
