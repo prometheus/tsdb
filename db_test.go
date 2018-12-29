@@ -837,7 +837,7 @@ func TestTombstoneCleanFail(t *testing.T) {
 	totalBlocks := 2
 	for i := 0; i < totalBlocks; i++ {
 		blockDir := createBlock(t, db.Dir(), 0, 0, 0)
-		block, err := OpenBlock(blockDir, nil)
+		block, err := OpenBlock(nil, blockDir, nil)
 		testutil.Ok(t, err)
 		// Add some some fake tombstones to trigger the compaction.
 		tomb := newMemTombstones()
@@ -880,7 +880,7 @@ func (c *mockCompactorFailing) Write(dest string, b BlockReader, mint, maxt int6
 		return ulid.ULID{}, fmt.Errorf("the compactor already did the maximum allowed blocks so it is time to fail")
 	}
 
-	block, err := OpenBlock(createBlock(c.t, dest, 0, 0, 0), nil)
+	block, err := OpenBlock(nil, createBlock(c.t, dest, 0, 0, 0), nil)
 	testutil.Ok(c.t, err)
 	testutil.Ok(c.t, block.Close()) // Close block as we won't be using anywhere.
 	c.blocks = append(c.blocks, block)
@@ -918,7 +918,7 @@ func TestTimeRetention(t *testing.T) {
 	}
 
 	for _, m := range blocks {
-		createPopulatedBlock(t, db.Dir(), 10, m.MinTime, m.MaxTime)
+		createBlock(t, db.Dir(), 10, m.MinTime, m.MaxTime)
 	}
 
 	testutil.Ok(t, db.reload())                       // Reload the db to register the new blocks.
@@ -952,7 +952,7 @@ func TestSizeRetention(t *testing.T) {
 	}
 
 	for _, m := range blocks {
-		createPopulatedBlock(t, db.Dir(), 100, m.MinTime, m.MaxTime)
+		createBlock(t, db.Dir(), 100, m.MinTime, m.MaxTime)
 	}
 
 	// Test that registered size matches the actual disk size.
