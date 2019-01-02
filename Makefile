@@ -18,11 +18,6 @@ TSDB_BENCHMARK_NUM_METRICS ?= 1000
 TSDB_BENCHMARK_DATASET ?= "$(TSDB_PROJECT_DIR)/testdata/20kseries.json"
 TSDB_BENCHMARK_OUTPUT_DIR ?= "$(TSDB_CLI_DIR)/benchout"
 
-# SA6002 is safe to ignore and actually fixing these has some performance penalty.
-STATICCHECK_IGNORE = \
-	github.com/prometheus/tsdb/head.go:SA6002 \
-	github.com/prometheus/tsdb/wal.go:SA6002 \
-	
 include Makefile.common
 
 .PHONY: deps
