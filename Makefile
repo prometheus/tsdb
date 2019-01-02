@@ -25,8 +25,13 @@ STATICCHECK_IGNORE = \
 	
 include Makefile.common
 
+.PHONY: deps
+deps:
+	@echo ">> getting dependencies"
+	GO111MODULE=$(GO111MODULE) $(GO) get $(GOOPTS) -t ./...
+
 build:
-	@$(GO) build -o $(TSDB_BIN) $(TSDB_CLI_DIR)
+	GO111MODULE=$(GO111MODULE) $(GO) build -o $(TSDB_BIN) $(TSDB_CLI_DIR)
 
 bench: build
 	@echo ">> running benchmark, writing result to $(TSDB_BENCHMARK_OUTPUT_DIR)"
