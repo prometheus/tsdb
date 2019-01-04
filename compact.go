@@ -369,12 +369,10 @@ func compactBlockMetas(uid ulid.ULID, blocks ...*BlockMeta) *BlockMeta {
 // provided directories.
 func (c *LeveledCompactor) Compact(dest string, dirs []string, open []*Block) (uid ulid.ULID, err error) {
 	var (
-		blocks      []BlockReader
-		bs          []*Block
-		metas       []*BlockMeta
-		uids        []string
-		overlapping = false
-		lastMaxT    = int64(math.MinInt64)
+		blocks []BlockReader
+		bs     []*Block
+		metas  []*BlockMeta
+		uids   []string
 	)
 	start := time.Now()
 
@@ -404,13 +402,6 @@ func (c *LeveledCompactor) Compact(dest string, dirs []string, open []*Block) (u
 			defer b.Close()
 		}
 
-		if meta.MinTime < lastMaxT {
-			overlapping = true
-		}
-		if meta.MaxTime > lastMaxT {
-			lastMaxT = meta.MaxTime
-		}
-
 		metas = append(metas, meta)
 		blocks = append(blocks, b)
 		bs = append(bs, b)
@@ -421,7 +412,7 @@ func (c *LeveledCompactor) Compact(dest string, dirs []string, open []*Block) (u
 	uid = ulid.MustNew(ulid.Now(), entropy)
 
 	meta := compactBlockMetas(uid, metas...)
-	err = c.write(dest, meta, overlapping, blocks...)
+	overlapping, err := c.write(dest, meta, blocks...)
 	if err == nil {
 		overlaps := "false"
 		if overlapping {
@@ -471,7 +462,7 @@ func (c *LeveledCompactor) Write(dest string, b BlockReader, mint, maxt int64, p
 		}
 	}
 
-	err := c.write(dest, meta, false, b)
+	_, err := c.write(dest, meta, b)
 	if err != nil {
 		return uid, err
 	}
@@ -501,7 +492,8 @@ func (w *instrumentedChunkWriter) WriteChunks(chunks ...chunks.Meta) error {
 
 // write creates a new block that is the union of the provided blocks into dir.
 // It cleans up all files of the old blocks after completing successfully.
-func (c *LeveledCompactor) write(dest string, meta *BlockMeta, overlapping bool, blocks ...BlockReader) (err error) {
+// The returned bool is true if the parent blocks were overlapping.
+func (c *LeveledCompactor) write(dest string, meta *BlockMeta, blocks ...BlockReader) (overlapping bool, err error) {
 	dir := filepath.Join(dest, meta.ULID.String())
 	tmp := dir + ".tmp"
 
@@ -518,11 +510,11 @@ func (c *LeveledCompactor) write(dest string, meta *BlockMeta, overlapping bool,
 	}(time.Now())
 
 	if err = os.RemoveAll(tmp); err != nil {
-		return err
+		return overlapping, err
 	}
 
 	if err = os.MkdirAll(tmp, 0777); err != nil {
-		return err
+		return overlapping, err
 	}
 
 	// Populate chunk and index files into temporary directory with
@@ -531,7 +523,7 @@ func (c *LeveledCompactor) write(dest string, meta *BlockMeta, overlapping bool,
 
 	chunkw, err = chunks.NewWriter(chunkDir(tmp))
 	if err != nil {
-		return errors.Wrap(err, "open chunk writer")
+		return overlapping, errors.Wrap(err, "open chunk writer")
 	}
 	defer chunkw.Close()
 	// Record written chunk sizes on level 1 compactions.
@@ -546,16 +538,16 @@ func (c *LeveledCompactor) write(dest string, meta *BlockMeta, overlapping bool,
 
 	indexw, err := index.NewWriter(filepath.Join(tmp, indexFilename))
 	if err != nil {
-		return errors.Wrap(err, "open index writer")
+		return overlapping, errors.Wrap(err, "open index writer")
 	}
 	defer indexw.Close()
 
-	if err = c.populateBlock(blocks, overlapping, meta, indexw, chunkw); err != nil {
-		return errors.Wrap(err, "write compaction")
+	if overlapping, err = c.populateBlock(blocks, meta, indexw, chunkw); err != nil {
+		return overlapping, errors.Wrap(err, "write compaction")
 	}
 
 	if err = writeMetaFile(tmp, meta); err != nil {
-		return errors.Wrap(err, "write merged meta")
+		return overlapping, errors.Wrap(err, "write merged meta")
 	}
 
 	// We are explicitly closing them here to check for error even
@@ -563,20 +555,20 @@ func (c *LeveledCompactor) write(dest string, meta *BlockMeta, overlapping bool,
 	// you cannot delete these unless they are closed and the defer is to
 	// make sure they are closed if the function exits due to an error above.
 	if err = chunkw.Close(); err != nil {
-		return errors.Wrap(err, "close chunk writer")
+		return overlapping, errors.Wrap(err, "close chunk writer")
 	}
 	if err = indexw.Close(); err != nil {
-		return errors.Wrap(err, "close index writer")
+		return overlapping, errors.Wrap(err, "close index writer")
 	}
 
 	// Create an empty tombstones file.
 	if err := writeTombstoneFile(tmp, newMemTombstones()); err != nil {
-		return errors.Wrap(err, "write new tombstones file")
+		return overlapping, errors.Wrap(err, "write new tombstones file")
 	}
 
 	df, err := fileutil.OpenDir(tmp)
 	if err != nil {
-		return errors.Wrap(err, "open temporary block dir")
+		return overlapping, errors.Wrap(err, "open temporary block dir")
 	}
 	defer func() {
 		if df != nil {
@@ -585,29 +577,29 @@ func (c *LeveledCompactor) write(dest string, meta *BlockMeta, overlapping bool,
 	}()
 
 	if err := fileutil.Fsync(df); err != nil {
-		return errors.Wrap(err, "sync temporary dir file")
+		return overlapping, errors.Wrap(err, "sync temporary dir file")
 	}
 
 	// Close temp dir before rename block dir (for windows platform).
 	if err = df.Close(); err != nil {
-		return errors.Wrap(err, "close temporary dir")
+		return overlapping, errors.Wrap(err, "close temporary dir")
 	}
 	df = nil
 
 	// Block successfully written, make visible and remove old ones.
 	if err := renameFile(tmp, dir); err != nil {
-		return errors.Wrap(err, "rename block dir")
+		return overlapping, errors.Wrap(err, "rename block dir")
 	}
 
-	return nil
+	return overlapping, nil
 }
 
 // populateBlock fills the index and chunk writers with new data gathered as the union
 // of the provided blocks. It returns meta information for the new block.
 // The returned bool is true if the parent blocks were overlapping.
-func (c *LeveledCompactor) populateBlock(blocks []BlockReader, overlapping bool, meta *BlockMeta, indexw IndexWriter, chunkw ChunkWriter) error {
+func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, indexw IndexWriter, chunkw ChunkWriter) (bool, error) {
 	if len(blocks) == 0 {
-		return errors.New("cannot populate block from no readers")
+		return false, errors.New("cannot populate block from no readers")
 	}
 
 	var (
@@ -621,25 +613,25 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, overlapping bool,
 	for i, b := range blocks {
 		indexr, err := b.Index()
 		if err != nil {
-			return errors.Wrapf(err, "open index reader for block %s", b)
+			return false, errors.Wrapf(err, "open index reader for block %s", b)
 		}
 		closers = append(closers, indexr)
 
 		chunkr, err := b.Chunks()
 		if err != nil {
-			return errors.Wrapf(err, "open chunk reader for block %s", b)
+			return false, errors.Wrapf(err, "open chunk reader for block %s", b)
 		}
 		closers = append(closers, chunkr)
 
 		tombsr, err := b.Tombstones()
 		if err != nil {
-			return errors.Wrapf(err, "open tombstone reader for block %s", b)
+			return false, errors.Wrapf(err, "open tombstone reader for block %s", b)
 		}
 		closers = append(closers, tombsr)
 
 		symbols, err := indexr.Symbols()
 		if err != nil {
-			return errors.Wrap(err, "read symbols")
+			return false, errors.Wrap(err, "read symbols")
 		}
 		for s := range symbols {
 			allSymbols[s] = struct{}{}
@@ -647,7 +639,7 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, overlapping bool,
 
 		all, err := indexr.Postings(index.AllPostingsKey())
 		if err != nil {
-			return err
+			return false, err
 		}
 		all = indexr.SortedPostings(all)
 
@@ -659,7 +651,7 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, overlapping bool,
 		}
 		set, err = newCompactionMerger(set, s)
 		if err != nil {
-			return err
+			return false, err
 		}
 	}
 
@@ -671,27 +663,31 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, overlapping bool,
 	)
 
 	if err = indexw.AddSymbols(allSymbols); err != nil {
-		return errors.Wrap(err, "add symbols")
+		return false, errors.Wrap(err, "add symbols")
 	}
 
+	overlapping := false
 	for set.Next() {
 		lset, chks, dranges := set.At() // The chunks here are not fully deleted.
-		if overlapping {
-			// If blocks are overlapping, it is possible to have unsorted chunks.
-			sort.Slice(chks, func(i, j int) bool {
-				return chks[i].MinTime < chks[j].MinTime
-			})
-		}
 
 		// Skip the series with all deleted chunks.
 		if len(chks) == 0 {
 			continue
 		}
 
+		chunksOverlap := false
+		maxMaxt := int64(math.MinInt64)
 		for i, chk := range chks {
 			if chk.MinTime < meta.MinTime || chk.MaxTime > meta.MaxTime {
-				return errors.Errorf("found chunk with minTime: %d maxTime: %d outside of compacted minTime: %d maxTime: %d",
+				return false, errors.Errorf("found chunk with minTime: %d maxTime: %d outside of compacted minTime: %d maxTime: %d",
 					chk.MinTime, chk.MaxTime, meta.MinTime, meta.MaxTime)
+			}
+
+			if chk.MinTime <= maxMaxt {
+				chunksOverlap = true
+			}
+			if chk.MaxTime > maxMaxt {
+				maxMaxt = chk.MaxTime
 			}
 
 			if len(dranges) > 0 {
@@ -702,7 +698,7 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, overlapping bool,
 				newChunk := chunkenc.NewXORChunk()
 				app, err := newChunk.Appender()
 				if err != nil {
-					return err
+					return overlapping, err
 				}
 
 				it := &deletedIterator{it: chk.Chunk.Iterator(), intervals: dranges}
@@ -715,19 +711,27 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, overlapping bool,
 			}
 		}
 
+		overlapping = overlapping || chunksOverlap
+		if chunksOverlap {
+			// If chunks are overlapping, it is possible to have unsorted chunks.
+			sort.Slice(chks, func(i, j int) bool {
+				return chks[i].MinTime < chks[j].MinTime
+			})
+		}
+
 		mergedChks := chks
-		if overlapping {
+		if chunksOverlap {
 			mergedChks, err = chunks.MergeOverlappingChunks(chks)
 		}
 		if err != nil {
-			return errors.Wrap(err, "merge overlapping chunks")
+			return overlapping, errors.Wrap(err, "merge overlapping chunks")
 		}
 		if err := chunkw.WriteChunks(mergedChks...); err != nil {
-			return errors.Wrap(err, "write chunks")
+			return overlapping, errors.Wrap(err, "write chunks")
 		}
 
 		if err := indexw.AddSeries(i, lset, mergedChks...); err != nil {
-			return errors.Wrap(err, "add series")
+			return overlapping, errors.Wrap(err, "add series")
 		}
 
 		meta.Stats.NumChunks += uint64(len(mergedChks))
@@ -738,7 +742,7 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, overlapping bool,
 
 		for _, chk := range mergedChks {
 			if err := c.chunkPool.Put(chk.Chunk); err != nil {
-				return errors.Wrap(err, "put chunk")
+				return overlapping, errors.Wrap(err, "put chunk")
 			}
 		}
 
@@ -755,7 +759,7 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, overlapping bool,
 		i++
 	}
 	if set.Err() != nil {
-		return errors.Wrap(set.Err(), "iterate compaction set")
+		return overlapping, errors.Wrap(set.Err(), "iterate compaction set")
 	}
 
 	s := make([]string, 0, 256)
@@ -766,16 +770,16 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, overlapping bool,
 			s = append(s, x)
 		}
 		if err := indexw.WriteLabelIndex([]string{n}, s); err != nil {
-			return errors.Wrap(err, "write label index")
+			return overlapping, errors.Wrap(err, "write label index")
 		}
 	}
 
 	for _, l := range postings.SortedKeys() {
 		if err := indexw.WritePostings(l.Name, l.Value, postings.Get(l.Name, l.Value)); err != nil {
-			return errors.Wrap(err, "write postings")
+			return overlapping, errors.Wrap(err, "write postings")
 		}
 	}
-	return nil
+	return overlapping, nil
 }
 
 type compactionSeriesSet struct {

@@ -420,7 +420,7 @@ func TestCompactionFailWillCleanUpTempDir(t *testing.T) {
 	testutil.Ok(t, err)
 	defer os.RemoveAll(tmpdir)
 
-	err = compactor.write(tmpdir, &BlockMeta{}, false, erringBReader{})
+	_, err = compactor.write(tmpdir, &BlockMeta{}, erringBReader{})
 	testutil.NotOk(t, err)
 	_, err = os.Stat(filepath.Join(tmpdir, BlockMeta{}.ULID.String()) + ".tmp")
 	testutil.Assert(t, os.IsNotExist(err), "directory is not cleaned up")
@@ -695,7 +695,7 @@ func TestCompaction_populateBlock(t *testing.T) {
 			}
 
 			iw := &mockIndexWriter{}
-			err = c.populateBlock(blocks, false, meta, iw, nopChunkWriter{})
+			_, err = c.populateBlock(blocks, meta, iw, nopChunkWriter{})
 			if tc.expErr != nil {
 				testutil.NotOk(t, err)
 				testutil.Equals(t, tc.expErr.Error(), err.Error())

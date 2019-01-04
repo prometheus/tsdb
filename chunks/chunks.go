@@ -200,6 +200,7 @@ func (w *Writer) write(b []byte) error {
 
 // MergeOverlappingChunks removes the samples whose timestamp is overlapping.
 // The first appearing sample is retained in case there is overlapping.
+// This assumes that `chks []Meta` is sorted w.r.t. MinTime.
 func MergeOverlappingChunks(chks []Meta) ([]Meta, error) {
 	if len(chks) < 2 {
 		return chks, nil
