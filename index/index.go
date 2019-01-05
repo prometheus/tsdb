@@ -64,9 +64,9 @@ type symbolFrequencyPair struct {
 
 type symbolFrequencylist []symbolFrequencyPair
 
-func (s symbolFrequencylist) Len() int           { return len(s) }
-func (s symbolFrequencylist) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
-func (s symbolFrequencylist) Less(i, j int) bool { return s[i].frequency < s[j].frequency }
+func (s symbolFrequencylist) Len() int              { return len(s) }
+func (s symbolFrequencylist) Swap(i, j int)         { s[i], s[j] = s[j], s[i] }
+func (s symbolFrequencylist) Greater(i, j int) bool { return s[i].frequency > s[j].frequency }
 
 type indexWriterStage uint8
 
@@ -355,7 +355,14 @@ func (w *Writer) AddSymbols(sym map[string]int) error {
 	for k, v := range sym {
 		symbols = append(symbols, symbolFrequencyPair{k, v})
 	}
-	sort.Sort(sort.Reverse(symbols))
+	sort.Slice(symbols, func(i, j int) bool {
+		// We get the symbols back as a map so we need to be sure
+		// to sort by symbol if the frequencies are the same.
+		if symbols[i].frequency == symbols[j].frequency {
+			return symbols[i].symbol > symbols[j].symbol
+		}
+		return symbols.Greater(i, j)
+	})
 
 	const headerSize = 4
 
@@ -874,7 +881,7 @@ func (r *Reader) Symbols() (map[string]int, error) {
 		res[s] = 0
 	}
 	for _, s := range r.symbolSlice {
-		res[s] = struct{}{}
+		res[s] = 0
 	}
 	return res, nil
 }

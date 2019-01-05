@@ -232,6 +232,45 @@ func TestIndexRW_Postings(t *testing.T) {
 	testutil.Ok(t, ir.Close())
 }
 
+func TestIndexRW_SymbolsOrder(t *testing.T) {
+	dir, err := ioutil.TempDir("", "test_index_order")
+	testutil.Ok(t, err)
+	defer os.RemoveAll(dir)
+
+	fn := filepath.Join(dir, "index")
+
+	iw, err := NewWriter(fn)
+	testutil.Ok(t, err)
+
+	err = iw.AddSymbols(map[string]int{
+		"a": 1,
+		"b": 2,
+		"c": 1,
+		"2": 4,
+		"3": 5,
+		"4": 3,
+	})
+
+	testutil.Ok(t, err)
+	testutil.Ok(t, iw.Close())
+
+	exp := []string{"3", "2", "4", "b", "c", "a"}
+
+	ir, err := NewFileReader(fn)
+	testutil.Ok(t, err)
+
+	err = ir.readSymbols(int(ir.toc.symbols))
+	testutil.Ok(t, err)
+
+	testutil.Equals(t, len(ir.symbolSlice), len(exp))
+
+	for i := range ir.symbolSlice {
+		testutil.Equals(t, ir.symbolSlice[i], exp[i])
+	}
+
+	testutil.Ok(t, ir.Close())
+}
+
 func TestPersistence_index_e2e(t *testing.T) {
 	dir, err := ioutil.TempDir("", "test_persistence_e2e")
 	testutil.Ok(t, err)
