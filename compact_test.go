@@ -530,7 +530,7 @@ func TestCompaction_populateBlock(t *testing.T) {
 			},
 		},
 		{
-			title: "Populate from two blocks showing that chunks are sorted.",
+			title: "Populate from two blocks showing that order is maintained.",
 			inputSeriesSamples: [][]seriesSamples{
 				{
 					{
@@ -772,7 +772,8 @@ func BenchmarkCompaction(b *testing.B) {
 			blockDirs := make([]string, 0, len(c.ranges))
 			var blocks []*Block
 			for _, r := range c.ranges {
-				block := createPopulatedBlock(b, dir, nSeries, r[0], r[1])
+				block, err := OpenBlock(createBlock(b, dir, nSeries, r[0], r[1]), nil)
+				testutil.Ok(b, err)
 				blocks = append(blocks, block)
 				defer block.Close()
 				blockDirs = append(blockDirs, block.Dir())
