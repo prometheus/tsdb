@@ -286,21 +286,28 @@ func TestReader_Live(t *testing.T) {
 		for {
 			for ; lr.Next(); j++ {
 				rec := lr.Record()
-				testutil.Equals(t, c.exp[j], rec, "Bytes within record did not match expected Bytes")
 				t.Log("j: ", j)
+				testutil.Equals(t, c.exp[j], rec, "Bytes within record did not match expected Bytes")
 				if j == len(c.exp)-1 {
 					break caseLoop
 				}
 
 			}
 
+			// Because reads and writes are happening concurrently, unless we get an error we should
+			// attempt to read records again.
+			if j == 0 && lr.Err() == nil {
+				continue
+			}
+
 			if !c.fail && lr.Err() != nil {
 				t.Fatalf("unexpected error: %s", lr.Err())
 			}
 			if c.fail && lr.Err() == nil {
-				t.Fatalf("expected error but got none:\n\tinput: %+v", c.t[j])
+				t.Fatalf("expected error but got none:\n\tinput: %+v", c.t)
 			}
 			if lr.Err() != nil {
+				t.Log("err: ", lr.Err())
 				break
 			}
 		}
@@ -346,7 +353,7 @@ func TestWAL_FuzzWriteRead_Live(t *testing.T) {
 		testutil.Ok(t, r.Err())
 	}
 
-	dir, err := ioutil.TempDir("", "walfuzz")
+	dir, err := ioutil.TempDir("", "wal_fuzz_live")
 	t.Log("created dir: ", dir)
 	testutil.Ok(t, err)
 	defer os.RemoveAll(dir)
