@@ -356,10 +356,14 @@ func TestWAL_FuzzWriteRead_Live(t *testing.T) {
 	dir, err := ioutil.TempDir("", "wal_fuzz_live")
 	t.Log("created dir: ", dir)
 	testutil.Ok(t, err)
-	defer os.RemoveAll(dir)
+	defer func() {
+		fmt.Println("removing wal dir: ", dir)
+		os.RemoveAll(dir)
+	}()
 
 	w, err := NewSize(nil, nil, dir, 128*pageSize)
 	testutil.Ok(t, err)
+
 	go func() {
 		for i := 0; i < count; i++ {
 			var sz int64
@@ -423,10 +427,12 @@ func TestWAL_FuzzWriteRead_Live(t *testing.T) {
 			readSegment(r)
 			testutil.Ok(t, r.Err())
 		}
-		lock.RLock()
-		l := len(input)
-		lock.RUnlock()
-		if index == l {
+		// lock.RLock()
+		// l := len(input)
+		// lock.RUnlock()
+		// fmt.Println("index: ", index)
+		if index == count {
+			fmt.Println("read all records")
 			break
 		}
 	}
