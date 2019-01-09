@@ -1090,8 +1090,8 @@ func readRecord(buf []byte, header []byte, total int64) ([]byte, int, error) {
 	)
 	readTo := int(length) + readIndex
 	if readTo > len(buf) {
-		if readTo > len(buf)+recordHeaderSize {
-			return nil, 0, errors.Errorf("invalid record, record size would be larger than max page size: %d", readTo-readIndex)
+		if (readTo - readIndex) > pageSize {
+			return nil, 0, errors.Errorf("invalid record, record size would be larger than max page size: %d", int(length))
 		}
 		// Treat this the same as an EOF, it's an error we would expect to see.
 		return nil, 0, nil
