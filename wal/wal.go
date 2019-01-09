@@ -955,7 +955,13 @@ func (r *LiveReader) Next() bool {
 			return false
 		}
 	}
-	return r.buildRecord()
+	ret := r.buildRecord()
+	// An EOF here means we didn't have enough data to build the entire record.
+	// Read index won't be at the end of the buffer, but we need to shift the buffer anyways.
+	if r.err == io.EOF {
+		r.shiftBuffer()
+	}
+	return ret
 }
 
 // Record returns the current record. The internal buffer is cleared when Record is called,
@@ -1001,6 +1007,7 @@ func (r *LiveReader) buildRecord() bool {
 			r.index = 0
 			return true
 		}
+
 		// Only increment i for non-zero records since we use it
 		// to determine valid content record sequences.
 		r.index++
@@ -1072,13 +1079,13 @@ func readRecord(buf []byte, header []byte, total int64) ([]byte, int, error) {
 		// This theoretically should never happen, since we're now always reading a page at a time
 		// and then processing sub-records from that page.
 		// Treat this the same as an EOF, it's an error we would expect to see.
-		return nil, readIndex, nil
+		return nil, 0, io.EOF
 	}
 
 	// we probably don't need this anymore
 	if readIndex+recordHeaderSize-1 > len(buf) {
 		// Treat this the same as an EOF, it's an error we would expect to see.
-		return nil, 0, nil
+		return nil, 0, io.EOF
 	}
 
 	copy(header[1:], buf[readIndex:readIndex+len(header[1:])])
@@ -1093,8 +1100,9 @@ func readRecord(buf []byte, header []byte, total int64) ([]byte, int, error) {
 		if (readTo - readIndex) > pageSize {
 			return nil, 0, errors.Errorf("invalid record, record size would be larger than max page size: %d", int(length))
 		}
+		// Not enough data to read all of the record data.
 		// Treat this the same as an EOF, it's an error we would expect to see.
-		return nil, 0, nil
+		return nil, 0, io.EOF
 	}
 	recData := buf[readIndex:readTo]
 	readIndex += int(length)
