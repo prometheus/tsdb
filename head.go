@@ -607,6 +607,14 @@ func (h *rangeHead) Tombstones() (TombstoneReader, error) {
 	return h.head.tombstones, nil
 }
 
+func (h *rangeHead) MinTime() int64 {
+	return h.mint
+}
+
+func (h *rangeHead) MaxTime() int64 {
+	return h.maxt
+}
+
 // initAppender is a helper to initialize the time bounds of the head
 // upon the first sample it receives.
 type initAppender struct {

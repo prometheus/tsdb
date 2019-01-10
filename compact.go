@@ -603,35 +603,44 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 	}
 
 	var (
-		set        ChunkSeriesSet
-		allSymbols = make(map[string]struct{}, 1<<16)
-		closers    = []io.Closer{}
-		err        error
+		set         ChunkSeriesSet
+		allSymbols  = make(map[string]struct{}, 1<<16)
+		closers     = []io.Closer{}
+		err         error
+		overlapping = false
+		lastMaxT    = int64(math.MinInt64)
 	)
 	defer func() { closeAll(closers...) }()
 
 	for i, b := range blocks {
+		if b.MinTime() < lastMaxT {
+			overlapping = true
+		}
+		if b.MaxTime() > lastMaxT {
+			lastMaxT = b.MaxTime()
+		}
+
 		indexr, err := b.Index()
 		if err != nil {
-			return false, errors.Wrapf(err, "open index reader for block %s", b)
+			return overlapping, errors.Wrapf(err, "open index reader for block %s", b)
 		}
 		closers = append(closers, indexr)
 
 		chunkr, err := b.Chunks()
 		if err != nil {
-			return false, errors.Wrapf(err, "open chunk reader for block %s", b)
+			return overlapping, errors.Wrapf(err, "open chunk reader for block %s", b)
 		}
 		closers = append(closers, chunkr)
 
 		tombsr, err := b.Tombstones()
 		if err != nil {
-			return false, errors.Wrapf(err, "open tombstone reader for block %s", b)
+			return overlapping, errors.Wrapf(err, "open tombstone reader for block %s", b)
 		}
 		closers = append(closers, tombsr)
 
 		symbols, err := indexr.Symbols()
 		if err != nil {
-			return false, errors.Wrap(err, "read symbols")
+			return overlapping, errors.Wrap(err, "read symbols")
 		}
 		for s := range symbols {
 			allSymbols[s] = struct{}{}
@@ -639,7 +648,7 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 
 		all, err := indexr.Postings(index.AllPostingsKey())
 		if err != nil {
-			return false, err
+			return overlapping, err
 		}
 		all = indexr.SortedPostings(all)
 
@@ -651,7 +660,7 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 		}
 		set, err = newCompactionMerger(set, s)
 		if err != nil {
-			return false, err
+			return overlapping, err
 		}
 	}
 
@@ -663,31 +672,27 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 	)
 
 	if err = indexw.AddSymbols(allSymbols); err != nil {
-		return false, errors.Wrap(err, "add symbols")
+		return overlapping, errors.Wrap(err, "add symbols")
 	}
 
-	overlapping := false
 	for set.Next() {
 		lset, chks, dranges := set.At() // The chunks here are not fully deleted.
+		if overlapping {
+			// If blocks are overlapping, it is possible to have unsorted chunks.
+			sort.Slice(chks, func(i, j int) bool {
+				return chks[i].MinTime < chks[j].MinTime
+			})
+		}
 
 		// Skip the series with all deleted chunks.
 		if len(chks) == 0 {
 			continue
 		}
 
-		chunksOverlap := false
-		maxMaxt := int64(math.MinInt64)
 		for i, chk := range chks {
 			if chk.MinTime < meta.MinTime || chk.MaxTime > meta.MaxTime {
-				return false, errors.Errorf("found chunk with minTime: %d maxTime: %d outside of compacted minTime: %d maxTime: %d",
+				return overlapping, errors.Errorf("found chunk with minTime: %d maxTime: %d outside of compacted minTime: %d maxTime: %d",
 					chk.MinTime, chk.MaxTime, meta.MinTime, meta.MaxTime)
-			}
-
-			if chk.MinTime <= maxMaxt {
-				chunksOverlap = true
-			}
-			if chk.MaxTime > maxMaxt {
-				maxMaxt = chk.MaxTime
 			}
 
 			if len(dranges) > 0 {
@@ -711,16 +716,8 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 			}
 		}
 
-		overlapping = overlapping || chunksOverlap
-		if chunksOverlap {
-			// If chunks are overlapping, it is possible to have unsorted chunks.
-			sort.Slice(chks, func(i, j int) bool {
-				return chks[i].MinTime < chks[j].MinTime
-			})
-		}
-
 		mergedChks := chks
-		if chunksOverlap {
+		if overlapping {
 			mergedChks, err = chunks.MergeOverlappingChunks(chks)
 		}
 		if err != nil {

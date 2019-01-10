@@ -4,6 +4,7 @@
  - [CLEANUP] `Options.WALFlushInterval` is removed as it wasn't used anywhere.
  - [ENHANCEMENT] Added `MergeChunks` function in `chunkenc/xor.go` to merge 2 time-overlapping chunks.
  - [ENHANCEMENT] Added `MergeOverlappingChunks` function in `chunks/chunks.go` to merge multiple time-overlapping Chunk Metas.
+ - [ENHANCEMENT] Added `MinTime` and `MaxTime` method for `BlockReader`.
 
 ## 0.3.1
  - [BUGFIX] Fixed most windows test and some actual bugs for unclosed file readers.

@@ -132,6 +132,12 @@ type BlockReader interface {
 
 	// Tombstones returns a TombstoneReader over the block's deleted data.
 	Tombstones() (TombstoneReader, error)
+
+	// MinTime returns the min time of the block.
+	MinTime() int64
+
+	// MaxTime returns the max time of the block.
+	MaxTime() int64
 }
 
 // Appendable defines an entity to which data can be appended.
@@ -314,6 +320,12 @@ func (pb *Block) Dir() string { return pb.dir }
 
 // Meta returns meta information about the block.
 func (pb *Block) Meta() BlockMeta { return pb.meta }
+
+// MinTime returns the min time of the meta.
+func (pb *Block) MinTime() int64 { return pb.meta.MinTime }
+
+// MaxTime returns the max time of the meta.
+func (pb *Block) MaxTime() int64 { return pb.meta.MaxTime }
 
 // ErrClosing is returned when a block is in the process of being closed.
 var ErrClosing = errors.New("block is closing")
