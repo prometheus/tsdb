@@ -966,10 +966,7 @@ func (r *LiveReader) Next() bool {
 // Record returns the current record. The internal buffer is cleared when Record is called,
 // the caller must store the value if they want to keep it.
 func (r *LiveReader) Record() []byte {
-	temp := make([]byte, len(r.rec))
-	copy(temp, r.rec)
-	r.rec = r.rec[:0]
-	return temp
+	return r.rec
 }
 
 // Rebuild a full record from potentially partial records. Returns false
@@ -1003,6 +1000,9 @@ func (r *LiveReader) buildRecord() bool {
 			return false
 		}
 
+		if rt == recFirst || rt == recFull {
+			r.rec = r.rec[:0]
+		}
 		r.rec = append(r.rec, temp...)
 
 		if err := validateRecord(rt, r.index); err != nil {
