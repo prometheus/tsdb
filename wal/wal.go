@@ -943,7 +943,6 @@ func (r *LiveReader) Header() [7]byte {
 
 // Next returns true if r.rec will contain a full record.
 func (r *LiveReader) Next() bool {
-	r.err = nil
 	// Only shift the buffer if we've proceesed all the records in the current page.
 	if r.readIndex == pageSize {
 		r.shiftBuffer()
@@ -1053,7 +1052,7 @@ func readRecord(buf []byte, header []byte, total int64) ([]byte, int, error) {
 	readIndex++
 	total++
 
-	// This rest of this function is mostly from Reader.Next
+	// The rest of this function is mostly from Reader.Next().
 	typ := recType(header[0])
 	// Gobble up zero bytes.
 	if typ == recPageTerm {
@@ -1065,10 +1064,8 @@ func readRecord(buf []byte, header []byte, total int64) ([]byte, int, error) {
 		}
 
 		if k <= int64(len(buf)-readIndex) {
-			temp := make([]byte, k)
-			copied := copy(temp, buf[readIndex:int64(readIndex)+k])
-			readIndex += copied
-			for _, v := range temp {
+			for _, v := range buf[readIndex : int64(readIndex)+k] {
+				readIndex++
 				if v != 0 {
 					return nil, readIndex, errors.New("unexpected non-zero byte in page term bytes")
 				}
@@ -1082,7 +1079,6 @@ func readRecord(buf []byte, header []byte, total int64) ([]byte, int, error) {
 		return nil, 0, io.EOF
 	}
 
-	// we probably don't need this anymore
 	if readIndex+recordHeaderSize-1 > len(buf) {
 		// Treat this the same as an EOF, it's an error we would expect to see.
 		return nil, 0, io.EOF
