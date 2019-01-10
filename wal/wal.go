@@ -832,13 +832,13 @@ func (r *Reader) next() (err error) {
 		}
 		r.rec = append(r.rec, buf[:length]...)
 
-		fullRec, err := validateRecord(r.curRecTyp, i)
-		if err != nil {
+		if err := validateRecord(r.curRecTyp, i); err != nil {
 			return err
 		}
-		if fullRec {
+		if r.curRecTyp == recLast || r.curRecTyp == recFull {
 			return nil
 		}
+
 		// Only increment i for non-zero records since we use it
 		// to determine valid content record sequences.
 		i++
@@ -991,22 +991,29 @@ func (r *LiveReader) buildRecord() bool {
 			r.err = err
 			return false
 		}
+
 		if temp == nil {
 			return false
 		}
-		fullRec, err := validateRecord(recType(r.hdr[0]), r.index)
-		if err != nil {
+
+		rt := recType(r.hdr[0])
+		if err := validateRecord(rt, r.index); err != nil {
 			r.err = err
 			r.index = 0
 			return false
 		}
 
 		r.rec = append(r.rec, temp...)
-		if fullRec {
+
+		if err := validateRecord(rt, r.index); err != nil {
+			r.err = err
+			r.index = 0
+			return false
+		}
+		if rt == recLast || rt == recFull {
 			r.index = 0
 			return true
 		}
-
 		// Only increment i for non-zero records since we use it
 		// to determine valid content record sequences.
 		r.index++
@@ -1015,30 +1022,30 @@ func (r *LiveReader) buildRecord() bool {
 
 // Returns true if we have a full record, false if it's partial. Returns an
 // error if the full or partial record is invalid based on i, true otherwise.
-func validateRecord(typ recType, i int) (bool, error) {
+func validateRecord(typ recType, i int) error {
 	switch typ {
 	case recFull:
 		if i != 0 {
-			return false, errors.New("unexpected full record")
+			return errors.New("unexpected full record")
 		}
-		return true, nil
+		return nil
 	case recFirst:
 		if i != 0 {
-			return false, errors.New("unexpected first record, dropping buffer")
+			return errors.New("unexpected first record, dropping buffer")
 		}
-		return false, nil
+		return nil
 	case recMiddle:
 		if i == 0 {
-			return false, errors.New("unexpected middle record, dropping buffer")
+			return errors.New("unexpected middle record, dropping buffer")
 		}
-		return false, nil
+		return nil
 	case recLast:
 		if i == 0 {
-			return false, errors.New("unexpected last record, dropping buffer")
+			return errors.New("unexpected last record, dropping buffer")
 		}
-		return true, nil
+		return nil
 	default:
-		return false, errors.Errorf("unexpected record type %d", typ)
+		return errors.Errorf("unexpected record type %d", typ)
 	}
 }
 
