@@ -832,28 +832,13 @@ func (r *Reader) next() (err error) {
 		}
 		r.rec = append(r.rec, buf[:length]...)
 
-		switch r.curRecTyp {
-		case recFull:
-			if i != 0 {
-				return errors.New("unexpected full record")
-			}
-			return nil
-		case recFirst:
-			if i != 0 {
-				return errors.New("unexpected first record")
-			}
-		case recMiddle:
-			if i == 0 {
-				return errors.New("unexpected middle record")
-			}
-		case recLast:
-			if i == 0 {
-				return errors.New("unexpected last record")
-			}
-			return nil
-		default:
-			return errors.Errorf("unexpected record type %d", r.curRecTyp)
+		if err := validateRecord(r.curRecTyp, i); err != nil {
+			return err
 		}
+		if r.curRecTyp == recLast || r.curRecTyp == recFull {
+			return nil
+		}
+
 		// Only increment i for non-zero records since we use it
 		// to determine valid content record sequences.
 		i++
@@ -902,6 +887,237 @@ func (r *Reader) Offset() int64 {
 		return int64(b.off)
 	}
 	return r.total
+}
+
+// NewLiveReader returns a new live reader.
+func NewLiveReader(r io.ReadSeeker, totalSize int64) *LiveReader {
+	return &LiveReader{
+		rdr:       r,
+		totalSize: totalSize,
+	}
+}
+
+// Reader reads WAL records from an io.Reader. It buffers partial record data for
+// the next read.
+type LiveReader struct {
+	rdr io.Reader
+	err error
+	rec []byte
+	// hdr       [recordHeaderSize]byte
+	buf       sync.Pool
+	totalRead int64
+	totalSize int64
+}
+
+func (r *LiveReader) Err() error {
+	return r.err
+}
+
+var i int
+
+// Next returns true if r.rec will contain a full record.
+func (r *LiveReader) Next() bool {
+	defer func() {
+		i = 0
+	}()
+	hdr := make([]byte, recordHeaderSize)
+	for {
+		t, err := io.ReadFull(r.rdr, hdr)
+		if err != nil {
+			if err != io.EOF {
+				r.err = errors.Wrap(err, "read record header")
+				return false
+			}
+			if r.totalRead == r.totalSize {
+				return false
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		r.totalRead += int64(t)
+		break
+	}
+
+	recTyp := recType(hdr[0])
+
+	fmt.Println(recTyp)
+
+	if recTyp == recPageTerm {
+		// We are pedantic and check whether the zeros are actually up
+		// to a page boundary.
+		// It's not strictly necessary but may catch sketchy state early.
+		k := pageSize - (r.totalRead % pageSize)
+		if k == pageSize { // Initial 0 byte was last page byte.
+			return r.Next()
+		}
+
+		data := make([]byte, pageSize-k-recordHeaderSize)
+		n, err := io.ReadFull(r.rdr, data)
+		if err != nil {
+			if err != io.EOF {
+				r.err = errors.Wrap(err, "read page termination padding")
+				return false
+			}
+			if r.totalRead == r.totalSize {
+				return false
+			}
+		}
+		r.totalRead += int64(n)
+
+		for _, c := range data {
+			if c != 0 {
+				r.err = errors.New("unexpected non-zero byte in padded page")
+				return false
+			}
+		}
+
+		return r.Next()
+	}
+
+	var (
+		length = binary.BigEndian.Uint16(hdr[1:])
+		crc    = binary.BigEndian.Uint32(hdr[3:])
+	)
+
+	if length > pageSize-recordHeaderSize {
+		r.err = errors.Errorf("invalid record size %d", length)
+		return false
+	}
+
+	rec := make([]byte, length)
+
+	for {
+		n, err := io.ReadFull(r.rdr, rec)
+		if err != nil {
+			if err != io.EOF {
+				r.err = errors.Wrap(err, "reading a record")
+				return false
+			}
+			if r.totalRead == r.totalSize {
+				return false
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		r.totalRead += int64(n)
+
+		if n != int(length) {
+			r.err = errors.Errorf("invalid size: expected %d, got %d", length, n)
+			return false
+		}
+		break
+	}
+
+	if recTyp == recFull || recTyp == recFirst {
+		r.rec = rec
+	} else {
+		r.rec = append(r.rec, rec...)
+	}
+
+	// fmt.Println("xxx", r.rec)
+
+	if c := crc32.Checksum(rec, castagnoliTable); c != crc {
+		r.err = errors.Errorf("unexpected checksum %x, expected %x", c, crc)
+		return false
+	}
+
+	if err := validateRecord(recTyp, i); err != nil {
+		r.err = err
+		return false
+	}
+
+	if recTyp == recLast || recTyp == recFull {
+		return true
+	}
+
+	if recTyp != recPageTerm {
+		i++
+	}
+	return r.Next()
+}
+
+// Record returns the current record. The internal buffer is cleared when Record is called,
+// the caller must store the value if they want to keep it.
+func (r *LiveReader) Record() []byte {
+	return r.rec
+}
+
+// Rebuild a full record from potentially partial records. Returns false
+// if there was an error or if we weren't able to read a record for any reason.
+// Returns true if we read a full record. Any record data is appeneded to
+// LiveReader.rec
+// func (r *LiveReader) buildRecord() bool {
+// 	for {
+// 		// Do we have data to read?
+// 		if r.writeIndex <= r.readIndex {
+// 			return false
+// 		}
+
+// 		// Attempt to read a record, partial or otherwise.
+// 		temp, n, err := readRecord(r.buf[r.readIndex:r.writeIndex], r.hdr[:], r.total)
+// 		r.readIndex += n
+// 		r.total += int64(n)
+// 		if err != nil {
+// 			r.err = err
+// 			return false
+// 		}
+
+// 		if temp == nil {
+// 			return false
+// 		}
+
+// 		rt := recType(r.hdr[0])
+// 		if err := validateRecord(rt, r.index); err != nil {
+// 			r.err = err
+// 			r.index = 0
+// 			return false
+// 		}
+
+// 		if rt == recFirst || rt == recFull {
+// 			r.rec = r.rec[:0]
+// 		}
+// 		r.rec = append(r.rec, temp...)
+
+// 		if err := validateRecord(rt, r.index); err != nil {
+// 			r.err = err
+// 			r.index = 0
+// 			return false
+// 		}
+// 		if rt == recLast || rt == recFull {
+// 			r.index = 0
+// 			return true
+// 		}
+// 		// Only increment i for non-zero records since we use it
+// 		// to determine valid content record sequences.
+// 		r.index++
+// 	}
+// }
+
+// Returns true if we have a full record, false if it's partial. Returns an
+// error if the full or partial record is invalid based on i, true otherwise.
+func validateRecord(typ recType, i int) error {
+	switch typ {
+	case recFull:
+		if i != 0 {
+			return errors.New("unexpected full record")
+		}
+		return nil
+	case recFirst:
+		if i != 0 {
+			return errors.New("unexpected first record")
+		}
+		return nil
+	case recMiddle:
+		if i == 0 {
+			return errors.New("unexpected middle record")
+		}
+		return nil
+	case recLast:
+		if i == 0 {
+			return errors.New("unexpected last record")
+		}
+		return nil
+	default:
+		return errors.Errorf("unexpected record type %d", typ)
+	}
 }
 
 func min(i, j int) int {
