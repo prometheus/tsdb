@@ -772,7 +772,7 @@ func (db *DB) EnableCompactions() {
 }
 
 // Trigger compactions
-func (db *DB) Compact() error  {
+func (db *DB) Compact() error {
 	db.autoCompactMtx.Lock()
 	defer db.autoCompactMtx.Unlock()
 	return db.compact()

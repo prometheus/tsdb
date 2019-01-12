@@ -53,7 +53,7 @@ func main() {
 		analyzePath          = analyzeCmd.Arg("db path", "database path (default is "+filepath.Join("benchout", "storage")+")").Default(filepath.Join("benchout", "storage")).String()
 		analyzeBlockID       = analyzeCmd.Arg("block id", "block to analyze (default is the last block)").String()
 		analyzeLimit         = analyzeCmd.Flag("limit", "how many items to show in each list").Default("20").Int()
-		compactCmd			 = cli.Command("compact", "compact db blocks")
+		compactCmd           = cli.Command("compact", "compact db blocks")
 		compactPath          = compactCmd.Arg("db path", "database path (default is "+filepath.Join("benchout", "storage")+")").Default(filepath.Join("benchout", "storage")).String()
 	)
 
