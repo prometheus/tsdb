@@ -53,6 +53,8 @@ func main() {
 		analyzePath          = analyzeCmd.Arg("db path", "database path (default is "+filepath.Join("benchout", "storage")+")").Default(filepath.Join("benchout", "storage")).String()
 		analyzeBlockID       = analyzeCmd.Arg("block id", "block to analyze (default is the last block)").String()
 		analyzeLimit         = analyzeCmd.Flag("limit", "how many items to show in each list").Default("20").Int()
+		compactCmd			 = cli.Command("compact", "compact db blocks")
+		compactPath          = compactCmd.Arg("db path", "database path (default is "+filepath.Join("benchout", "storage")+")").Default(filepath.Join("benchout", "storage")).String()
 	)
 
 	switch kingpin.MustParse(cli.Parse(os.Args[1:])) {
@@ -90,6 +92,16 @@ func main() {
 			exitWithError(fmt.Errorf("Block not found"))
 		}
 		analyzeBlock(block, *analyzeLimit)
+	case compactCmd.FullCommand():
+		db, err := tsdb.Open(*compactPath, nil, nil, nil)
+		if err != nil {
+			exitWithError(err)
+		}
+		err = db.Compact()
+		if err != nil {
+			exitWithError(err)
+		}
+		fmt.Println("Compaction successfully completed")
 	}
 	flag.CommandLine.Set("log.level", "debug")
 }

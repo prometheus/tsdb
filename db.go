@@ -771,6 +771,13 @@ func (db *DB) EnableCompactions() {
 	level.Info(db.logger).Log("msg", "compactions enabled")
 }
 
+// Trigger compactions
+func (db *DB) Compact() error  {
+	db.autoCompactMtx.Lock()
+	defer db.autoCompactMtx.Unlock()
+	return db.compact()
+}
+
 // Snapshot writes the current data to the directory. If withHead is set to true it
 // will create a new block containing all data that's currently in the memory buffer/WAL.
 func (db *DB) Snapshot(dir string, withHead bool) error {
