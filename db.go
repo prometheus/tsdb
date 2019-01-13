@@ -773,8 +773,8 @@ func (db *DB) EnableCompactions() {
 
 // Trigger compactions
 func (db *DB) Compact() error {
-	db.autoCompactMtx.Lock()
-	defer db.autoCompactMtx.Unlock()
+	db.DisableCompactions()
+	defer db.EnableCompactions()
 	return db.compact()
 }
 
