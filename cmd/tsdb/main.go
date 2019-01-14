@@ -67,17 +67,17 @@ func main() {
 		wb.run()
 	case listCmd.FullCommand():
 		db, err := tsdb.Open(*listPath, nil, nil, nil)
-		defer db.Close()
 		if err != nil {
 			exitWithError(err)
 		}
+		defer db.Close()
 		printBlocks(db.Blocks(), listCmdHumanReadable)
 	case analyzeCmd.FullCommand():
 		db, err := tsdb.Open(*analyzePath, nil, nil, nil)
-		defer db.Close()
 		if err != nil {
 			exitWithError(err)
 		}
+		defer db.Close()
 		blocks := db.Blocks()
 		var block *tsdb.Block
 		if *analyzeBlockID != "" {
@@ -96,10 +96,10 @@ func main() {
 		analyzeBlock(block, *analyzeLimit)
 	case compactCmd.FullCommand():
 		db, err := tsdb.Open(*compactPath, nil, nil, nil)
-		defer db.Close()
 		if err != nil {
 			exitWithError(err)
 		}
+		defer db.Close()
 		err = db.Compact()
 		if err != nil {
 			exitWithError(err)
