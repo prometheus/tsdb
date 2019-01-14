@@ -771,7 +771,7 @@ func (db *DB) EnableCompactions() {
 	level.Info(db.logger).Log("msg", "compactions enabled")
 }
 
-// Trigger compactions
+// Compact triggers compactions.
 func (db *DB) Compact() error {
 	db.DisableCompactions()
 	defer db.EnableCompactions()
