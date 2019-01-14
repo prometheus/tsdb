@@ -60,8 +60,9 @@ type Options struct {
 
 	// Maximum number of bytes in blocks to be retained.
 	// 0 or less means disabled.
-	// NOTE: For proper storage calculations need to concider
-	// the size of the WAL folder which is not affected by this option.
+	// NOTE: For proper storage calculations need to consider
+	// the size of the WAL folder which is not added when calculating
+	// the current size of the database.
 	MaxBytes int64
 
 	// The sizes of the Blocks.
@@ -483,6 +484,7 @@ func (db *DB) reload() (err error) {
 	}
 	deletable := db.deletableBlocks(loadable)
 
+	// A corrupted block that is not set for deletion by deletableBlocks() should return an error.
 	for ulid, err := range corrupted {
 		if _, ok := deletable[ulid]; !ok {
 			return errors.Wrap(err, "unexpected corrupted block")
@@ -541,26 +543,26 @@ func (db *DB) reload() (err error) {
 }
 
 func (db *DB) openBlocks() (blocks []*Block, corrupted map[ulid.ULID]error, err error) {
-	corrupted = make(map[ulid.ULID]error)
-
 	dirs, err := blockDirs(db.dir)
 	if err != nil {
 		return nil, nil, errors.Wrap(err, "find blocks")
 	}
 
+	corrupted = make(map[ulid.ULID]error)
 	for _, dir := range dirs {
-		ulid, err := ulid.Parse(filepath.Base(dir))
+		meta, err := readMetaFile(dir)
 		if err != nil {
 			level.Error(db.logger).Log("msg", "not a block dir", "dir", dir)
 			continue
 		}
 
 		// See if we already have the block in memory or open it otherwise.
-		block, ok := db.getBlock(ulid)
+		block, ok := db.getBlock(meta.ULID)
 		if !ok {
 			block, err = OpenBlock(db.logger, dir, db.chunkPool)
 			if err != nil {
-				corrupted[ulid] = err
+				corrupted[meta.ULID] = err
+				continue
 			}
 
 		}
