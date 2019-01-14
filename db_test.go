@@ -1564,6 +1564,7 @@ func TestBlockRanges(t *testing.T) {
 	_, err = app.Add(lbl, secondBlockMaxt+3, rand.Float64())
 	testutil.Ok(t, err)
 	_, err = app.Add(lbl, secondBlockMaxt+4, rand.Float64())
+	testutil.Ok(t, err)
 	testutil.Ok(t, app.Commit())
 	testutil.Ok(t, db.Close())
 

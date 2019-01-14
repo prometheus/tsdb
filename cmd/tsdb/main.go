@@ -51,7 +51,7 @@ func main() {
 		listPath             = listCmd.Arg("db path", "database path (default is "+filepath.Join("benchout", "storage")+")").Default(filepath.Join("benchout", "storage")).String()
 		analyzeCmd           = cli.Command("analyze", "analyze churn, label pair cardinality.")
 		analyzePath          = analyzeCmd.Arg("db path", "database path (default is "+filepath.Join("benchout", "storage")+")").Default(filepath.Join("benchout", "storage")).String()
-		analyzeBlockId       = analyzeCmd.Arg("block id", "block to analyze (default is the last block)").String()
+		analyzeBlockID       = analyzeCmd.Arg("block id", "block to analyze (default is the last block)").String()
 		analyzeLimit         = analyzeCmd.Flag("limit", "how many items to show in each list").Default("20").Int()
 	)
 
@@ -76,9 +76,9 @@ func main() {
 		}
 		blocks := db.Blocks()
 		var block *tsdb.Block
-		if *analyzeBlockId != "" {
+		if *analyzeBlockID != "" {
 			for _, b := range blocks {
-				if b.Meta().ULID.String() == *analyzeBlockId {
+				if b.Meta().ULID.String() == *analyzeBlockID {
 					block = b
 					break
 				}
@@ -138,7 +138,7 @@ func (b *writeBenchmark) run() {
 	}
 	b.storage = st
 
-	var metrics []labels.Labels
+	var labels []labels.Labels
 
 	measureTime("readData", func() {
 		f, err := os.Open(b.samplesFile)
@@ -147,7 +147,7 @@ func (b *writeBenchmark) run() {
 		}
 		defer f.Close()
 
-		metrics, err = readPrometheusLabels(f, b.numMetrics)
+		labels, err = readPrometheusLabels(f, b.numMetrics)
 		if err != nil {
 			exitWithError(err)
 		}
@@ -157,7 +157,7 @@ func (b *writeBenchmark) run() {
 
 	dur := measureTime("ingestScrapes", func() {
 		b.startProfiling()
-		total, err = b.ingestScrapes(metrics, 3000)
+		total, err = b.ingestScrapes(labels, 3000)
 		if err != nil {
 			exitWithError(err)
 		}
@@ -213,7 +213,7 @@ func (b *writeBenchmark) ingestScrapes(lbls []labels.Labels, scrapeCount int) (u
 	return total, nil
 }
 
-func (b *writeBenchmark) ingestScrapesShard(metrics []labels.Labels, scrapeCount int, baset int64) (uint64, error) {
+func (b *writeBenchmark) ingestScrapesShard(lbls []labels.Labels, scrapeCount int, baset int64) (uint64, error) {
 	ts := baset
 
 	type sample struct {
@@ -222,9 +222,9 @@ func (b *writeBenchmark) ingestScrapesShard(metrics []labels.Labels, scrapeCount
 		ref    *uint64
 	}
 
-	scrape := make([]*sample, 0, len(metrics))
+	scrape := make([]*sample, 0, len(lbls))
 
-	for _, m := range metrics {
+	for _, m := range lbls {
 		scrape = append(scrape, &sample{
 			labels: m,
 			value:  123456789,
@@ -455,15 +455,17 @@ func analyzeBlock(b *tsdb.Block, limit int) {
 	lbls := labels.Labels{}
 	chks := []chunks.Meta{}
 	for p.Next() {
-		err = ir.Series(p.At(), &lbls, &chks)
+		if err = ir.Series(p.At(), &lbls, &chks); err != nil {
+			exitWithError(err)
+		}
 		// Amount of the block time range not covered by this series.
 		uncovered := uint64(meta.MaxTime-meta.MinTime) - uint64(chks[len(chks)-1].MaxTime-chks[0].MinTime)
 		for _, lbl := range lbls {
 			key := lbl.Name + "=" + lbl.Value
 			labelsUncovered[lbl.Name] += uncovered
 			labelpairsUncovered[key] += uncovered
-			labelpairsCount[key] += 1
-			entries += 1
+			labelpairsCount[key]++
+			entries++
 		}
 	}
 	if p.Err() != nil {
