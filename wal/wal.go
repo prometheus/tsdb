@@ -902,10 +902,10 @@ type LiveReader struct {
 	rec        []byte
 	hdr        [recordHeaderSize]byte
 	buf        [pageSize]byte
-	readIndex  int   // index in buf to start at for next read
-	writeIndex int   // index in buf to start at for next write
-	total      int64 // total bytes processed.
-	index      int   // used to track partial records
+	readIndex  int   // Index in buf to start at for next read.
+	writeIndex int   // Index in buf to start at for next write.
+	total      int64 // Total bytes processed during reading in calls to Next().
+	index      int   // Used to track partial records, should be 0 at the start of every new record.
 }
 
 func (r *LiveReader) Err() error {
@@ -918,7 +918,6 @@ func (r *LiveReader) TotalRead() int64 {
 
 func (r *LiveReader) fillBuffer() error {
 	n, err := r.rdr.Read(r.buf[r.writeIndex:len(r.buf)])
-	// We expect to get EOF, since we're reading the segment file as it's being written.
 	r.writeIndex += n
 	return err
 }
@@ -939,6 +938,7 @@ func (r *LiveReader) Header() [7]byte {
 }
 
 // Next returns true if r.rec will contain a full record.
+// False does not indicate that there will never be more data to read for
 func (r *LiveReader) Next() bool {
 	for {
 		if r.buildRecord() {
@@ -952,7 +952,7 @@ func (r *LiveReader) Next() bool {
 		}
 		if r.writeIndex != pageSize {
 			if err := r.fillBuffer(); err != nil {
-				// We expect to get io.EOF.
+				// We expect to get EOF, since we're reading the segment file as it's being written.
 				if err != io.EOF {
 					r.err = err
 				}
@@ -962,8 +962,8 @@ func (r *LiveReader) Next() bool {
 	}
 }
 
-// Record returns the current record. The internal buffer is cleared when Record is called,
-// the caller must store the value if they want to keep it.
+// Record returns the current record.
+// The returned byte slice is only valid until the next call to Next.
 func (r *LiveReader) Record() []byte {
 	return r.rec
 }
@@ -974,7 +974,7 @@ func (r *LiveReader) Record() []byte {
 // LiveReader.rec
 func (r *LiveReader) buildRecord() bool {
 	for {
-		// Do we have data to read?
+		// Check that we have data in the internal buffer to read.
 		if r.writeIndex <= r.readIndex {
 			return false
 		}
@@ -1014,8 +1014,10 @@ func (r *LiveReader) buildRecord() bool {
 	}
 }
 
-// Returns true if we have a full record, false if it's partial. Returns an
-// error if the full or partial record is invalid based on i, true otherwise.
+// Returns an error if the recType and i indicate an invalid record sequence.
+// As an example, if i is > 0 because we've read some amount of a partial record
+// (recFirst, recMiddle, etc. but not recLast) and then we get another recFirst or recFull
+// instead of a recLast or recMiddle we would have an invalid record.
 func validateRecord(typ recType, i int) error {
 	switch typ {
 	case recFull:
@@ -1046,7 +1048,9 @@ func validateRecord(typ recType, i int) error {
 // Read a sub-record (see recType) from the buffer. It could potentially
 // be a full record (recFull) if the record fits within the bounds of a single page.
 // Returns a byte slice of the record data read, the number of bytes read, and an error
-// if there's a non-zero byte in a pager term record or the record checksum fails.
+// if there's a non-zero byte in a page term record or the record checksum fails.
+// TODO(callum) the EOF errors we're returning from this function should theoretically
+// never happen, add a metric for them.
 func readRecord(buf []byte, header []byte, total int64) ([]byte, int, error) {
 	readIndex := 0
 	header[0] = buf[0]
@@ -1074,8 +1078,8 @@ func readRecord(buf []byte, header []byte, total int64) ([]byte, int, error) {
 			return nil, readIndex, nil
 		}
 		// Not enough bytes to read the rest of the page term rec.
-		// This theoretically should never happen, since we're now always reading a page at a time
-		// and then processing sub-records from that page.
+		// This theoretically should never happen, since we're only shifting the
+		// internal buffer of the live reader when we read to the end of page.
 		// Treat this the same as an EOF, it's an error we would expect to see.
 		return nil, 0, io.EOF
 	}
@@ -1105,7 +1109,7 @@ func readRecord(buf []byte, header []byte, total int64) ([]byte, int, error) {
 	readIndex += int(length)
 	total += int64(length)
 
-	// what should we do here? throw out the record?
+	// TODO(callum) what should we do here, throw out the record? We should add a metric at least.
 	if c := crc32.Checksum(recData, castagnoliTable); c != crc {
 		return recData, readIndex, errors.Errorf("unexpected checksum %x, expected %x", c, crc)
 	}
