@@ -482,13 +482,21 @@ func (db *DB) reload() (err error) {
 	if err != nil {
 		return err
 	}
+
 	deletable := db.deletableBlocks(loadable)
 
-	// A corrupted block that is not set for deletion by deletableBlocks() should return an error.
-	for ulid, err := range corrupted {
-		if _, ok := deletable[ulid]; !ok {
-			return errors.Wrap(err, "unexpected corrupted block")
+	// Corrupted blocks that have been replaced by parents can be safely ignored and deleted.
+	// This makes it resilient against the process crashing towards the end of a compaction.
+	// Creation of a new block and deletion of its parents cannot happen atomically.
+	// By creating blocks with their parents, we can pick up the deletion where it left off during a crash.
+	for _, block := range loadable {
+		for _, b := range block.Meta().Compaction.Parents {
+			delete(corrupted, b.ULID)
+			deletable[b.ULID] = nil
 		}
+	}
+	if len(corrupted) > 0 {
+		return errors.Wrap(err, "unexpected corrupted block")
 	}
 
 	// All deletable blocks should not be loaded.
@@ -576,18 +584,6 @@ func (db *DB) openBlocks() (blocks []*Block, corrupted map[ulid.ULID]error, err 
 // and blocks superseded by parents after a compaction.
 func (db *DB) deletableBlocks(blocks []*Block) map[ulid.ULID]*Block {
 	deletable := make(map[ulid.ULID]*Block)
-
-	// Delete old blocks that have been superseded by new ones by gathering their parents.
-	// Those parents all have newer replacements and
-	// can be safely deleted after loading the other blocks.
-	// This makes it resilient against the process crashing towards the end of a compaction.
-	// Creation of a new block and deletion of its parents cannot happen atomically.
-	// By creating blocks with their parents, we can pick up the deletion where it left off during a crash.
-	for _, block := range blocks {
-		for _, b := range block.Meta().Compaction.Parents {
-			deletable[b.ULID] = nil
-		}
-	}
 
 	// Sort the blocks by time - newest to oldest (largest to smallest timestamp).
 	// This ensures that the retentions will remove the oldest  blocks.
