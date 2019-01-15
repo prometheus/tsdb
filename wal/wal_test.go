@@ -316,7 +316,7 @@ func TestReader_Live(t *testing.T) {
 }
 
 func TestWAL_FuzzWriteRead_Live(t *testing.T) {
-	const count = 25000
+	const count = 5000
 	const segmentSize = int64(128 * 1024 * 1204)
 	var input [][]byte
 	lock := sync.RWMutex{}
