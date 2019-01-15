@@ -19,6 +19,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"hash/crc32"
+	"io"
 	"io/ioutil"
 	"math/rand"
 	"os"
@@ -335,7 +336,6 @@ func TestWAL_FuzzWriteRead_Live(t *testing.T) {
 	readSegment := func(r *LiveReader) {
 		for r.Next() {
 			rec := r.Record()
-			testutil.Ok(t, r.Err())
 			lock.RLock()
 			l := len(input)
 			lock.RUnlock()
@@ -350,7 +350,9 @@ func TestWAL_FuzzWriteRead_Live(t *testing.T) {
 			lock.RUnlock()
 			index++
 		}
-		testutil.Ok(t, r.Err())
+		if r.Err() != io.EOF {
+			testutil.Ok(t, r.Err())
+		}
 	}
 
 	dir, err := ioutil.TempDir("", "wal_fuzz_live")
@@ -410,7 +412,9 @@ func TestWAL_FuzzWriteRead_Live(t *testing.T) {
 			if last > seg.i {
 				for {
 					readSegment(r)
-					testutil.Ok(t, r.Err())
+					if r.Err() != io.EOF {
+						testutil.Ok(t, r.Err())
+					}
 					size, err := getSegmentSize(dir, seg.i)
 					testutil.Ok(t, err)
 					// make sure we've read all of the current segment before rotating
@@ -424,7 +428,6 @@ func TestWAL_FuzzWriteRead_Live(t *testing.T) {
 			}
 		case <-readTicker.C:
 			readSegment(r)
-			testutil.Ok(t, r.Err())
 		}
 		if index == count {
 			break
