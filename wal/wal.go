@@ -929,14 +929,6 @@ func (r *LiveReader) shiftBuffer() {
 	r.writeIndex = copied
 }
 
-func (r *LiveReader) ReadIndex() int {
-	return r.readIndex
-}
-
-func (r *LiveReader) Header() [7]byte {
-	return r.hdr
-}
-
 // Next returns true if r.rec will contain a full record.
 // False does not indicate that there will never be more data to read for
 func (r *LiveReader) Next() bool {
