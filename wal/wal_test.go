@@ -357,7 +357,6 @@ func TestWAL_FuzzWriteRead_Live(t *testing.T) {
 	t.Log("created dir: ", dir)
 	testutil.Ok(t, err)
 	defer func() {
-		fmt.Println("removing wal dir: ", dir)
 		os.RemoveAll(dir)
 	}()
 
@@ -427,12 +426,7 @@ func TestWAL_FuzzWriteRead_Live(t *testing.T) {
 			readSegment(r)
 			testutil.Ok(t, r.Err())
 		}
-		// lock.RLock()
-		// l := len(input)
-		// lock.RUnlock()
-		// fmt.Println("index: ", index)
 		if index == count {
-			fmt.Println("read all records")
 			break
 		}
 	}

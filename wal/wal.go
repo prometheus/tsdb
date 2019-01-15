@@ -919,11 +919,8 @@ func (r *LiveReader) TotalRead() int64 {
 func (r *LiveReader) fillBuffer() error {
 	n, err := r.rdr.Read(r.buf[r.writeIndex:len(r.buf)])
 	// We expect to get EOF, since we're reading the segment file as it's being written.
-	if err != nil && err != io.EOF {
-		return err
-	}
 	r.writeIndex += n
-	return nil
+	return err
 }
 
 // Shift the buffer up to the read index.
@@ -943,24 +940,26 @@ func (r *LiveReader) Header() [7]byte {
 
 // Next returns true if r.rec will contain a full record.
 func (r *LiveReader) Next() bool {
-	// Only shift the buffer if we've proceesed all the records in the current page.
-	if r.readIndex == pageSize {
-		r.shiftBuffer()
-	}
-	// Read up to a page at a time from the buffer.
-	if r.writeIndex != pageSize {
-		if err := r.fillBuffer(); err != nil {
-			r.err = err
+	for {
+		if r.buildRecord() {
+			return true
+		}
+		if r.err != nil && r.err != io.EOF {
 			return false
 		}
+		if r.readIndex == pageSize {
+			r.shiftBuffer()
+		}
+		if r.writeIndex != pageSize {
+			if err := r.fillBuffer(); err != nil {
+				// We expect to get io.EOF.
+				if err != io.EOF {
+					r.err = err
+				}
+				return false
+			}
+		}
 	}
-	ret := r.buildRecord()
-	// An EOF here means we didn't have enough data to build the entire record.
-	// Read index won't be at the end of the buffer, but we need to shift the buffer anyways.
-	if r.err == io.EOF {
-		r.shiftBuffer()
-	}
-	return ret
 }
 
 // Record returns the current record. The internal buffer is cleared when Record is called,
@@ -994,11 +993,6 @@ func (r *LiveReader) buildRecord() bool {
 		}
 
 		rt := recType(r.hdr[0])
-		if err := validateRecord(rt, r.index); err != nil {
-			r.err = err
-			r.index = 0
-			return false
-		}
 
 		if rt == recFirst || rt == recFull {
 			r.rec = r.rec[:0]
