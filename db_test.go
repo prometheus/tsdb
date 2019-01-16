@@ -1378,24 +1378,22 @@ func TestNoEmptyBlocks(t *testing.T) {
 	testutil.Equals(t, 0, len(bb))
 
 	// Test no blocks after deleting all samples from head.
-	blockRange := DefaultOptions.BlockRanges[0]
-	label := labels.FromStrings("foo", "bar")
+	rangeToTriggercompaction := DefaultOptions.BlockRanges[0]/2*3 + 1
+	defaultLabel := labels.FromStrings("foo", "bar")
+	defaultMatcher := labels.NewEqualMatcher(defaultLabel[0].Name, defaultLabel[0].Value)
 
 	app := db.Appender()
 	for i := int64(0); i < 6; i++ {
-		_, err := app.Add(label, i*blockRange, 0)
+		_, err := app.Add(defaultLabel, i*rangeToTriggercompaction, 0)
 		testutil.Ok(t, err)
-		_, err = app.Add(label, i*blockRange+1000, 0)
+		_, err = app.Add(defaultLabel, i*rangeToTriggercompaction+1000, 0)
 		testutil.Ok(t, err)
 	}
 	testutil.Ok(t, app.Commit())
 
-	testutil.Ok(t, db.Delete(math.MinInt64, math.MaxInt64, labels.NewEqualMatcher("foo", "bar")))
-	uid, err := db.compactor.Write(db.dir, db.head, db.head.MinTime(), db.head.MaxTime(), nil)
-	testutil.Ok(t, err)
-	testutil.Equals(t, ulid.ULID{}, uid)
-	testutil.Ok(t, db.reload())
-	testutil.Ok(t, db.head.Truncate(db.head.MaxTime()))
+	testutil.Ok(t, db.Delete(math.MinInt64, math.MaxInt64, defaultMatcher))
+	testutil.Ok(t, db.compact())
+
 	// No blocks created.
 	bb, err = blockDirs(db.Dir())
 	testutil.Ok(t, err)
@@ -1405,7 +1403,7 @@ func TestNoEmptyBlocks(t *testing.T) {
 	app = db.Appender()
 	for i := int64(7); i < 25; i++ {
 		for j := int64(0); j < 10; j++ {
-			_, err := app.Add(label, i*blockRange+j, 0)
+			_, err := app.Add(defaultLabel, i*rangeToTriggercompaction+j, 0)
 			testutil.Ok(t, err)
 		}
 	}
@@ -1422,16 +1420,16 @@ func TestNoEmptyBlocks(t *testing.T) {
 	oldBlocks := db.Blocks()
 	app = db.Appender()
 	for i := int64(26); i < 30; i++ {
-		_, err := app.Add(label, i*blockRange, 0)
+		_, err := app.Add(defaultLabel, i*rangeToTriggercompaction, 0)
 		testutil.Ok(t, err)
 	}
 	testutil.Ok(t, app.Commit())
-	testutil.Ok(t, db.head.Delete(math.MinInt64, math.MaxInt64, labels.NewEqualMatcher("foo", "bar")))
+	testutil.Ok(t, db.head.Delete(math.MinInt64, math.MaxInt64, defaultMatcher))
 	testutil.Ok(t, db.compact())
 	testutil.Equals(t, oldBlocks, db.Blocks())
 
 	// Test no blocks remaining after deleting all samples from disk.
-	testutil.Ok(t, db.Delete(math.MinInt64, math.MaxInt64, labels.NewEqualMatcher("foo", "bar")))
+	testutil.Ok(t, db.Delete(math.MinInt64, math.MaxInt64, defaultMatcher))
 
 	// Mimicking Plan() of compactor and getting list
 	// of all block directories to pass for compaction.
@@ -1440,26 +1438,12 @@ func TestNoEmptyBlocks(t *testing.T) {
 		plan = append(plan, b.Dir())
 	}
 
-	// Blocks are not set deletable before compaction.
-	for _, b := range db.Blocks() {
-		meta, err := readMetaFile(b.dir)
-		testutil.Ok(t, err)
-		testutil.Assert(t, meta.Compaction.Deletable == false, "Block was marked deletable before compaction")
-	}
-
 	// No new blocks are created by Compact, and marks all old blocks as deletable.
 	oldBlocks = db.Blocks()
 	_, err = db.compactor.Compact(db.dir, plan, db.Blocks())
 	testutil.Ok(t, err)
 	// Blocks are the same.
 	testutil.Equals(t, oldBlocks, db.Blocks())
-
-	// Marked as deletable.
-	for _, b := range db.Blocks() {
-		meta, err := readMetaFile(b.dir)
-		testutil.Ok(t, err)
-		testutil.Assert(t, meta.Compaction.Deletable, "Block was not marked deletable after compaction")
-	}
 
 	// Deletes the deletable blocks.
 	testutil.Ok(t, db.reload())
@@ -1574,12 +1558,13 @@ func TestCorrectNumTombstones(t *testing.T) {
 	defer db.Close()
 
 	blockRange := DefaultOptions.BlockRanges[0]
-	label := labels.FromStrings("foo", "bar")
+	defaultLabel := labels.FromStrings("foo", "bar")
+	defaultMatcher := labels.NewEqualMatcher(defaultLabel[0].Name, defaultLabel[0].Value)
 
 	app := db.Appender()
 	for i := int64(0); i < 3; i++ {
 		for j := int64(0); j < 15; j++ {
-			_, err := app.Add(label, i*blockRange+j, 0)
+			_, err := app.Add(defaultLabel, i*blockRange+j, 0)
 			testutil.Ok(t, err)
 		}
 	}
@@ -1589,17 +1574,17 @@ func TestCorrectNumTombstones(t *testing.T) {
 	testutil.Ok(t, err)
 	testutil.Equals(t, 1, len(db.blocks))
 
-	testutil.Ok(t, db.Delete(0, 1, labels.NewEqualMatcher("foo", "bar")))
+	testutil.Ok(t, db.Delete(0, 1, defaultMatcher))
 	testutil.Equals(t, uint64(1), db.blocks[0].meta.Stats.NumTombstones)
 
 	// {0, 1} and {2, 3} are merged to form 1 tombstone.
-	testutil.Ok(t, db.Delete(2, 3, labels.NewEqualMatcher("foo", "bar")))
+	testutil.Ok(t, db.Delete(2, 3, defaultMatcher))
 	testutil.Equals(t, uint64(1), db.blocks[0].meta.Stats.NumTombstones)
 
-	testutil.Ok(t, db.Delete(5, 6, labels.NewEqualMatcher("foo", "bar")))
+	testutil.Ok(t, db.Delete(5, 6, defaultMatcher))
 	testutil.Equals(t, uint64(2), db.blocks[0].meta.Stats.NumTombstones)
 
-	testutil.Ok(t, db.Delete(9, 11, labels.NewEqualMatcher("foo", "bar")))
+	testutil.Ok(t, db.Delete(9, 11, defaultMatcher))
 	testutil.Equals(t, uint64(3), db.blocks[0].meta.Stats.NumTombstones)
 }
 
