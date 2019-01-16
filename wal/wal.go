@@ -930,7 +930,8 @@ func (r *LiveReader) shiftBuffer() {
 }
 
 // Next returns true if r.rec will contain a full record.
-// False does not indicate that there will never be more data to read for
+// False does not indicate that there will never be more data to
+// read for the current io.Reader.
 func (r *LiveReader) Next() bool {
 	for {
 		if r.buildRecord() {
