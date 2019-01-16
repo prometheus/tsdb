@@ -427,11 +427,13 @@ func (db *DB) compact() (err error) {
 		if err := db.reload(); err != nil {
 			return errors.Wrap(err, "reload blocks")
 		}
-		// Compaction resulted in an empty block.
-		// Head truncating during db.reload() depends on the persisted blocks and
-		// in this case no new block will be persisted so manually truncate the head.
 		if (uid == ulid.ULID{}) {
-			return errors.Wrap(db.head.Truncate(maxt), "head truncate failed (in compact)")
+			// Compaction resulted in an empty block.
+			// Head truncating during db.reload() depends on the persisted blocks and
+			// in this case no new block will be persisted so manually truncate the head.
+			if err = db.head.Truncate(maxt); err != nil {
+				return errors.Wrap(err, "head truncate failed (in compact)")
+			}
 		}
 		runtime.GC()
 	}
