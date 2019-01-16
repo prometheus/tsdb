@@ -427,16 +427,11 @@ func (db *DB) compact() (err error) {
 		if err := db.reload(); err != nil {
 			return errors.Wrap(err, "reload blocks")
 		}
-		if (uid == ulid.ULID{}) { // No block created.
-			// After this was fixed https://github.com/prometheus/tsdb/issues/309,
-			// Case 1: It is possible to have 0 blocks after compaction.
-			//         db.reload() doesn't truncate the head when the block count is zero.
-			// Case 2: If there were blocks on disk, head will be truncated to a
-			//         wrong value based on old blocks.
-			// Hence we need to truncate manually.
-			if err = db.head.Truncate(maxt); err != nil {
-				return errors.Wrap(err, "head truncate failed (in compact)")
-			}
+		// Compaction resulted in an empty block.
+		// Head truncating during db.reload() depends on the persisted blocks and
+		// in this case no new block will be persisted so manually truncate the head.
+		if (uid == ulid.ULID{}) {
+			return errors.Wrap(db.head.Truncate(maxt), "head truncate failed (in compact)")
 		}
 		runtime.GC()
 	}
@@ -521,14 +516,6 @@ func (db *DB) reload() (err error) {
 			deletable[block.Meta().ULID] = block
 			continue
 		}
-<<<<<<< HEAD
-		if meta.Compaction.Deletable {
-			deleteable[meta.ULID] = struct{}{}
-		}
-		for _, b := range meta.Compaction.Parents {
-			deleteable[b.ULID] = struct{}{}
-		}
-=======
 		bb = append(bb, block)
 		blocksSize += block.Size()
 
@@ -541,7 +528,6 @@ func (db *DB) reload() (err error) {
 	})
 	if err := validateBlockSequence(loadable); err != nil {
 		return errors.Wrap(err, "invalid block sequence")
->>>>>>> upstream/master
 	}
 
 	// Swap new blocks first for subsequently created readers to be seen.
@@ -608,6 +594,12 @@ func (db *DB) deletableBlocks(blocks []*Block) map[ulid.ULID]*Block {
 	sort.Slice(blocks, func(i, j int) bool {
 		return blocks[i].Meta().MaxTime > blocks[j].Meta().MaxTime
 	})
+
+	for _, block := range blocks {
+		if block.Meta().Compaction.Deletable {
+			deletable[block.Meta().ULID] = block
+		}
+	}
 
 	for ulid, block := range db.beyondTimeRetention(blocks) {
 		deletable[ulid] = block
