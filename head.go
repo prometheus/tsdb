@@ -59,7 +59,8 @@ type Head struct {
 	appendPool sync.Pool
 	bytesPool  sync.Pool
 
-	minTime, maxTime int64
+	minTime, maxTime int64 // Current min and max of the samples included in the head.
+	minValidTime     int64 // Mint allowed to be added to the head. It shouldn't be lower than the maxt of the last persisted block.
 	lastSeriesID     uint64
 
 	// All series addressable by their ID or hash.
@@ -88,6 +89,7 @@ type headMetrics struct {
 	maxTime                 prometheus.GaugeFunc
 	samplesAppended         prometheus.Counter
 	walTruncateDuration     prometheus.Summary
+	walCorruptionsTotal     prometheus.Counter
 	headTruncateFail        prometheus.Counter
 	headTruncateTotal       prometheus.Counter
 	checkpointDeleteFail    prometheus.Counter
@@ -151,6 +153,10 @@ func newHeadMetrics(h *Head, r prometheus.Registerer) *headMetrics {
 		Name: "prometheus_tsdb_wal_truncate_duration_seconds",
 		Help: "Duration of WAL truncation.",
 	})
+	m.walCorruptionsTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "prometheus_tsdb_wal_corruptions_total",
+		Help: "Total number of WAL corruptions.",
+	})
 	m.samplesAppended = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "prometheus_tsdb_head_samples_appended_total",
 		Help: "Total number of appended samples.",
@@ -194,6 +200,7 @@ func newHeadMetrics(h *Head, r prometheus.Registerer) *headMetrics {
 			m.maxTime,
 			m.gcDuration,
 			m.walTruncateDuration,
+			m.walCorruptionsTotal,
 			m.samplesAppended,
 			m.headTruncateFail,
 			m.headTruncateTotal,
@@ -300,13 +307,6 @@ func (h *Head) updateMinMaxTime(mint, maxt int64) {
 }
 
 func (h *Head) loadWAL(r *wal.Reader) error {
-	minValidTime := h.MinTime()
-	// If the min time is still uninitialized (no persisted blocks yet),
-	// we accept all sample timestamps from the WAL.
-	if minValidTime == math.MaxInt64 {
-		minValidTime = math.MinInt64
-	}
-
 	// Track number of samples that referenced a series we don't know about
 	// for error reporting.
 	var unknownRefs uint64
@@ -327,7 +327,7 @@ func (h *Head) loadWAL(r *wal.Reader) error {
 		inputs[i] = make(chan []RefSample, 300)
 
 		go func(input <-chan []RefSample, output chan<- []RefSample) {
-			unknown := h.processWALSamples(minValidTime, input, output)
+			unknown := h.processWALSamples(h.minValidTime, input, output)
 			atomic.AddUint64(&unknownRefs, unknown)
 			wg.Done()
 		}(inputs[i], outputs[i])
@@ -410,7 +410,7 @@ func (h *Head) loadWAL(r *wal.Reader) error {
 			}
 			for _, s := range tstones {
 				for _, itv := range s.intervals {
-					if itv.Maxt < minValidTime {
+					if itv.Maxt < h.minValidTime {
 						continue
 					}
 					h.tombstones.addInterval(s.ref, itv)
@@ -443,8 +443,12 @@ func (h *Head) loadWAL(r *wal.Reader) error {
 }
 
 // Init loads data from the write ahead log and prepares the head for writes.
-func (h *Head) Init() error {
+// It should be called before using an appender so that
+// limits the ingested samples to the head min valid time.
+func (h *Head) Init(minValidTime int64) error {
+	h.minValidTime = minValidTime
 	defer h.postings.EnsureOrder()
+	defer h.gc() // After loading the wal remove the obsolete data from the head.
 
 	if h.wal == nil {
 		return nil
@@ -475,14 +479,14 @@ func (h *Head) Init() error {
 	if err != nil {
 		return errors.Wrap(err, "open WAL segments")
 	}
-	defer sr.Close()
 
 	err = h.loadWAL(wal.NewReader(sr))
+	sr.Close() // Close the reader so that if there was an error the repair can remove the corrupted file under Windows.
 	if err == nil {
 		return nil
 	}
 	level.Warn(h.logger).Log("msg", "encountered WAL error, attempting repair", "err", err)
-
+	h.metrics.walCorruptionsTotal.Inc()
 	if err := h.wal.Repair(err); err != nil {
 		return errors.Wrap(err, "repair corrupted WAL")
 	}
@@ -502,6 +506,7 @@ func (h *Head) Truncate(mint int64) (err error) {
 		return nil
 	}
 	atomic.StoreInt64(&h.minTime, mint)
+	atomic.StoreInt64(&h.minValidTime, mint)
 
 	// Ensure that max time is at least as high as min time.
 	for h.MaxTime() < mint {
@@ -572,7 +577,7 @@ func (h *Head) Truncate(mint int64) (err error) {
 }
 
 // initTime initializes a head with the first timestamp. This only needs to be called
-// for a compltely fresh head with an empty WAL.
+// for a completely fresh head with an empty WAL.
 // Returns true if the initialization took an effect.
 func (h *Head) initTime(t int64) (initialized bool) {
 	if !atomic.CompareAndSwapInt64(&h.minTime, math.MaxInt64, t) {
@@ -654,12 +659,21 @@ func (h *Head) Appender() Appender {
 
 func (h *Head) appender() *headAppender {
 	return &headAppender{
-		head:         h,
-		minValidTime: h.MaxTime() - h.chunkRange/2,
+		head: h,
+		// Set the minimum valid time to whichever is greater the head min valid time or the compaciton window.
+		// This ensures that no samples will be added within the compaction window to avoid races.
+		minValidTime: max(atomic.LoadInt64(&h.minValidTime), h.MaxTime()-h.chunkRange/2),
 		mint:         math.MaxInt64,
 		maxt:         math.MinInt64,
 		samples:      h.getAppendBuffer(),
 	}
+}
+
+func max(a, b int64) int64 {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func (h *Head) getAppendBuffer() []RefSample {
@@ -671,6 +685,7 @@ func (h *Head) getAppendBuffer() []RefSample {
 }
 
 func (h *Head) putAppendBuffer(b []RefSample) {
+	//lint:ignore SA6002 safe to ignore and actually fixing it has some performance penalty.
 	h.appendPool.Put(b[:0])
 }
 
@@ -683,6 +698,7 @@ func (h *Head) getBytesBuffer() []byte {
 }
 
 func (h *Head) putBytesBuffer(b []byte) {
+	//lint:ignore SA6002 safe to ignore and actually fixing it has some performance penalty.
 	h.bytesPool.Put(b[:0])
 }
 
@@ -1080,25 +1096,30 @@ func (h *headIndexReader) Postings(name, value string) (index.Postings, error) {
 }
 
 func (h *headIndexReader) SortedPostings(p index.Postings) index.Postings {
-	ep := make([]uint64, 0, 128)
+	series := make([]*memSeries, 0, 128)
 
+	// Fetch all the series only once.
 	for p.Next() {
-		ep = append(ep, p.At())
+		s := h.head.series.getByID(p.At())
+		if s == nil {
+			level.Debug(h.head.logger).Log("msg", "looked up series not found")
+		} else {
+			series = append(series, s)
+		}
 	}
 	if err := p.Err(); err != nil {
 		return index.ErrPostings(errors.Wrap(err, "expand postings"))
 	}
 
-	sort.Slice(ep, func(i, j int) bool {
-		a := h.head.series.getByID(ep[i])
-		b := h.head.series.getByID(ep[j])
-
-		if a == nil || b == nil {
-			level.Debug(h.head.logger).Log("msg", "looked up series not found")
-			return false
-		}
-		return labels.Compare(a.lset, b.lset) < 0
+	sort.Slice(series, func(i, j int) bool {
+		return labels.Compare(series[i].lset, series[j].lset) < 0
 	})
+
+	// Convert back to list.
+	ep := make([]uint64, 0, len(series))
+	for _, p := range series {
+		ep = append(ep, p.ref)
+	}
 	return index.NewListPostings(ep)
 }
 
@@ -1411,7 +1432,7 @@ func (s *memSeries) cut(mint int64) *memChunk {
 
 	// Set upper bound on when the next chunk must be started. An earlier timestamp
 	// may be chosen dynamically at a later point.
-	_, s.nextAt = rangeForTimestamp(mint, s.chunkRange)
+	s.nextAt = rangeForTimestamp(mint, s.chunkRange)
 
 	app, err := c.chunk.Appender()
 	if err != nil {

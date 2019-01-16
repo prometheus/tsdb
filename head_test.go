@@ -15,12 +15,14 @@ package tsdb
 
 import (
 	"io/ioutil"
+	"math"
 	"math/rand"
 	"os"
 	"path/filepath"
 	"sort"
 	"testing"
 
+	prom_testutil "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/prometheus/tsdb/chunkenc"
 	"github.com/prometheus/tsdb/chunks"
 	"github.com/prometheus/tsdb/index"
@@ -117,13 +119,13 @@ func TestHead_ReadWAL(t *testing.T) {
 
 	w, err := wal.New(nil, nil, dir)
 	testutil.Ok(t, err)
+	defer w.Close()
 	populateTestWAL(t, w, entries)
 
 	head, err := NewHead(nil, nil, w, 1000)
 	testutil.Ok(t, err)
-	defer head.Close()
 
-	testutil.Ok(t, head.Init())
+	testutil.Ok(t, head.Init(math.MinInt64))
 	testutil.Equals(t, uint64(100), head.lastSeriesID)
 
 	s10 := head.series.getByID(10)
@@ -132,7 +134,7 @@ func TestHead_ReadWAL(t *testing.T) {
 	s100 := head.series.getByID(100)
 
 	testutil.Equals(t, labels.FromStrings("a", "1"), s10.lset)
-	testutil.Equals(t, labels.FromStrings("a", "2"), s11.lset)
+	testutil.Equals(t, (*memSeries)(nil), s11) // Series without samples should be garbage colected at head.Init().
 	testutil.Equals(t, labels.FromStrings("a", "4"), s50.lset)
 	testutil.Equals(t, labels.FromStrings("a", "3"), s100.lset)
 
@@ -146,7 +148,6 @@ func TestHead_ReadWAL(t *testing.T) {
 	}
 
 	testutil.Equals(t, []sample{{100, 2}, {101, 5}}, expandChunk(s10.iterator(0)))
-	testutil.Equals(t, 0, len(s11.chunks))
 	testutil.Equals(t, []sample{{101, 6}}, expandChunk(s50.iterator(0)))
 	testutil.Equals(t, []sample{{100, 3}}, expandChunk(s100.iterator(0)))
 }
@@ -282,13 +283,13 @@ func TestHeadDeleteSeriesWithoutSamples(t *testing.T) {
 
 	w, err := wal.New(nil, nil, dir)
 	testutil.Ok(t, err)
+	defer w.Close()
 	populateTestWAL(t, w, entries)
 
 	head, err := NewHead(nil, nil, w, 1000)
 	testutil.Ok(t, err)
-	defer head.Close()
 
-	testutil.Ok(t, head.Init())
+	testutil.Ok(t, head.Init(math.MinInt64))
 
 	testutil.Ok(t, head.Delete(0, 100, labels.NewEqualMatcher("a", "1")))
 }
@@ -390,6 +391,7 @@ func TestDeleteUntilCurMax(t *testing.T) {
 	numSamples := int64(10)
 	hb, err := NewHead(nil, nil, nil, 1000000)
 	testutil.Ok(t, err)
+	defer hb.Close()
 	app := hb.Appender()
 	smpls := make([]float64, numSamples)
 	for i := int64(0); i < numSamples; i++ {
@@ -478,6 +480,7 @@ func TestDelete_e2e(t *testing.T) {
 	defer os.RemoveAll(dir)
 	hb, err := NewHead(nil, nil, nil, 100000)
 	testutil.Ok(t, err)
+	defer hb.Close()
 	app := hb.Appender()
 	for _, l := range lbls {
 		ls := labels.New(l...)
@@ -674,7 +677,7 @@ func TestMemSeries_append(t *testing.T) {
 
 	ok, chunkCreated = s.append(1000, 3)
 	testutil.Assert(t, ok, "append failed")
-	testutil.Assert(t, ok, "expected new chunk on boundary")
+	testutil.Assert(t, chunkCreated, "expected new chunk on boundary")
 
 	ok, chunkCreated = s.append(1001, 4)
 	testutil.Assert(t, ok, "append failed")
@@ -845,6 +848,7 @@ func TestHead_LogRollback(t *testing.T) {
 
 	w, err := wal.New(nil, nil, dir)
 	testutil.Ok(t, err)
+	defer w.Close()
 	h, err := NewHead(nil, nil, w, 1000)
 	testutil.Ok(t, err)
 
@@ -911,6 +915,7 @@ func TestWalRepair(t *testing.T) {
 
 			w, err := wal.New(nil, nil, dir)
 			testutil.Ok(t, err)
+			defer w.Close()
 
 			for i := 1; i <= test.totalRecs; i++ {
 				// At this point insert a corrupted record.
@@ -923,7 +928,9 @@ func TestWalRepair(t *testing.T) {
 
 			h, err := NewHead(nil, nil, w, 1)
 			testutil.Ok(t, err)
-			testutil.Ok(t, h.Init())
+			testutil.Equals(t, 0.0, prom_testutil.ToFloat64(h.metrics.walCorruptionsTotal))
+			testutil.Ok(t, h.Init(math.MinInt64))
+			testutil.Equals(t, 1.0, prom_testutil.ToFloat64(h.metrics.walCorruptionsTotal))
 
 			sr, err := wal.NewSegmentsReader(dir)
 			testutil.Ok(t, err)
@@ -936,7 +943,6 @@ func TestWalRepair(t *testing.T) {
 			}
 			testutil.Ok(t, r.Err())
 			testutil.Equals(t, test.expRecs, actRec, "Wrong number of intact records")
-
 		})
 	}
 }
