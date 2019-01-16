@@ -572,16 +572,13 @@ func (db *DB) openBlocks() (blocks []*Block, corrupted map[ulid.ULID]error, err 
 				corrupted[meta.ULID] = err
 				continue
 			}
-
 		}
 		blocks = append(blocks, block)
 	}
-
 	return blocks, corrupted, nil
 }
 
-// deletableBlocks returns all blocks past retention policy
-// and blocks superseded by parents after a compaction.
+// deletableBlocks returns all blocks past retention policy.
 func (db *DB) deletableBlocks(blocks []*Block) map[ulid.ULID]*Block {
 	deletable := make(map[ulid.ULID]*Block)
 
@@ -603,14 +600,15 @@ func (db *DB) deletableBlocks(blocks []*Block) map[ulid.ULID]*Block {
 }
 
 func (db *DB) beyondTimeRetention(blocks []*Block) (deleteable map[ulid.ULID]*Block) {
-	deleteable = make(map[ulid.ULID]*Block)
-	if len(db.blocks) == 0 || db.opts.RetentionDuration == 0 { // Time retention is disabled or no blocks to work with.
+	// Time retention is disabled or no blocks to work with.
+	if len(db.blocks) == 0 || db.opts.RetentionDuration == 0 {
 		return
 	}
 
+	deleteable = make(map[ulid.ULID]*Block)
 	for i, block := range blocks {
-		// The difference between the first block and this block is larger than the retention period so
-		// any blocks after that are added as deleteable.
+		// The difference between the first block and this block is larger than
+		// the retention period so any blocks after that are added as deleteable.
 		if i > 0 && blocks[0].Meta().MaxTime-block.Meta().MaxTime > int64(db.opts.RetentionDuration) {
 			for _, b := range blocks[i:] {
 				deleteable[b.meta.ULID] = b
@@ -619,17 +617,17 @@ func (db *DB) beyondTimeRetention(blocks []*Block) (deleteable map[ulid.ULID]*Bl
 			break
 		}
 	}
-
 	return deleteable
 }
 
 func (db *DB) beyondSizeRetention(blocks []*Block) (deleteable map[ulid.ULID]*Block) {
-	deleteable = make(map[ulid.ULID]*Block)
-	if db.opts.MaxBytes <= 0 { // Size retention is disabled.
+	// Size retention is disabled or no blocks to work with.
+	if len(db.blocks) == 0 || db.opts.MaxBytes <= 0 {
 		return
 	}
 
-	var blocksSize = int64(0)
+	deleteable = make(map[ulid.ULID]*Block)
+	blocksSize := int64(0)
 	for i, block := range blocks {
 		blocksSize += block.Size()
 		if blocksSize > db.opts.MaxBytes {
@@ -641,7 +639,6 @@ func (db *DB) beyondSizeRetention(blocks []*Block) (deleteable map[ulid.ULID]*Bl
 			break
 		}
 	}
-
 	return deleteable
 }
 
