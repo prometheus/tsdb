@@ -36,6 +36,88 @@ type record struct {
 	b []byte
 }
 
+var data = make([]byte, 100000)
+var testReaderCases = []struct {
+	t    []record
+	exp  [][]byte
+	fail bool
+}{
+	// Sequence of valid records.
+	{
+		t: []record{
+			{recFull, data[0:200]},
+			{recFirst, data[200:300]},
+			{recLast, data[300:400]},
+			{recFirst, data[400:800]},
+			{recMiddle, data[800:900]},
+			{recPageTerm, make([]byte, pageSize-900-recordHeaderSize*5-1)}, // exactly lines up with page boundary.
+			{recLast, data[900:900]},
+			{recFirst, data[900:1000]},
+			{recMiddle, data[1000:1200]},
+			{recMiddle, data[1200:30000]},
+			{recMiddle, data[30000:30001]},
+			{recMiddle, data[30001:30001]},
+			{recLast, data[30001:32000]},
+		},
+		exp: [][]byte{
+			data[0:200],
+			data[200:400],
+			data[400:900],
+			data[900:32000],
+		},
+	},
+	// Exactly at the limit of one page minus the header size
+	{
+		t: []record{
+			{recFull, data[0 : pageSize-recordHeaderSize]},
+		},
+		exp: [][]byte{
+			data[:pageSize-recordHeaderSize],
+		},
+	},
+	// More than a full page, this exceeds our buffer and can never happen
+	// when written by the WAL.
+	{
+		t: []record{
+			{recFull, data[0 : pageSize+1]},
+		},
+		fail: true,
+	},
+	// Invalid orders of record types.
+	{
+		t:    []record{{recMiddle, data[:200]}},
+		fail: true,
+	},
+	{
+		t:    []record{{recLast, data[:200]}},
+		fail: true,
+	},
+	{
+		t: []record{
+			{recFirst, data[:200]},
+			{recFull, data[200:400]},
+		},
+		fail: true,
+	},
+	{
+		t: []record{
+			{recFirst, data[:100]},
+			{recMiddle, data[100:200]},
+			{recFull, data[200:400]},
+		},
+		fail: true,
+	},
+	// Non-zero data after page termination.
+	{
+		t: []record{
+			{recFull, data[:100]},
+			{recPageTerm, append(make([]byte, 1000), 1)},
+		},
+		exp:  [][]byte{data[:100]},
+		fail: true,
+	},
+}
+
 func encodedRecord(t recType, b []byte) []byte {
 	if t == recPageTerm {
 		return append([]byte{0}, b...)
@@ -49,91 +131,7 @@ func encodedRecord(t recType, b []byte) []byte {
 
 // TestReader feeds the reader a stream of encoded records with different types.
 func TestReader(t *testing.T) {
-	data := make([]byte, 100000)
-	_, err := rand.Read(data)
-	testutil.Ok(t, err)
-
-	cases := []struct {
-		t    []record
-		exp  [][]byte
-		fail bool
-	}{
-		// Sequence of valid records.
-		{
-			t: []record{
-				{recFull, data[0:200]},
-				{recFirst, data[200:300]},
-				{recLast, data[300:400]},
-				{recFirst, data[400:800]},
-				{recMiddle, data[800:900]},
-				{recPageTerm, make([]byte, pageSize-900-recordHeaderSize*5-1)}, // exactly lines up with page boundary.
-				{recLast, data[900:900]},
-				{recFirst, data[900:1000]},
-				{recMiddle, data[1000:1200]},
-				{recMiddle, data[1200:30000]},
-				{recMiddle, data[30000:30001]},
-				{recMiddle, data[30001:30001]},
-				{recLast, data[30001:32000]},
-			},
-			exp: [][]byte{
-				data[0:200],
-				data[200:400],
-				data[400:900],
-				data[900:32000],
-			},
-		},
-		// Exactly at the limit of one page minus the header size
-		{
-			t: []record{
-				{recFull, data[0 : pageSize-recordHeaderSize]},
-			},
-			exp: [][]byte{
-				data[:pageSize-recordHeaderSize],
-			},
-		},
-		// More than a full page, this exceeds our buffer and can never happen
-		// when written by the WAL.
-		{
-			t: []record{
-				{recFull, data[0 : pageSize+1]},
-			},
-			fail: true,
-		},
-		// Invalid orders of record types.
-		{
-			t:    []record{{recMiddle, data[:200]}},
-			fail: true,
-		},
-		{
-			t:    []record{{recLast, data[:200]}},
-			fail: true,
-		},
-		{
-			t: []record{
-				{recFirst, data[:200]},
-				{recFull, data[200:400]},
-			},
-			fail: true,
-		},
-		{
-			t: []record{
-				{recFirst, data[:100]},
-				{recMiddle, data[100:200]},
-				{recFull, data[200:400]},
-			},
-			fail: true,
-		},
-		// Non-zero data after page termination.
-		{
-			t: []record{
-				{recFull, data[:100]},
-				{recPageTerm, append(make([]byte, 1000), 1)},
-			},
-			exp:  [][]byte{data[:100]},
-			fail: true,
-		},
-	}
-	for i, c := range cases {
+	for i, c := range testReaderCases {
 		t.Logf("test %d", i)
 
 		var buf []byte
@@ -161,96 +159,7 @@ func TestReader(t *testing.T) {
 }
 
 func TestReader_Live(t *testing.T) {
-	data := make([]byte, 100000)
-	_, err := rand.Read(data)
-	testutil.Ok(t, err)
-
-	cases := []struct {
-		t    []record
-		exp  [][]byte
-		fail bool
-	}{
-		// Sequence of valid records.
-		{
-			t: []record{
-				{recFull, data[0:200]},
-				{recFirst, data[200:300]},
-				{recLast, data[300:400]},
-				{recFirst, data[400:800]},
-				{recMiddle, data[800:900]},
-				{recPageTerm, make([]byte, pageSize-900-recordHeaderSize*5-1)}, // exactly lines up with page boundary.
-				{recLast, data[900:900]},
-				{recFirst, data[900:1000]},
-				{recMiddle, data[1000:1200]},
-				{recMiddle, data[1200:30000]},
-				{recMiddle, data[30000:30001]},
-				{recMiddle, data[30001:30001]},
-				{recLast, data[30001:32000]},
-			},
-			exp: [][]byte{
-				data[0:200],
-				data[200:400],
-				data[400:900],
-				data[900:32000],
-			},
-		},
-		// Exactly at the limit of one page minus the header size
-		{
-			t: []record{
-				{recFull, data[0 : pageSize-recordHeaderSize]},
-			},
-			exp: [][]byte{
-				data[:pageSize-recordHeaderSize],
-			},
-		},
-		// More than a full page, this exceeds our buffer and can never happen
-		// when written by the WAL.
-		{
-			t: []record{
-				{recFull, data[0 : pageSize+1]},
-			},
-			fail: true,
-		},
-		// Invalid orders of record types.
-		{
-			t:    []record{{recMiddle, data[:20]}},
-			fail: true,
-		},
-		{
-			t:    []record{{recLast, data[:200]}},
-			fail: true,
-		},
-		{
-			t: []record{
-				{recFirst, data[:200]},
-				{recFull, data[200:400]},
-			},
-			fail: true,
-		},
-		{
-			t: []record{
-				{recFirst, data[:100]},
-				{recMiddle, data[100:200]},
-				{recFull, data[200:400]},
-			},
-			fail: true,
-		},
-		// Non-zero data after page termination.
-		{
-			t: []record{
-				{recFull, data[:32000]},
-				{recPageTerm, append(make([]byte, 759), 1)},
-				{recFull, data[:32000]},
-			},
-			exp: [][]byte{
-				data[:32000],
-				data[:32000],
-			},
-			fail: true,
-		},
-	}
-
-	for i, c := range cases {
+	for i, c := range testReaderCases {
 		t.Logf("test %d", i)
 		dir, err := ioutil.TempDir("", fmt.Sprintf("live_reader_%d", i))
 		t.Logf("created dir %s", dir)
