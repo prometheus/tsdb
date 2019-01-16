@@ -35,7 +35,7 @@ import (
 )
 
 const (
-	defaultSegmentSize = 128 * 1024 * 1024 // 128 MB
+	DefaultSegmentSize = 128 * 1024 * 1024 // 128 MB
 	pageSize           = 32 * 1024         // 32KB
 	recordHeaderSize   = 7
 )
@@ -164,6 +164,7 @@ type WAL struct {
 	page        *page    // active page
 	stopc       chan chan struct{}
 	actorc      chan func()
+	closed      bool // To allow calling Close() more than once without blocking.
 
 	fsyncDuration   prometheus.Summary
 	pageFlushes     prometheus.Counter
@@ -174,7 +175,7 @@ type WAL struct {
 
 // New returns a new WAL over the given directory.
 func New(logger log.Logger, reg prometheus.Registerer, dir string) (*WAL, error) {
-	return NewSize(logger, reg, dir, defaultSegmentSize)
+	return NewSize(logger, reg, dir, DefaultSegmentSize)
 }
 
 // NewSize returns a new WAL over the given directory.
@@ -298,9 +299,6 @@ func (w *WAL) Repair(origErr error) error {
 	level.Warn(w.logger).Log("msg", "deleting all segments behind corruption", "segment", cerr.Segment)
 
 	for _, s := range segs {
-		if s.index <= cerr.Segment {
-			continue
-		}
 		if w.segment.i == s.index {
 			// The active segment needs to be removed,
 			// close it first (Windows!). Can be closed safely
@@ -309,6 +307,9 @@ func (w *WAL) Repair(origErr error) error {
 			if err := w.segment.Close(); err != nil {
 				return errors.Wrap(err, "close active segment")
 			}
+		}
+		if s.index <= cerr.Segment {
+			continue
 		}
 		if err := os.Remove(filepath.Join(w.dir, s.name)); err != nil {
 			return errors.Wrapf(err, "delete segment:%v", s.index)
@@ -584,6 +585,10 @@ func (w *WAL) Close() (err error) {
 	w.mtx.Lock()
 	defer w.mtx.Unlock()
 
+	if w.closed {
+		return nil
+	}
+
 	// Flush the last page and zero out all its remaining size.
 	// We must not flush an empty page as it would falsely signal
 	// the segment is done if we start writing to it again after opening.
@@ -603,7 +608,7 @@ func (w *WAL) Close() (err error) {
 	if err := w.segment.Close(); err != nil {
 		level.Error(w.logger).Log("msg", "close previous segment", "err", err)
 	}
-
+	w.closed = true
 	return nil
 }
 
