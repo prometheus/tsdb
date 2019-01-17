@@ -1432,7 +1432,7 @@ func TestNoEmptyBlocks(t *testing.T) {
 		testutil.Ok(t, err)
 		_, err = app.Add(defaultLabel, currentTime+1, 0)
 		testutil.Ok(t, err)
-		_, err = app.Add(defaultLabel, currentTime+rangeToTriggercompaction, 0) // ?????????????
+		_, err = app.Add(defaultLabel, currentTime+rangeToTriggercompaction-3, 0) // ?????????????
 		testutil.Ok(t, err)
 		testutil.Ok(t, app.Commit())
 		testutil.Ok(t, db.head.Delete(math.MinInt64, math.MaxInt64, defaultMatcher))

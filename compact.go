@@ -191,7 +191,7 @@ func (c *LeveledCompactor) plan(dms []dirMeta) ([]string, error) {
 		return res, nil
 	}
 
-	// Compact any blocks that have >5% tombstones.
+	// Compact any blocks with big enough time range that have >5% tombstones.
 	for i := len(dms) - 1; i >= 0; i-- {
 		meta := dms[i].meta
 		if meta.MaxTime-meta.MinTime < c.ranges[len(c.ranges)/2] {
