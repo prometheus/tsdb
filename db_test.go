@@ -1365,93 +1365,104 @@ func TestInitializeHeadTimestamp(t *testing.T) {
 }
 
 func TestNoEmptyBlocks(t *testing.T) {
-	db, close := openTestDB(t, nil)
+	db, close := openTestDB(t, &Options{
+		BlockRanges: []int64{100},
+	})
 	defer close()
 	defer db.Close()
 	db.DisableCompactions()
 
-	// Test no blocks after compact with empty head.
-	testutil.Ok(t, db.compact())
-	bb, err := blockDirs(db.Dir())
-	testutil.Ok(t, err)
-	testutil.Equals(t, len(db.Blocks()), len(bb))
-	testutil.Equals(t, 0, len(bb))
-
-	// Test no blocks after deleting all samples from head.
-	rangeToTriggercompaction := DefaultOptions.BlockRanges[0]/2*3 + 1
+	rangeToTriggercompaction := db.opts.BlockRanges[0] / 2 * 3
 	defaultLabel := labels.FromStrings("foo", "bar")
-	defaultMatcher := labels.NewEqualMatcher(defaultLabel[0].Name, defaultLabel[0].Value)
+	defaultMatcher := labels.NewMustRegexpMatcher("", ".*")
 
-	app := db.Appender()
-	for i := int64(0); i < 6; i++ {
-		_, err := app.Add(defaultLabel, i*rangeToTriggercompaction, 0)
+	t.Run("Test no blocks after compact with empty head.", func(t *testing.T) {
+		testutil.Ok(t, db.compact())
+		actBlocks, err := blockDirs(db.Dir())
 		testutil.Ok(t, err)
-		_, err = app.Add(defaultLabel, i*rangeToTriggercompaction+1000, 0)
+		testutil.Equals(t, len(db.Blocks()), len(actBlocks))
+		testutil.Equals(t, 0, len(actBlocks))
+	})
+
+	t.Run("Test no blocks after deleting all samples from head.", func(t *testing.T) {
+		app := db.Appender()
+		_, err := app.Add(defaultLabel, 1, 0)
 		testutil.Ok(t, err)
-	}
-	testutil.Ok(t, app.Commit())
+		_, err = app.Add(defaultLabel, 2, 0)
+		testutil.Ok(t, err)
+		_, err = app.Add(defaultLabel, 3+rangeToTriggercompaction, 0)
+		testutil.Ok(t, err)
+		testutil.Ok(t, app.Commit())
+		testutil.Ok(t, db.Delete(math.MinInt64, math.MaxInt64, defaultMatcher))
+		testutil.Equals(t, 0, int(prom_testutil.ToFloat64(db.compactor.(*LeveledCompactor).metrics.ran)), "initial compaction count should be zero")
+		testutil.Ok(t, db.compact())
+		testutil.Equals(t, 1, int(prom_testutil.ToFloat64(db.compactor.(*LeveledCompactor).metrics.ran)), "compaction should have been triggered here")
 
-	testutil.Ok(t, db.Delete(math.MinInt64, math.MaxInt64, defaultMatcher))
-	testutil.Ok(t, db.compact())
+		actBlocks, err := blockDirs(db.Dir())
+		testutil.Ok(t, err)
+		testutil.Equals(t, len(db.Blocks()), len(actBlocks))
+		testutil.Equals(t, 0, len(actBlocks))
 
-	// No blocks created.
-	bb, err = blockDirs(db.Dir())
-	testutil.Ok(t, err)
-	testutil.Equals(t, len(db.Blocks()), len(bb))
-	testutil.Equals(t, 0, len(bb))
+		app = db.Appender()
+		_, err = app.Add(defaultLabel, 1, 0)
+		testutil.Assert(t, err == ErrOutOfBounds, "the head should be truncated so no samples in the past should be allowed")
+		currentTime := db.Head().MaxTime()
+		_, err = app.Add(defaultLabel, currentTime, 0)
+		testutil.Ok(t, err)
+		_, err = app.Add(defaultLabel, currentTime+1, 0)
+		testutil.Ok(t, err)
+		_, err = app.Add(defaultLabel, currentTime+rangeToTriggercompaction, 0)
+		testutil.Ok(t, err)
+		testutil.Ok(t, app.Commit())
 
-	app = db.Appender()
-	for i := int64(7); i < 25; i++ {
-		for j := int64(0); j < 10; j++ {
-			_, err := app.Add(defaultLabel, i*rangeToTriggercompaction+j, 0)
-			testutil.Ok(t, err)
+		testutil.Ok(t, db.compact())
+		testutil.Equals(t, 2, int(prom_testutil.ToFloat64(db.compactor.(*LeveledCompactor).metrics.ran)), "compaction should have been triggered here")
+		actBlocks, err = blockDirs(db.Dir())
+		testutil.Ok(t, err)
+		testutil.Equals(t, len(db.Blocks()), len(actBlocks))
+		testutil.Assert(t, len(actBlocks) == 1, "No blocks created when compacting with >0 samples")
+	})
+
+	t.Run(`When no new block is created from head, and there are some blocks on disk 
+	compaction should not run into infinite loop (was seen during development).`, func(t *testing.T) {
+		oldBlocks := db.Blocks()
+		app := db.Appender()
+		currentTime := db.Head().MaxTime()
+		_, err := app.Add(defaultLabel, currentTime, 0)
+		testutil.Ok(t, err)
+		_, err = app.Add(defaultLabel, currentTime+1, 0)
+		testutil.Ok(t, err)
+		_, err = app.Add(defaultLabel, currentTime+rangeToTriggercompaction, 0) // ?????????????
+		testutil.Ok(t, err)
+		testutil.Ok(t, app.Commit())
+		testutil.Ok(t, db.head.Delete(math.MinInt64, math.MaxInt64, defaultMatcher))
+		testutil.Ok(t, db.compact())
+		testutil.Equals(t, 3, int(prom_testutil.ToFloat64(db.compactor.(*LeveledCompactor).metrics.ran)), "compaction should have been triggered here")
+		testutil.Equals(t, oldBlocks, db.Blocks())
+	})
+
+	t.Run("Test no blocks remaining after deleting all samples from disk.", func(t *testing.T) {
+		currentTime := db.Head().MaxTime()
+		blocks := []*BlockMeta{
+			{MinTime: currentTime, MaxTime: currentTime + db.opts.BlockRanges[0]}, //
+			{MinTime: currentTime + 100, MaxTime: currentTime + 100 + db.opts.BlockRanges[0]},
 		}
-	}
-	testutil.Ok(t, app.Commit())
+		for _, m := range blocks {
+			createBlock(t, db.Dir(), 10, m.MinTime, m.MaxTime)
+		}
 
-	testutil.Ok(t, db.compact())
-	bb, err = blockDirs(db.Dir())
-	testutil.Ok(t, err)
-	testutil.Equals(t, len(db.Blocks()), len(bb))
-	testutil.Assert(t, len(bb) > 0, "No blocks created when compacting with >0 samples")
+		oldBlocks := db.Blocks()
+		testutil.Ok(t, db.reload())                                      // Reload the db to register the new blocks.
+		testutil.Equals(t, len(blocks)+len(oldBlocks), len(db.Blocks())) // Ensure all blocks are registered.
+		testutil.Ok(t, db.Delete(math.MinInt64, math.MaxInt64, defaultMatcher))
+		testutil.Ok(t, db.compact())
+		testutil.Equals(t, 4, int(prom_testutil.ToFloat64(db.compactor.(*LeveledCompactor).metrics.ran)), "compaction should have been triggered here as all blocks have tombstones")
 
-	// When no new block is created from head, and there are some blocks on disk,
-	// compaction should not run into infinite loop (was seen during development).
-	oldBlocks := db.Blocks()
-	app = db.Appender()
-	for i := int64(26); i < 30; i++ {
-		_, err := app.Add(defaultLabel, i*rangeToTriggercompaction, 0)
+		actBlocks, err := blockDirs(db.Dir())
 		testutil.Ok(t, err)
-	}
-	testutil.Ok(t, app.Commit())
-	testutil.Ok(t, db.head.Delete(math.MinInt64, math.MaxInt64, defaultMatcher))
-	testutil.Ok(t, db.compact())
-	testutil.Equals(t, oldBlocks, db.Blocks())
-
-	// Test no blocks remaining after deleting all samples from disk.
-	testutil.Ok(t, db.Delete(math.MinInt64, math.MaxInt64, defaultMatcher))
-
-	// Mimicking Plan() of compactor and getting list
-	// of all block directories to pass for compaction.
-	plan := []string{}
-	for _, b := range db.Blocks() {
-		plan = append(plan, b.Dir())
-	}
-
-	// No new blocks are created by Compact, and marks all old blocks as deletable.
-	oldBlocks = db.Blocks()
-	_, err = db.compactor.Compact(db.dir, plan, db.Blocks())
-	testutil.Ok(t, err)
-	// Blocks are the same.
-	testutil.Equals(t, oldBlocks, db.Blocks())
-
-	// Deletes the deletable blocks.
-	testutil.Ok(t, db.reload())
-	// All samples are deleted. No blocks should be remaining after compact.
-	bb, err = blockDirs(db.Dir())
-	testutil.Ok(t, err)
-	testutil.Equals(t, len(db.Blocks()), len(bb))
-	testutil.Equals(t, 0, len(bb))
+		testutil.Equals(t, len(db.Blocks()), len(actBlocks))
+		testutil.Equals(t, 1, len(actBlocks), "All samples are deleted. Only the most recent block should remain after compaction.")
+	})
 }
 
 func TestDB_LabelNames(t *testing.T) {
