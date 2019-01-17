@@ -383,7 +383,7 @@ func (c *LeveledCompactor) Compact(dest string, dirs []string, open []*Block) (u
 			}
 			uid = ulid.ULID{}
 			level.Info(c.logger).Log(
-				"msg", "compact blocks [resulted in empty block]",
+				"msg", "compact blocks resulted in empty block",
 				"count", len(blocks),
 				"sources", fmt.Sprintf("%v", uids),
 				"duration", time.Since(start),
