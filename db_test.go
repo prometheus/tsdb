@@ -1448,7 +1448,7 @@ func TestNoEmptyBlocks(t *testing.T) {
 			{MinTime: currentTime + 100, MaxTime: currentTime + 100 + db.opts.BlockRanges[0]},
 		}
 		for _, m := range blocks {
-			createBlock(t, db.Dir(), 10, m.MinTime, m.MaxTime)
+			createBlock(t, db.Dir(), 2, m.MinTime, m.MaxTime)
 		}
 
 		oldBlocks := db.Blocks()
