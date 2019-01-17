@@ -1406,6 +1406,8 @@ func TestNoEmptyBlocks(t *testing.T) {
 		app = db.Appender()
 		_, err = app.Add(defaultLabel, 1, 0)
 		testutil.Assert(t, err == ErrOutOfBounds, "the head should be truncated so no samples in the past should be allowed")
+
+		// Adding new blocks.
 		currentTime := db.Head().MaxTime()
 		_, err = app.Add(defaultLabel, currentTime, 0)
 		testutil.Ok(t, err)
@@ -1444,7 +1446,7 @@ func TestNoEmptyBlocks(t *testing.T) {
 	t.Run("Test no blocks remaining after deleting all samples from disk.", func(t *testing.T) {
 		currentTime := db.Head().MaxTime()
 		blocks := []*BlockMeta{
-			{MinTime: currentTime, MaxTime: currentTime + db.opts.BlockRanges[0]}, //
+			{MinTime: currentTime, MaxTime: currentTime + db.opts.BlockRanges[0]},
 			{MinTime: currentTime + 100, MaxTime: currentTime + 100 + db.opts.BlockRanges[0]},
 		}
 		for _, m := range blocks {
