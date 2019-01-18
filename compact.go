@@ -466,6 +466,10 @@ func (w *instrumentedChunkWriter) WriteChunks(chunks ...chunks.Meta) error {
 // write creates a new block that is the union of the provided blocks into dir.
 // It cleans up all files of the old blocks after completing successfully.
 func (c *LeveledCompactor) write(dest string, meta *BlockMeta, blocks ...BlockReader) (err error) {
+	level.Info(c.logger).Log("msg", "writing blocks to disk")
+	level.Info(c.logger).Log("msg", "number of blocks", "count", len(blocks))
+	start := time.Now()
+
 	dir := filepath.Join(dest, meta.ULID.String())
 	tmp := dir + ".tmp"
 
@@ -569,6 +573,10 @@ func (c *LeveledCompactor) write(dest string, meta *BlockMeta, blocks ...BlockRe
 	if err := renameFile(tmp, dir); err != nil {
 		return errors.Wrap(err, "rename block dir")
 	}
+
+	elapsed := time.Since(start)
+	level.Info(c.logger).Log("msg", "writing blocks to disk finished")
+	level.Info(c.logger).Log("msg", "it took", "time", elapsed)
 
 	return nil
 }
