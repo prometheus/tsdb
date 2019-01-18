@@ -17,6 +17,7 @@ package wal
 import (
 	"bytes"
 	"fmt"
+	// "io"
 	"io/ioutil"
 	"math/rand"
 	"os"
@@ -25,6 +26,15 @@ import (
 
 	"github.com/prometheus/tsdb/testutil"
 )
+
+// We only want to fail the fuzz test if the reader
+// returns an error other than EOF, which we expect to get.
+// func checkErrorEOF(err error) error {
+// 	if err != io.EOF {
+// 		return err
+// 	}
+// 	return nil
+// }
 
 func TestWAL_Repair(t *testing.T) {
 	for name, test := range map[string]struct {
