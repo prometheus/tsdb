@@ -1458,7 +1458,7 @@ func TestNoEmptyBlocks(t *testing.T) {
 		testutil.Equals(t, len(blocks)+len(oldBlocks), len(db.Blocks())) // Ensure all blocks are registered.
 		testutil.Ok(t, db.Delete(math.MinInt64, math.MaxInt64, defaultMatcher))
 		testutil.Ok(t, db.compact())
-		testutil.Equals(t, 4, int(prom_testutil.ToFloat64(db.compactor.(*LeveledCompactor).metrics.ran)), "compaction should have been triggered here as all blocks have tombstones")
+		testutil.Equals(t, 5, int(prom_testutil.ToFloat64(db.compactor.(*LeveledCompactor).metrics.ran)), "compaction should have been triggered here once for each block that have tombstones")
 
 		actBlocks, err := blockDirs(db.Dir())
 		testutil.Ok(t, err)
