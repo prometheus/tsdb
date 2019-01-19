@@ -412,13 +412,8 @@ func (c *LeveledCompactor) Compact(dest string, dirs []string, open []*Block) (u
 	uid = ulid.MustNew(ulid.Now(), entropy)
 
 	meta := compactBlockMetas(uid, metas...)
-	overlapping, err := c.write(dest, meta, blocks...)
+	err = c.write(dest, meta, blocks...)
 	if err == nil {
-		overlaps := "false"
-		if overlapping {
-			c.metrics.overlappingBlocks.Inc()
-			overlaps = "true"
-		}
 		level.Info(c.logger).Log(
 			"msg", "compact blocks",
 			"count", len(blocks),
@@ -427,7 +422,6 @@ func (c *LeveledCompactor) Compact(dest string, dirs []string, open []*Block) (u
 			"ulid", meta.ULID,
 			"sources", fmt.Sprintf("%v", uids),
 			"duration", time.Since(start),
-			"overlapping", overlaps,
 		)
 		return uid, nil
 	}
@@ -462,7 +456,7 @@ func (c *LeveledCompactor) Write(dest string, b BlockReader, mint, maxt int64, p
 		}
 	}
 
-	_, err := c.write(dest, meta, b)
+	err := c.write(dest, meta, b)
 	if err != nil {
 		return uid, err
 	}
@@ -492,8 +486,7 @@ func (w *instrumentedChunkWriter) WriteChunks(chunks ...chunks.Meta) error {
 
 // write creates a new block that is the union of the provided blocks into dir.
 // It cleans up all files of the old blocks after completing successfully.
-// The returned bool is true if the parent blocks were overlapping.
-func (c *LeveledCompactor) write(dest string, meta *BlockMeta, blocks ...BlockReader) (overlapping bool, err error) {
+func (c *LeveledCompactor) write(dest string, meta *BlockMeta, blocks ...BlockReader) (err error) {
 	dir := filepath.Join(dest, meta.ULID.String())
 	tmp := dir + ".tmp"
 
@@ -510,11 +503,11 @@ func (c *LeveledCompactor) write(dest string, meta *BlockMeta, blocks ...BlockRe
 	}(time.Now())
 
 	if err = os.RemoveAll(tmp); err != nil {
-		return overlapping, err
+		return err
 	}
 
 	if err = os.MkdirAll(tmp, 0777); err != nil {
-		return overlapping, err
+		return err
 	}
 
 	// Populate chunk and index files into temporary directory with
@@ -523,7 +516,7 @@ func (c *LeveledCompactor) write(dest string, meta *BlockMeta, blocks ...BlockRe
 
 	chunkw, err = chunks.NewWriter(chunkDir(tmp))
 	if err != nil {
-		return overlapping, errors.Wrap(err, "open chunk writer")
+		return errors.Wrap(err, "open chunk writer")
 	}
 	defer chunkw.Close()
 	// Record written chunk sizes on level 1 compactions.
@@ -538,16 +531,19 @@ func (c *LeveledCompactor) write(dest string, meta *BlockMeta, blocks ...BlockRe
 
 	indexw, err := index.NewWriter(filepath.Join(tmp, indexFilename))
 	if err != nil {
-		return overlapping, errors.Wrap(err, "open index writer")
+		return errors.Wrap(err, "open index writer")
 	}
 	defer indexw.Close()
 
-	if overlapping, err = c.populateBlock(blocks, meta, indexw, chunkw); err != nil {
-		return overlapping, errors.Wrap(err, "write compaction")
+	if overlapping, err := c.populateBlock(blocks, meta, indexw, chunkw); err != nil {
+		return errors.Wrap(err, "write compaction")
+	} else if overlapping {
+		c.metrics.overlappingBlocks.Inc()
+		level.Warn(c.logger).Log("msg", "found overlapping blocks during compaction", "ulid", meta.ULID)
 	}
 
 	if err = writeMetaFile(tmp, meta); err != nil {
-		return overlapping, errors.Wrap(err, "write merged meta")
+		return errors.Wrap(err, "write merged meta")
 	}
 
 	// We are explicitly closing them here to check for error even
@@ -555,20 +551,20 @@ func (c *LeveledCompactor) write(dest string, meta *BlockMeta, blocks ...BlockRe
 	// you cannot delete these unless they are closed and the defer is to
 	// make sure they are closed if the function exits due to an error above.
 	if err = chunkw.Close(); err != nil {
-		return overlapping, errors.Wrap(err, "close chunk writer")
+		return errors.Wrap(err, "close chunk writer")
 	}
 	if err = indexw.Close(); err != nil {
-		return overlapping, errors.Wrap(err, "close index writer")
+		return errors.Wrap(err, "close index writer")
 	}
 
 	// Create an empty tombstones file.
 	if err := writeTombstoneFile(tmp, newMemTombstones()); err != nil {
-		return overlapping, errors.Wrap(err, "write new tombstones file")
+		return errors.Wrap(err, "write new tombstones file")
 	}
 
 	df, err := fileutil.OpenDir(tmp)
 	if err != nil {
-		return overlapping, errors.Wrap(err, "open temporary block dir")
+		return errors.Wrap(err, "open temporary block dir")
 	}
 	defer func() {
 		if df != nil {
@@ -577,21 +573,21 @@ func (c *LeveledCompactor) write(dest string, meta *BlockMeta, blocks ...BlockRe
 	}()
 
 	if err := fileutil.Fsync(df); err != nil {
-		return overlapping, errors.Wrap(err, "sync temporary dir file")
+		return errors.Wrap(err, "sync temporary dir file")
 	}
 
 	// Close temp dir before rename block dir (for windows platform).
 	if err = df.Close(); err != nil {
-		return overlapping, errors.Wrap(err, "close temporary dir")
+		return errors.Wrap(err, "close temporary dir")
 	}
 	df = nil
 
 	// Block successfully written, make visible and remove old ones.
 	if err := renameFile(tmp, dir); err != nil {
-		return overlapping, errors.Wrap(err, "rename block dir")
+		return errors.Wrap(err, "rename block dir")
 	}
 
-	return overlapping, nil
+	return nil
 }
 
 // populateBlock fills the index and chunk writers with new data gathered as the union
