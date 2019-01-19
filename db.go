@@ -517,7 +517,7 @@ func (db *DB) reload() (err error) {
 	db.metrics.blocksBytes.Set(float64(blocksSize))
 
 	sort.Slice(loadable, func(i, j int) bool {
-		return loadable[i].Meta().MaxTime < loadable[j].Meta().MaxTime
+		return loadable[i].Meta().MinTime < loadable[j].Meta().MinTime
 	})
 
 	// Swap new blocks first for subsequently created readers to be seen.
