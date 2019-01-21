@@ -697,7 +697,7 @@ func TestCompaction_populateBlock(t *testing.T) {
 			}
 
 			iw := &mockIndexWriter{}
-			_, err = c.populateBlock(blocks, meta, iw, nopChunkWriter{})
+			err = c.populateBlock(blocks, meta, iw, nopChunkWriter{})
 			if tc.expErr != nil {
 				testutil.NotOk(t, err)
 				testutil.Equals(t, tc.expErr.Error(), err.Error())
