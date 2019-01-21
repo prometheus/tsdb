@@ -774,7 +774,7 @@ func BenchmarkCompaction(b *testing.B) {
 			blockDirs := make([]string, 0, len(c.ranges))
 			var blocks []*Block
 			for _, r := range c.ranges {
-				block, err := OpenBlock(nil, createBlock(b, dir, nSeries, r[0], r[1]), nil)
+				block, err := OpenBlock(nil, createBlock(b, dir, nSeries, r[0], r[1], nil), nil)
 				testutil.Ok(b, err)
 				blocks = append(blocks, block)
 				defer block.Close()

@@ -45,7 +45,7 @@ func TestSetCompactionFailed(t *testing.T) {
 	testutil.Ok(t, err)
 	defer os.RemoveAll(tmpdir)
 
-	blockDir := createBlock(t, tmpdir, 1, 0, 0)
+	blockDir := createBlock(t, tmpdir, 1, 0, 0, nil)
 	b, err := OpenBlock(nil, blockDir, nil)
 	testutil.Ok(t, err)
 	testutil.Equals(t, false, b.meta.Compaction.Failed)
@@ -61,31 +61,51 @@ func TestSetCompactionFailed(t *testing.T) {
 
 // createBlock creates a block with nSeries series, filled with
 // samples of the given mint,maxt time range and returns its dir.
-func createBlock(tb testing.TB, dir string, nSeries int, mint, maxt int64) string {
+// series is the fixed set of series to add in blocks and takes
+// precedence over rest of the parameters.
+func createBlock(tb testing.TB, dir string, nSeries int, mint, maxt int64, series []Series) string {
 	head, err := NewHead(nil, nil, nil, 2*60*60*1000)
 	testutil.Ok(tb, err)
 	defer head.Close()
 
 	lbls, err := labels.ReadLabels(filepath.Join("testdata", "20kseries.json"), nSeries)
 	testutil.Ok(tb, err)
-	refs := make([]uint64, nSeries)
 
-	for ts := mint; ts <= maxt; ts++ {
-		app := head.Appender()
-		for i, lbl := range lbls {
-			if refs[i] != 0 {
-				err := app.AddFast(refs[i], ts, rand.Float64())
-				if err == nil {
-					continue
+	app := head.Appender()
+	if len(series) > 0 {
+		for _, s := range series {
+			ref := uint64(0)
+			it := s.Iterator()
+			for it.Next() {
+				t, v := it.At()
+				if ref != 0 {
+					err := app.AddFast(ref, t, v)
+					if err == nil {
+						continue
+					}
 				}
+				ref, err = app.Add(s.Labels(), t, v)
+				testutil.Ok(tb, err)
 			}
-			ref, err := app.Add(lbl, int64(ts), rand.Float64())
-			testutil.Ok(tb, err)
-			refs[i] = ref
+			testutil.Ok(tb, it.Err())
 		}
-		err := app.Commit()
-		testutil.Ok(tb, err)
+	} else {
+		for _, lbl := range lbls {
+			ref := uint64(0)
+			for ts := mint; ts <= maxt; ts++ {
+				if ref != 0 {
+					err := app.AddFast(ref, ts, rand.Float64())
+					if err == nil {
+						continue
+					}
+				}
+				ref, err = app.Add(lbl, int64(ts), rand.Float64())
+				testutil.Ok(tb, err)
+			}
+		}
 	}
+	err = app.Commit()
+	testutil.Ok(tb, err)
 
 	compactor, err := NewLeveledCompactor(nil, log.NewNopLogger(), []int64{1000000}, nil)
 	testutil.Ok(tb, err)

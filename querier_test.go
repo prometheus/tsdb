@@ -1271,7 +1271,7 @@ func BenchmarkPersistedQueries(b *testing.B) {
 				dir, err := ioutil.TempDir("", "bench_persisted")
 				testutil.Ok(b, err)
 				defer os.RemoveAll(dir)
-				block, err := OpenBlock(nil, createBlock(b, dir, nSeries, 1, int64(nSamples)), nil)
+				block, err := OpenBlock(nil, createBlock(b, dir, nSeries, 1, int64(nSamples), nil), nil)
 				testutil.Ok(b, err)
 				defer block.Close()
 
@@ -1513,7 +1513,7 @@ func BenchmarkQueryIteratorOverMultipleBlocks(b *testing.B) {
 
 	var blocks []*Block
 	for i := int64(0); i < int64(numBlocks); i++ {
-		block, err := OpenBlock(nil, createBlock(b, dir, nSeries, (2*i)*int64(numSamplesPerSeriesPerBlock), ((2*i)+1)*int64(numSamplesPerSeriesPerBlock)), nil)
+		block, err := OpenBlock(nil, createBlock(b, dir, nSeries, (2*i)*int64(numSamplesPerSeriesPerBlock), ((2*i)+1)*int64(numSamplesPerSeriesPerBlock), nil), nil)
 		testutil.Ok(b, err)
 		blocks = append(blocks, block)
 		defer block.Close()
@@ -1555,7 +1555,7 @@ func BenchmarkQuerySeekOverMultipleBlocks(b *testing.B) {
 
 	var blocks []*Block
 	for i := int64(0); i < int64(numBlocks); i++ {
-		block, err := OpenBlock(nil, createBlock(b, dir, nSeries, (2*i)*int64(numSamplesPerSeriesPerBlock), ((2*i)+1)*int64(numSamplesPerSeriesPerBlock)), nil)
+		block, err := OpenBlock(nil, createBlock(b, dir, nSeries, (2*i)*int64(numSamplesPerSeriesPerBlock), ((2*i)+1)*int64(numSamplesPerSeriesPerBlock), nil), nil)
 		testutil.Ok(b, err)
 		blocks = append(blocks, block)
 		defer block.Close()

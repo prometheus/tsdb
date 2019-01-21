@@ -30,9 +30,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	prom_testutil "github.com/prometheus/client_golang/prometheus/testutil"
-	"github.com/prometheus/tsdb/chunkenc"
 	"github.com/prometheus/tsdb/chunks"
-	"github.com/prometheus/tsdb/fileutil"
 	"github.com/prometheus/tsdb/index"
 	"github.com/prometheus/tsdb/labels"
 	"github.com/prometheus/tsdb/testutil"
@@ -89,7 +87,7 @@ func TestDB_reloadOrder(t *testing.T) {
 		{MinTime: 100, MaxTime: 110},
 	}
 	for _, m := range metas {
-		createBlock(t, db.Dir(), 1, m.MinTime, m.MaxTime)
+		createBlock(t, db.Dir(), 1, m.MinTime, m.MaxTime, nil)
 	}
 
 	testutil.Ok(t, db.reload())
@@ -838,7 +836,7 @@ func TestTombstoneCleanFail(t *testing.T) {
 	// totalBlocks should be >=2 so we have enough blocks to trigger compaction failure.
 	totalBlocks := 2
 	for i := 0; i < totalBlocks; i++ {
-		blockDir := createBlock(t, db.Dir(), 1, 0, 0)
+		blockDir := createBlock(t, db.Dir(), 1, 0, 0, nil)
 		block, err := OpenBlock(nil, blockDir, nil)
 		testutil.Ok(t, err)
 		// Add some some fake tombstones to trigger the compaction.
@@ -882,7 +880,7 @@ func (c *mockCompactorFailing) Write(dest string, b BlockReader, mint, maxt int6
 		return ulid.ULID{}, fmt.Errorf("the compactor already did the maximum allowed blocks so it is time to fail")
 	}
 
-	block, err := OpenBlock(nil, createBlock(c.t, dest, 1, 0, 0), nil)
+	block, err := OpenBlock(nil, createBlock(c.t, dest, 1, 0, 0, nil), nil)
 	testutil.Ok(c.t, err)
 	testutil.Ok(c.t, block.Close()) // Close block as we won't be using anywhere.
 	c.blocks = append(c.blocks, block)
@@ -920,7 +918,7 @@ func TestTimeRetention(t *testing.T) {
 	}
 
 	for _, m := range blocks {
-		createBlock(t, db.Dir(), 10, m.MinTime, m.MaxTime)
+		createBlock(t, db.Dir(), 10, m.MinTime, m.MaxTime, nil)
 	}
 
 	testutil.Ok(t, db.reload())                       // Reload the db to register the new blocks.
@@ -954,7 +952,7 @@ func TestSizeRetention(t *testing.T) {
 	}
 
 	for _, m := range blocks {
-		createBlock(t, db.Dir(), 100, m.MinTime, m.MaxTime)
+		createBlock(t, db.Dir(), 100, m.MinTime, m.MaxTime, nil)
 	}
 
 	// Test that registered size matches the actual disk size.
@@ -1321,7 +1319,7 @@ func TestInitializeHeadTimestamp(t *testing.T) {
 		testutil.Ok(t, err)
 		defer os.RemoveAll(dir)
 
-		createBlock(t, dir, 1, 1000, 2000)
+		createBlock(t, dir, 1, 1000, 2000, nil)
 
 		db, err := Open(dir, nil, nil, nil)
 		testutil.Ok(t, err)
@@ -1334,7 +1332,7 @@ func TestInitializeHeadTimestamp(t *testing.T) {
 		testutil.Ok(t, err)
 		defer os.RemoveAll(dir)
 
-		createBlock(t, dir, 1, 1000, 6000)
+		createBlock(t, dir, 1, 1000, 6000, nil)
 
 		testutil.Ok(t, os.MkdirAll(path.Join(dir, "wal"), 0777))
 		w, err := wal.New(nil, nil, path.Join(dir, "wal"))
@@ -1452,7 +1450,7 @@ func TestNoEmptyBlocks(t *testing.T) {
 			{MinTime: currentTime + 100, MaxTime: currentTime + 100 + db.opts.BlockRanges[0]},
 		}
 		for _, m := range blocks {
-			createBlock(t, db.Dir(), 2, m.MinTime, m.MaxTime)
+			createBlock(t, db.Dir(), 2, m.MinTime, m.MaxTime, nil)
 		}
 
 		oldBlocks := db.Blocks()
@@ -1782,18 +1780,8 @@ func TestVerticalCompaction(t *testing.T) {
 		testutil.Ok(t, err)
 
 		// Creating blocks.
-		for i, series := range c.blockSeries {
-			symbols := make(map[string]struct{})
-			for _, s := range series {
-				for _, l := range s.Labels() {
-					symbols[l.Name] = struct{}{}
-					symbols[l.Value] = struct{}{}
-				}
-			}
-			css := &MockChunkSeriesSet{
-				ss: newMockSeriesSet(series),
-			}
-			createNewBlock(t, tmpdir, c.mint[i], c.maxt[i], css, symbols)
+		for _, series := range c.blockSeries {
+			createBlock(t, tmpdir, 0, 0, 0, series)
 		}
 
 		// Open database.
@@ -1830,172 +1818,6 @@ func TestVerticalCompaction(t *testing.T) {
 	}
 }
 
-func createNewBlock(t *testing.T, dest string, mint, maxt int64, set ChunkSeriesSet, symbols map[string]struct{}) *BlockMeta {
-	entropy := rand.New(rand.NewSource(time.Now().UnixNano()))
-	uid := ulid.MustNew(ulid.Now(), entropy)
-	meta := &BlockMeta{
-		ULID:    uid,
-		MinTime: mint,
-		MaxTime: maxt,
-	}
-	meta.Compaction.Sources = []ulid.ULID{uid}
-
-	dir := filepath.Join(dest, meta.ULID.String())
-	tmp := dir + ".tmp"
-
-	// Writers.
-	chunkw, err := chunks.NewWriter(chunkDir(tmp))
-	testutil.Ok(t, err)
-	indexw, err := index.NewWriter(filepath.Join(tmp, indexFilename))
-	testutil.Ok(t, err)
-
-	// Writing the block.
-	err = populateBlock(set, meta, indexw, chunkw, symbols)
-	testutil.Ok(t, err)
-	testutil.Ok(t, writeMetaFile(tmp, meta))
-	testutil.Ok(t, errors.Wrap(chunkw.Close(), "close chunk writer"))
-	testutil.Ok(t, errors.Wrap(indexw.Close(), "close index writer"))
-	testutil.Ok(t, errors.Wrap(writeTombstoneFile(tmp, newMemTombstones()), "write new tombstones file"))
-
-	df, err := fileutil.OpenDir(tmp)
-	testutil.Ok(t, errors.Wrap(err, "open temporary block dir"))
-	defer func() {
-		if df != nil {
-			df.Close()
-		}
-	}()
-	testutil.Ok(t, errors.Wrap(fileutil.Fsync(df), "sync temporary dir file"))
-	testutil.Ok(t, errors.Wrap(errors.Wrap(df.Close(), "close temporary dir"), "sync temporary dir file"))
-	df = nil
-	testutil.Ok(t, errors.Wrap(renameFile(tmp, dir), "rename block dir"))
-	return meta
-}
-
-// All the logic is taken from compact.go.
-func populateBlock(set ChunkSeriesSet, meta *BlockMeta, indexw IndexWriter, chunkw ChunkWriter, symbols map[string]struct{}) error {
-	if err := indexw.AddSymbols(symbols); err != nil {
-		return errors.Wrap(err, "add symbols")
-	}
-
-	var (
-		postings = index.NewMemPostings()
-		values   = map[string]stringset{}
-		i        = uint64(0)
-	)
-
-	for set.Next() {
-		lset, chks, _ := set.At() // The chunks here are not fully deleted.
-
-		// Skip the series with all deleted chunks.
-		if len(chks) == 0 {
-			continue
-		}
-
-		if err := chunkw.WriteChunks(chks...); err != nil {
-			return errors.Wrap(err, "write chunks")
-		}
-
-		if err := indexw.AddSeries(i, lset, chks...); err != nil {
-			return errors.Wrap(err, "add series")
-		}
-
-		meta.Stats.NumChunks += uint64(len(chks))
-		meta.Stats.NumSeries++
-		for _, chk := range chks {
-			meta.Stats.NumSamples += uint64(chk.Chunk.NumSamples())
-		}
-
-		for _, l := range lset {
-			valset, ok := values[l.Name]
-			if !ok {
-				valset = stringset{}
-				values[l.Name] = valset
-			}
-			valset.set(l.Value)
-		}
-		postings.Add(i, lset)
-
-		i++
-	}
-	if set.Err() != nil {
-		return errors.Wrap(set.Err(), "iterate compaction set")
-	}
-
-	s := make([]string, 0, 256)
-	for n, v := range values {
-		s = s[:0]
-
-		for x := range v {
-			s = append(s, x)
-		}
-		if err := indexw.WriteLabelIndex([]string{n}, s); err != nil {
-			return errors.Wrap(err, "write label index")
-		}
-	}
-
-	for _, l := range postings.SortedKeys() {
-		if err := indexw.WritePostings(l.Name, l.Value, postings.Get(l.Name, l.Value)); err != nil {
-			return errors.Wrap(err, "write postings")
-		}
-	}
-	return nil
-}
-
-// MockChunkSeriesSet mocks a SeriesSet as a ChunkSeriesSet.
-// This is helpful in creating blocks from SeriesSet.
-type MockChunkSeriesSet struct {
-	ss SeriesSet
-
-	cur   int
-	l     labels.Labels
-	metas []chunks.Meta
-
-	err error
-}
-
-func (ctcs *MockChunkSeriesSet) At() (labels.Labels, []chunks.Meta, Intervals) {
-	return ctcs.l, ctcs.metas, nil
-}
-
-func (ctcs *MockChunkSeriesSet) Next() bool {
-	if ctcs.err != nil || !ctcs.ss.Next() {
-		return false
-	}
-
-	s := ctcs.ss.At()
-	newChunk := chunkenc.NewXORChunk()
-	app, err := newChunk.Appender()
-	if err != nil {
-		ctcs.err = err
-		return false
-	}
-	it := s.Iterator()
-	mint := int64(math.MaxInt64)
-	maxt := int64(0)
-	for it.Next() {
-		ts, v := it.At()
-		if mint > ts {
-			mint = ts
-		}
-		maxt = ts
-		app.Append(ts, v)
-	}
-
-	ctcs.metas = []chunks.Meta{chunks.Meta{
-		Chunk:   newChunk,
-		MinTime: mint,
-		MaxTime: maxt,
-	}}
-	ctcs.l = s.Labels()
-
-	ctcs.cur++
-	return true
-}
-
-func (ctcs *MockChunkSeriesSet) Err() error {
-	return ctcs.err
-}
-
 // TestBlockRanges checks the following use cases:
 //  - No samples can be added with timestamps lower than the last block maxt.
 //  - The compactor doesn't create overlaping blocks
@@ -2018,7 +1840,7 @@ func TestBlockRanges(t *testing.T) {
 	// Test that the compactor doesn't create overlapping blocks
 	// when a non standard block already exists.
 	firstBlockMaxT := int64(3)
-	createBlock(t, dir, 1, 0, firstBlockMaxT)
+	createBlock(t, dir, 1, 0, firstBlockMaxT, nil)
 	db, err := Open(dir, logger, nil, DefaultOptions)
 	if err != nil {
 		t.Fatalf("Opening test storage failed: %s", err)
@@ -2068,7 +1890,7 @@ func TestBlockRanges(t *testing.T) {
 	testutil.Ok(t, db.Close())
 
 	thirdBlockMaxt := secondBlockMaxt + 2
-	createBlock(t, dir, 1, secondBlockMaxt+1, thirdBlockMaxt)
+	createBlock(t, dir, 1, secondBlockMaxt+1, thirdBlockMaxt, nil)
 
 	db, err = Open(dir, logger, nil, DefaultOptions)
 	if err != nil {
