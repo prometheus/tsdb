@@ -195,7 +195,6 @@ func (c *LeveledCompactor) plan(dms []dirMeta) ([]string, error) {
 		return res, nil
 	}
 	// No overlapping blocks, do compaction the usual way.
-
 	// We do not include a recently created block with max(minTime), so the block which was just created from WAL.
 	// This gives users a window of a full block size to piece-wise backup new data without having to care about data overlap.
 	dms = dms[:len(dms)-1]

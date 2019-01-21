@@ -768,7 +768,7 @@ func BenchmarkCompaction(b *testing.B) {
 	for _, c := range cases {
 		nBlocks := len(c.ranges)
 		b.Run(fmt.Sprintf("type=%s,blocks=%d,series=%d,samplesPerSeriesPerBlock=%d", c.compactionType, nBlocks, nSeries, c.ranges[0][1]-c.ranges[0][0]+1), func(b *testing.B) {
-			dir, err := ioutil.TempDir("", "bench_normal_compaction")
+			dir, err := ioutil.TempDir("", "bench_compaction")
 			testutil.Ok(b, err)
 			defer os.RemoveAll(dir)
 			blockDirs := make([]string, 0, len(c.ranges))

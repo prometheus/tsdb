@@ -1812,6 +1812,9 @@ func TestVerticalCompaction(t *testing.T) {
 		err = db.compact()
 		testutil.Ok(t, err)
 		testutil.Assert(t, len(db.blocks) == 1, "Wrong number of blocks [after compact].")
+		lc, ok := db.compactor.(*LeveledCompactor)
+		testutil.Assert(t, ok, "Not a LeveledCompactor")
+		testutil.Equals(t, 1, int(prom_testutil.ToFloat64(lc.metrics.overlappingBlocks)), "overlapping blocks count mismatch")
 
 		// Vertical compaction test.
 		// When there is only 1 blocks, vertical query merging is not applied.
