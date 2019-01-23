@@ -348,7 +348,6 @@ func TestLeveledCompactor_plan(t *testing.T) {
 		if !t.Run("", func(t *testing.T) {
 			res, err := compactor.plan(c.metas)
 			testutil.Ok(t, err)
-
 			testutil.Equals(t, c.expected, res)
 		}) {
 			return
@@ -456,9 +455,8 @@ func TestCompaction_populateBlock(t *testing.T) {
 		inputSeriesSamples [][]seriesSamples
 		compactMinTime     int64
 		compactMaxTime     int64 // When not defined the test runner sets a default of math.MaxInt64.
-
-		expSeriesSamples []seriesSamples
-		expErr           error
+		expSeriesSamples   []seriesSamples
+		expErr             error
 	}{
 		{
 			title:              "Populate block from empty input should return error.",
@@ -537,16 +535,6 @@ func TestCompaction_populateBlock(t *testing.T) {
 				{
 					{
 						lset:   map[string]string{"a": "b"},
-						chunks: [][]sample{{{t: 21}, {t: 30}}},
-					},
-					{
-						lset:   map[string]string{"a": "c"},
-						chunks: [][]sample{{{t: 40}, {t: 45}}},
-					},
-				},
-				{
-					{
-						lset:   map[string]string{"a": "b"},
 						chunks: [][]sample{{{t: 0}, {t: 10}}, {{t: 11}, {t: 20}}},
 					},
 					{
@@ -554,20 +542,30 @@ func TestCompaction_populateBlock(t *testing.T) {
 						chunks: [][]sample{{{t: 1}, {t: 9}}, {{t: 10}, {t: 19}}},
 					},
 				},
+				{
+					{
+						lset:   map[string]string{"a": "b"},
+						chunks: [][]sample{{{t: 21}, {t: 30}}},
+					},
+					{
+						lset:   map[string]string{"a": "c"},
+						chunks: [][]sample{{{t: 40}, {t: 45}}},
+					},
+				},
 			},
 			expSeriesSamples: []seriesSamples{
 				{
 					lset:   map[string]string{"a": "b"},
-					chunks: [][]sample{{{t: 21}, {t: 30}}, {{t: 0}, {t: 10}}, {{t: 11}, {t: 20}}},
+					chunks: [][]sample{{{t: 0}, {t: 10}}, {{t: 11}, {t: 20}}, {{t: 21}, {t: 30}}},
 				},
 				{
 					lset:   map[string]string{"a": "c"},
-					chunks: [][]sample{{{t: 40}, {t: 45}}, {{t: 1}, {t: 9}}, {{t: 10}, {t: 19}}},
+					chunks: [][]sample{{{t: 1}, {t: 9}}, {{t: 10}, {t: 19}}, {{t: 40}, {t: 45}}},
 				},
 			},
 		},
 		{
-			title: "Populate from two blocks showing that order or series is sorted.",
+			title: "Populate from two blocks showing that order of series is sorted.",
 			inputSeriesSamples: [][]seriesSamples{
 				{
 					{
@@ -681,11 +679,11 @@ func TestCompaction_populateBlock(t *testing.T) {
 		if ok := t.Run(tc.title, func(t *testing.T) {
 			blocks := make([]BlockReader, 0, len(tc.inputSeriesSamples))
 			for _, b := range tc.inputSeriesSamples {
-				ir, cr := createIdxChkReaders(b)
-				blocks = append(blocks, &mockBReader{ir: ir, cr: cr})
+				ir, cr, mint, maxt := createIdxChkReaders(b)
+				blocks = append(blocks, &mockBReader{ir: ir, cr: cr, mint: mint, maxt: maxt})
 			}
 
-			c, err := NewLeveledCompactor(nil, nil, []int64{0}, nil)
+			c, err := NewLeveledCompactor(nil, log.NewLogfmtLogger(log.NewSyncWriter(os.Stderr)), []int64{0}, nil)
 			testutil.Ok(t, err)
 
 			meta := &BlockMeta{
