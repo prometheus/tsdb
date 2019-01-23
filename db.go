@@ -900,7 +900,6 @@ func (db *DB) Querier(mint, maxt int64) (Querier, error) {
 	}
 
 	if len(OverlappingBlocks(blockMetas)) > 0 {
-		// Using vertical querier.
 		return &verticalQuerier{
 			querier: querier{
 				blocks: blockQueriers,

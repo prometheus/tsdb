@@ -258,7 +258,7 @@ type seriesSamples struct {
 
 // Index: labels -> postings -> chunkMetas -> chunkRef
 // ChunkReader: ref -> vals
-func createIdxChkReaders(tc []seriesSamples) (IndexReader, ChunkReader) {
+func createIdxChkReaders(tc []seriesSamples) (IndexReader, ChunkReader, int64, int64) {
 	sort.Slice(tc, func(i, j int) bool {
 		return labels.Compare(labels.FromMap(tc[i].lset), labels.FromMap(tc[i].lset)) < 0
 	})
@@ -267,6 +267,8 @@ func createIdxChkReaders(tc []seriesSamples) (IndexReader, ChunkReader) {
 	chkReader := mockChunkReader(make(map[uint64]chunkenc.Chunk))
 	lblIdx := make(map[string]stringset)
 	mi := newMockIndex()
+	blockMint := int64(math.MaxInt64)
+	blockMaxt := int64(math.MinInt64)
 
 	for i, s := range tc {
 		i = i + 1 // 0 is not a valid posting.
@@ -274,6 +276,13 @@ func createIdxChkReaders(tc []seriesSamples) (IndexReader, ChunkReader) {
 		for _, chk := range s.chunks {
 			// Collisions can be there, but for tests, its fine.
 			ref := rand.Uint64()
+
+			if chk[0].t < blockMint {
+				blockMint = chk[0].t
+			}
+			if chk[len(chk)-1].t > blockMaxt {
+				blockMaxt = chk[len(chk)-1].t
+			}
 
 			metas = append(metas, chunks.Meta{
 				MinTime: chk[0].t,
@@ -312,7 +321,7 @@ func createIdxChkReaders(tc []seriesSamples) (IndexReader, ChunkReader) {
 		return mi.WritePostings(l.Name, l.Value, p)
 	})
 
-	return mi, chkReader
+	return mi, chkReader, blockMint, blockMaxt
 }
 
 func TestBlockQuerier(t *testing.T) {
@@ -419,7 +428,7 @@ func TestBlockQuerier(t *testing.T) {
 
 Outer:
 	for _, c := range cases.queries {
-		ir, cr := createIdxChkReaders(cases.data)
+		ir, cr, _, _ := createIdxChkReaders(cases.data)
 		querier := &blockQuerier{
 			index:      ir,
 			chunks:     cr,
@@ -583,7 +592,7 @@ func TestBlockQuerierDelete(t *testing.T) {
 
 Outer:
 	for _, c := range cases.queries {
-		ir, cr := createIdxChkReaders(cases.data)
+		ir, cr, _, _ := createIdxChkReaders(cases.data)
 		querier := &blockQuerier{
 			index:      ir,
 			chunks:     cr,
@@ -995,9 +1004,8 @@ func TestSeriesIterator(t *testing.T) {
 
 	t.Run("Chain", func(t *testing.T) {
 		itcasesExtra := []struct {
-			a, b, c []Sample
-			exp     []Sample
-
+			a, b, c    []Sample
+			exp        []Sample
 			mint, maxt int64
 		}{
 			{

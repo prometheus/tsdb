@@ -51,6 +51,9 @@ func openTestDB(t testing.TB, opts *Options) (db *DB, close func()) {
 // query runs a matcher query against the querier and fully expands its data.
 func query(t testing.TB, q Querier, matchers ...labels.Matcher) map[string][]sample {
 	ss, err := q.Select(matchers...)
+	defer func() {
+		testutil.Ok(t, q.Close())
+	}()
 	testutil.Ok(t, err)
 
 	result := map[string][]sample{}
@@ -117,9 +120,7 @@ func TestDataAvailableOnlyAfterCommit(t *testing.T) {
 	querier, err := db.Querier(0, 1)
 	testutil.Ok(t, err)
 	seriesSet := query(t, querier, labels.NewEqualMatcher("foo", "bar"))
-
 	testutil.Equals(t, map[string][]sample{}, seriesSet)
-	testutil.Ok(t, querier.Close())
 
 	err = app.Commit()
 	testutil.Ok(t, err)
@@ -205,8 +206,6 @@ func TestDBAppenderAddRef(t *testing.T) {
 			{t: 143, v: 2},
 		},
 	}, res)
-
-	testutil.Ok(t, q.Close())
 }
 
 func TestDeleteSimple(t *testing.T) {
@@ -354,8 +353,6 @@ func TestSkippingInvalidValuesInSameTxn(t *testing.T) {
 		labels.New(labels.Label{"a", "b"}).String(): {{0, 1}},
 	}, ssMap)
 
-	testutil.Ok(t, q.Close())
-
 	// Append Out of Order Value.
 	app = db.Appender()
 	_, err = app.Add(labels.Labels{{"a", "b"}}, 10, 3)
@@ -372,7 +369,6 @@ func TestSkippingInvalidValuesInSameTxn(t *testing.T) {
 	testutil.Equals(t, map[string][]sample{
 		labels.New(labels.Label{"a", "b"}).String(): {{0, 1}, {10, 3}},
 	}, ssMap)
-	testutil.Ok(t, q.Close())
 }
 
 func TestDB_Snapshot(t *testing.T) {
@@ -1604,15 +1600,12 @@ func TestCorrectNumTombstones(t *testing.T) {
 func TestVerticalCompaction(t *testing.T) {
 	cases := []struct {
 		blockSeries [][]Series
-		exp         map[string][]sample
-		mint, maxt  []int64
+		expSeries   map[string][]sample
 	}{
-		// Case 1
+		// Case 0
 		// |--------------|
 		//        |----------------|
 		{
-			mint: []int64{0, 3},
-			maxt: []int64{9, 14},
 			blockSeries: [][]Series{
 				[]Series{
 					newSeries(map[string]string{"a": "b"}, []Sample{
@@ -1628,19 +1621,17 @@ func TestVerticalCompaction(t *testing.T) {
 					}),
 				},
 			},
-			exp: map[string][]sample{`{a="b"}`: {
+			expSeries: map[string][]sample{`{a="b"}`: {
 				sample{0, 0}, sample{1, 0}, sample{2, 0}, sample{3, 99},
 				sample{4, 0}, sample{5, 99}, sample{6, 99}, sample{7, 99},
 				sample{8, 99}, sample{9, 99}, sample{10, 99}, sample{11, 99},
 				sample{12, 99}, sample{13, 99}, sample{14, 99},
 			}},
 		},
-		// Case 2
+		// Case 1
 		// |-------------------------------|
 		//        |----------------|
 		{
-			mint: []int64{0, 3},
-			maxt: []int64{17, 10},
 			blockSeries: [][]Series{
 				[]Series{
 					newSeries(map[string]string{"a": "b"}, []Sample{
@@ -1656,20 +1647,18 @@ func TestVerticalCompaction(t *testing.T) {
 					}),
 				},
 			},
-			exp: map[string][]sample{`{a="b"}`: {
+			expSeries: map[string][]sample{`{a="b"}`: {
 				sample{0, 0}, sample{1, 0}, sample{2, 0}, sample{3, 99},
 				sample{4, 0}, sample{5, 99}, sample{6, 99}, sample{7, 99},
 				sample{8, 99}, sample{9, 99}, sample{10, 99}, sample{11, 0},
 				sample{13, 0}, sample{17, 0},
 			}},
 		},
-		// Case 3
+		// Case 2
 		// |-------------------------------|
 		//        |------------|
 		//                           |--------------------|
 		{
-			mint: []int64{0, 3, 14},
-			maxt: []int64{17, 9, 22},
 			blockSeries: [][]Series{
 				[]Series{
 					newSeries(map[string]string{"a": "b"}, []Sample{
@@ -1691,7 +1680,7 @@ func TestVerticalCompaction(t *testing.T) {
 					}),
 				},
 			},
-			exp: map[string][]sample{`{a="b"}`: {
+			expSeries: map[string][]sample{`{a="b"}`: {
 				sample{0, 0}, sample{1, 0}, sample{2, 0}, sample{3, 99},
 				sample{4, 0}, sample{5, 99}, sample{6, 99}, sample{7, 99},
 				sample{8, 99}, sample{9, 99}, sample{11, 0}, sample{13, 0},
@@ -1699,13 +1688,11 @@ func TestVerticalCompaction(t *testing.T) {
 				sample{21, 59}, sample{22, 59},
 			}},
 		},
-		// Case 4
+		// Case 3
 		// |-------------------|
 		//                           |--------------------|
 		//               |----------------|
 		{
-			mint: []int64{0, 14, 5},
-			maxt: []int64{9, 22, 17},
 			blockSeries: [][]Series{
 				[]Series{
 					newSeries(map[string]string{"a": "b"}, []Sample{
@@ -1727,7 +1714,7 @@ func TestVerticalCompaction(t *testing.T) {
 					}),
 				},
 			},
-			exp: map[string][]sample{`{a="b"}`: {
+			expSeries: map[string][]sample{`{a="b"}`: {
 				sample{0, 0}, sample{1, 0}, sample{2, 0}, sample{4, 0},
 				sample{5, 99}, sample{6, 99}, sample{7, 99}, sample{8, 99},
 				sample{9, 99}, sample{10, 99}, sample{13, 99}, sample{14, 59},
@@ -1735,13 +1722,11 @@ func TestVerticalCompaction(t *testing.T) {
 				sample{21, 59}, sample{22, 59},
 			}},
 		},
-		// Case 5
+		// Case 4
 		// |-------------------------------------|
 		//            |------------|
 		//      |-------------------------|
 		{
-			mint: []int64{0, 7, 3},
-			maxt: []int64{22, 11, 17},
 			blockSeries: [][]Series{
 				[]Series{
 					newSeries(map[string]string{"a": "b"}, []Sample{
@@ -1765,7 +1750,7 @@ func TestVerticalCompaction(t *testing.T) {
 					}),
 				},
 			},
-			exp: map[string][]sample{`{a="b"}`: {
+			expSeries: map[string][]sample{`{a="b"}`: {
 				sample{0, 0}, sample{1, 0}, sample{2, 0}, sample{3, 99},
 				sample{4, 0}, sample{5, 99}, sample{6, 99}, sample{7, 59},
 				sample{8, 59}, sample{9, 59}, sample{10, 59}, sample{11, 59},
@@ -1776,45 +1761,46 @@ func TestVerticalCompaction(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		tmpdir, err := ioutil.TempDir("", "data")
-		testutil.Ok(t, err)
+		if ok := t.Run("", func(t *testing.T) {
 
-		// Creating blocks.
-		for _, series := range c.blockSeries {
-			createBlock(t, tmpdir, 0, 0, 0, series)
+			tmpdir, err := ioutil.TempDir("", "data")
+			testutil.Ok(t, err)
+
+			for _, series := range c.blockSeries {
+				createBlock(t, tmpdir, 0, 0, 0, series)
+			}
+			db, err := Open(tmpdir, nil, nil, nil)
+			testutil.Ok(t, err)
+			db.DisableCompactions()
+			defer func() {
+				testutil.Ok(t, db.Close())
+				testutil.Ok(t, os.RemoveAll(tmpdir))
+			}()
+			testutil.Assert(t, len(db.blocks) == len(c.blockSeries), "Wrong number of blocks [before compact].")
+
+			// Vertical Query Merging test.
+			querier, err := db.Querier(0, 100)
+			testutil.Ok(t, err)
+			actSeries := query(t, querier, labels.NewEqualMatcher("a", "b"))
+			testutil.Equals(t, c.expSeries, actSeries)
+
+			// Vertical compaction.
+			lc := db.compactor.(*LeveledCompactor)
+			testutil.Equals(t, 0, int(prom_testutil.ToFloat64(lc.metrics.overlappingBlocks)), "overlapping blocks count should be still 0 here")
+			err = db.compact()
+			testutil.Ok(t, err)
+			testutil.Equals(t, 1, len(db.Blocks()), "Wrong number of blocks [after compact]")
+
+			testutil.Equals(t, 1, int(prom_testutil.ToFloat64(lc.metrics.overlappingBlocks)), "overlapping blocks count mismatch")
+
+			// Query test after merging the overlapping blocks.
+			querier, err = db.Querier(0, 100)
+			testutil.Ok(t, err)
+			actSeries = query(t, querier, labels.NewEqualMatcher("a", "b"))
+			testutil.Equals(t, c.expSeries, actSeries)
+		}); !ok {
+			return
 		}
-
-		// Open database.
-		db, err := Open(tmpdir, nil, nil, nil)
-		testutil.Ok(t, err)
-		testutil.Assert(t, len(db.blocks) == len(c.blockSeries), "Wrong number of blocks [before compact].")
-
-		// Vertical Query Merging test.
-		querier, err := db.Querier(0, 100)
-		testutil.Ok(t, err)
-		seriesSet := query(t, querier, labels.NewEqualMatcher("a", "b"))
-		testutil.Equals(t, c.exp, seriesSet)
-		querier.Close()
-
-		// Vertical compaction.
-		err = db.compact()
-		testutil.Ok(t, err)
-		testutil.Assert(t, len(db.blocks) == 1, "Wrong number of blocks [after compact].")
-		lc, ok := db.compactor.(*LeveledCompactor)
-		testutil.Assert(t, ok, "Not a LeveledCompactor")
-		testutil.Equals(t, 1, int(prom_testutil.ToFloat64(lc.metrics.overlappingBlocks)), "overlapping blocks count mismatch")
-
-		// Vertical compaction test.
-		// When there is only 1 blocks, vertical query merging is not applied.
-		// Hence this tests compaction.
-		querier, err = db.Querier(0, 100)
-		testutil.Ok(t, err)
-		seriesSet = query(t, querier, labels.NewEqualMatcher("a", "b"))
-		testutil.Equals(t, c.exp, seriesSet)
-		querier.Close()
-
-		testutil.Ok(t, db.Close())
-		testutil.Ok(t, os.RemoveAll(tmpdir))
 	}
 }
 

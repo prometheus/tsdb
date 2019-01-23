@@ -186,11 +186,7 @@ func (c *LeveledCompactor) plan(dms []dirMeta) ([]string, error) {
 		return dms[i].meta.MinTime < dms[j].meta.MinTime
 	})
 
-	var res []string
-	// Checking for overlapping blocks.
-	for _, dm := range c.selectOverlappingDirs(dms) {
-		res = append(res, dm.dir)
-	}
+	res := c.selectOverlappingDirs(dms)
 	if len(res) > 0 {
 		return res, nil
 	}
@@ -259,31 +255,26 @@ func (c *LeveledCompactor) selectDirs(ds []dirMeta) []dirMeta {
 	return nil
 }
 
-// selectOverlappingDirs returns one set of dir metas of the blocks whose ranges are overlapping,
-// that should be compacted into a single new block.
-func (c *LeveledCompactor) selectOverlappingDirs(ds []dirMeta) []dirMeta {
+// selectOverlappingDirs returns all dirs with overlaping time ranges.
+// It expects sorted input by mint.
+func (c *LeveledCompactor) selectOverlappingDirs(ds []dirMeta) []string {
 	if len(ds) < 2 {
 		return nil
 	}
-	startBlock, endBlock := -1, -1
-	prevMaxTime := ds[0].meta.MaxTime
+	var overlappingMetas []string
+	globalMaxt := ds[0].meta.MaxTime
 	for i, d := range ds[1:] {
-		if d.meta.MinTime < prevMaxTime {
-			if startBlock < 0 {
-				startBlock = i
+		if d.meta.MinTime < globalMaxt {
+			if len(overlappingMetas) == 0 { // When it is the first overlap, need to add the last one as well.
+				overlappingMetas = append(overlappingMetas, ds[i].dir)
 			}
-			endBlock = i + 1
-		} else if startBlock >= 0 {
-			break
+			overlappingMetas = append(overlappingMetas, d.dir)
 		}
-		if d.meta.MaxTime > prevMaxTime {
-			prevMaxTime = d.meta.MaxTime
+		if d.meta.MaxTime > globalMaxt {
+			globalMaxt = d.meta.MaxTime
 		}
 	}
-	if startBlock < 0 {
-		return nil
-	}
-	return ds[startBlock : endBlock+1]
+	return overlappingMetas
 }
 
 // splitByRange splits the directories by the time range. The range sequence starts at 0.
@@ -336,8 +327,9 @@ func compactBlockMetas(uid ulid.ULID, blocks ...*BlockMeta) *BlockMeta {
 	}
 
 	sources := map[ulid.ULID]struct{}{}
-	// For overlapping blocks, the MaxTime can be in any blocks.
-	maxt := blocks[0].MaxTime
+	// For overlapping blocks, the Maxt can be
+	// in any block so we track it globally.
+	maxt := int64(math.MinInt64)
 
 	for _, b := range blocks {
 		if b.MaxTime > maxt {
@@ -561,10 +553,9 @@ func (c *LeveledCompactor) write(dest string, meta *BlockMeta, blocks ...BlockRe
 	}
 	defer indexw.Close()
 
-	if err = c.populateBlock(blocks, meta, indexw, chunkw); err != nil {
+	if err := c.populateBlock(blocks, meta, indexw, chunkw); err != nil {
 		return errors.Wrap(err, "write compaction")
 	}
-
 	// We are explicitly closing them here to check for error even
 	// though these are covered under defer. This is because in Windows,
 	// you cannot delete these unless they are closed and the defer is to
@@ -623,6 +614,7 @@ func (c *LeveledCompactor) write(dest string, meta *BlockMeta, blocks ...BlockRe
 
 // populateBlock fills the index and chunk writers with new data gathered as the union
 // of the provided blocks. It returns meta information for the new block.
+// It expects sorted blocks input by mint.
 func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, indexw IndexWriter, chunkw ChunkWriter) error {
 	if len(blocks) == 0 {
 		return errors.New("cannot populate block from no readers")
@@ -633,20 +625,22 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 		allSymbols  = make(map[string]struct{}, 1<<16)
 		closers     = []io.Closer{}
 		err         error
-		overlapping = false
-		lastMaxT    = int64(math.MinInt64)
+		overlapping bool
 	)
 	defer func() { closeAll(closers...) }()
 
+	globalMaxt := blocks[0].MaxTime()
 	for i, b := range blocks {
 		if !overlapping {
-			if b.MinTime() < lastMaxT {
+			if i > 0 && b.MinTime() < globalMaxt {
+				fmt.Println(b.MinTime(), globalMaxt, b.MinTime() < globalMaxt)
+
 				c.metrics.overlappingBlocks.Inc()
-				level.Warn(c.logger).Log("msg", "found overlapping blocks during compaction", "ulid", meta.ULID)
 				overlapping = true
+				level.Warn(c.logger).Log("msg", "found overlapping blocks during compaction", "ulid", meta.ULID)
 			}
-			if b.MaxTime() > lastMaxT {
-				lastMaxT = b.MaxTime()
+			if b.MaxTime() > globalMaxt {
+				globalMaxt = b.MaxTime()
 			}
 		}
 
@@ -701,7 +695,7 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 		i        = uint64(0)
 	)
 
-	if err = indexw.AddSymbols(allSymbols); err != nil {
+	if err := indexw.AddSymbols(allSymbols); err != nil {
 		return errors.Wrap(err, "add symbols")
 	}
 

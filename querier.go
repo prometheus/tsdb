@@ -473,17 +473,15 @@ func (s *mergedSeriesSet) Next() bool {
 	return true
 }
 
-// mergedVerticalSeriesSet takes two series sets as a single series set. The input series sets
-// must be sorted and the time ranges of the series can be overlapping.
 type mergedVerticalSeriesSet struct {
-	a, b SeriesSet
-
+	a, b         SeriesSet
 	cur          Series
 	adone, bdone bool
 }
 
-// NewMergedVerticalSeriesSet takes two series sets as a single series set. The input series sets
-// must be sorted and the time ranges of the series can be overlapping.
+// NewMergedVerticalSeriesSet takes two series sets as a single series set.
+// The input series sets must be sorted and
+// the time ranges of the series can be overlapping.
 func NewMergedVerticalSeriesSet(a, b SeriesSet) SeriesSet {
 	return newMergedVerticalSeriesSet(a, b)
 }
