@@ -1765,17 +1765,19 @@ func TestVerticalCompaction(t *testing.T) {
 
 			tmpdir, err := ioutil.TempDir("", "data")
 			testutil.Ok(t, err)
+			defer func() {
+				testutil.Ok(t, os.RemoveAll(tmpdir))
+			}()
 
 			for _, series := range c.blockSeries {
 				createBlock(t, tmpdir, 0, 0, 0, series)
 			}
 			db, err := Open(tmpdir, nil, nil, nil)
 			testutil.Ok(t, err)
-			db.DisableCompactions()
 			defer func() {
 				testutil.Ok(t, db.Close())
-				testutil.Ok(t, os.RemoveAll(tmpdir))
 			}()
+			db.DisableCompactions()
 			testutil.Assert(t, len(db.blocks) == len(c.blockSeries), "Wrong number of blocks [before compact].")
 
 			// Vertical Query Merging test.

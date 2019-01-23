@@ -261,20 +261,20 @@ func (c *LeveledCompactor) selectOverlappingDirs(ds []dirMeta) []string {
 	if len(ds) < 2 {
 		return nil
 	}
-	var overlappingMetas []string
+	var overlappingDirs []string
 	globalMaxt := ds[0].meta.MaxTime
 	for i, d := range ds[1:] {
 		if d.meta.MinTime < globalMaxt {
-			if len(overlappingMetas) == 0 { // When it is the first overlap, need to add the last one as well.
-				overlappingMetas = append(overlappingMetas, ds[i].dir)
+			if len(overlappingDirs) == 0 { // When it is the first overlap, need to add the last one as well.
+				overlappingDirs = append(overlappingDirs, ds[i].dir)
 			}
-			overlappingMetas = append(overlappingMetas, d.dir)
+			overlappingDirs = append(overlappingDirs, d.dir)
 		}
 		if d.meta.MaxTime > globalMaxt {
 			globalMaxt = d.meta.MaxTime
 		}
 	}
-	return overlappingMetas
+	return overlappingDirs
 }
 
 // splitByRange splits the directories by the time range. The range sequence starts at 0.
@@ -633,8 +633,6 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 	for i, b := range blocks {
 		if !overlapping {
 			if i > 0 && b.MinTime() < globalMaxt {
-				fmt.Println(b.MinTime(), globalMaxt, b.MinTime() < globalMaxt)
-
 				c.metrics.overlappingBlocks.Inc()
 				overlapping = true
 				level.Warn(c.logger).Log("msg", "found overlapping blocks during compaction", "ulid", meta.ULID)
