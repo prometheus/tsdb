@@ -28,6 +28,7 @@ import (
 	"github.com/prometheus/tsdb/index"
 	"github.com/prometheus/tsdb/labels"
 	"github.com/prometheus/tsdb/testutil"
+	"github.com/prometheus/tsdb/tsdbutil"
 	"github.com/prometheus/tsdb/wal"
 )
 
@@ -352,7 +353,7 @@ Outer:
 		res, err := q.Select(labels.NewEqualMatcher("a", "b"))
 		testutil.Ok(t, err)
 
-		expSamples := make([]Sample, 0, len(c.remaint))
+		expSamples := make([]tsdbutil.Sample, 0, len(c.remaint))
 		for _, ts := range c.remaint {
 			expSamples = append(expSamples, sample{ts, smpls[ts]})
 		}
@@ -423,7 +424,7 @@ func TestDeleteUntilCurMax(t *testing.T) {
 	it := exps.Iterator()
 	ressmpls, err := expandSeriesIterator(it)
 	testutil.Ok(t, err)
-	testutil.Equals(t, []sample{{11, 1}}, ressmpls)
+	testutil.Equals(t, []tsdbutil.Sample{sample{11, 1}}, ressmpls)
 }
 func TestDelete_e2e(t *testing.T) {
 	numDatapoints := 1000
@@ -472,9 +473,9 @@ func TestDelete_e2e(t *testing.T) {
 			{"job", "prom-k8s"},
 		},
 	}
-	seriesMap := map[string][]Sample{}
+	seriesMap := map[string][]tsdbutil.Sample{}
 	for _, l := range lbls {
-		seriesMap[labels.New(l...).String()] = []Sample{}
+		seriesMap[labels.New(l...).String()] = []tsdbutil.Sample{}
 	}
 	dir, _ := ioutil.TempDir("", "test")
 	defer os.RemoveAll(dir)
@@ -484,7 +485,7 @@ func TestDelete_e2e(t *testing.T) {
 	app := hb.Appender()
 	for _, l := range lbls {
 		ls := labels.New(l...)
-		series := []Sample{}
+		series := []tsdbutil.Sample{}
 		ts := rand.Int63n(300)
 		for i := 0; i < numDatapoints; i++ {
 			v := rand.Float64()
@@ -587,16 +588,16 @@ func TestDelete_e2e(t *testing.T) {
 	return
 }
 
-func boundedSamples(full []sample, mint, maxt int64) []sample {
+func boundedSamples(full []tsdbutil.Sample, mint, maxt int64) []tsdbutil.Sample {
 	for len(full) > 0 {
-		if full[0].t >= mint {
+		if full[0].T() >= mint {
 			break
 		}
 		full = full[1:]
 	}
 	for i, s := range full {
 		// labels.Labelinate on the first sample larger than maxt.
-		if s.t > maxt {
+		if s.T() > maxt {
 			return full[:i]
 		}
 	}
@@ -604,8 +605,8 @@ func boundedSamples(full []sample, mint, maxt int64) []sample {
 	return full
 }
 
-func deletedSamples(full []Sample, dranges Intervals) []Sample {
-	ds := make([]Sample, 0, len(full))
+func deletedSamples(full []tsdbutil.Sample, dranges Intervals) []tsdbutil.Sample {
+	ds := make([]tsdbutil.Sample, 0, len(full))
 Outer:
 	for _, s := range full {
 		for _, r := range dranges {
