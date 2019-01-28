@@ -741,9 +741,9 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 		mergedChks := chks
 		if overlapping {
 			mergedChks, err = chunks.MergeOverlappingChunks(chks)
-		}
-		if err != nil {
-			return errors.Wrap(err, "merge overlapping chunks")
+			if err != nil {
+				return errors.Wrap(err, "merge overlapping chunks")
+			}
 		}
 		if err := chunkw.WriteChunks(mergedChks...); err != nil {
 			return errors.Wrap(err, "write chunks")
