@@ -442,7 +442,13 @@ func (c *LeveledCompactor) Write(dest string, b BlockReader, mint, maxt int64, p
 		return ulid.ULID{}, nil
 	}
 
-	level.Info(c.logger).Log("msg", "write block", "mint", meta.MinTime, "maxt", meta.MaxTime, "ulid", meta.ULID, "duration", time.Since(start))
+	level.Info(c.logger).Log(
+		"msg", "write block",
+		"mint", meta.MinTime,
+		"maxt", meta.MaxTime,
+		"ulid", meta.ULID,
+		"duration", time.Since(start),
+	)
 	return uid, nil
 }
 
