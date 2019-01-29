@@ -355,28 +355,28 @@ func (s *Reader) Size() int64 {
 // Chunk returns a chunk from a given reference.
 func (s *Reader) Chunk(ref uint64) (chunkenc.Chunk, error) {
 	var (
-		segmentSeq    = int(ref >> 32)
-		segmentOffset = int((ref << 32) >> 32)
+		sgmSeq    = int(ref >> 32)
+		sgmOffset = int((ref << 32) >> 32)
 	)
-	if segmentSeq >= len(s.bs) {
-		return nil, errors.Errorf("reference sequence %d out of range", segmentSeq)
+	if sgmSeq >= len(s.bs) {
+		return nil, errors.Errorf("reference sequence %d out of range", sgmSeq)
 	}
-	chunksBytes := s.bs[segmentSeq]
+	chkS := s.bs[sgmSeq]
 
-	if segmentOffset >= chunksBytes.Len() {
-		return nil, errors.Errorf("offset %d beyond data size %d", segmentOffset, chunksBytes.Len())
+	if sgmOffset >= chkS.Len() {
+		return nil, errors.Errorf("offset %d beyond data size %d", sgmOffset, chkS.Len())
 	}
 	// With the minimum chunk length this should never cause us reading
 	// over the end of the slice.
-	chunkBytes := chunksBytes.Range(segmentOffset, segmentOffset+binary.MaxVarintLen32)
+	chk := chkS.Range(sgmOffset, sgmOffset+binary.MaxVarintLen32)
 
-	chunkLength, byteCount := binary.Uvarint(chunkBytes)
-	if byteCount <= 0 {
-		return nil, errors.Errorf("reading chunk length failed with %d", byteCount)
+	chkLen, n := binary.Uvarint(chk)
+	if n <= 0 {
+		return nil, errors.Errorf("reading chunk length failed with %d", n)
 	}
-	chunkBytes = chunksBytes.Range(segmentOffset+byteCount, segmentOffset+byteCount+1+int(chunkLength))
+	chk = chkS.Range(sgmOffset+n, sgmOffset+n+1+int(chkLen))
 
-	return s.pool.Get(chunkenc.Encoding(chunkBytes[0]), chunkBytes[1:1+chunkLength])
+	return s.pool.Get(chunkenc.Encoding(chk[0]), chk[1:1+chkLen])
 }
 
 func nextSequenceFile(dir string) (string, int, error) {
