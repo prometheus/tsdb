@@ -25,7 +25,7 @@ The stones section is 0 padded to a multiple of 4 for fast scans.
 # Tombstone 
 
 ```
-┌──────────────┬───────────────┬──────────────┐
-│ref <uvarint> │ mint <varint> │ maxt <varint>│
-└──────────────┴───────────────┴──────────────┘
+┌────────────────┬───────────────┬──────────────┐
+│ref <uvarint64> │ mint <varint> │ maxt <varint>│
+└────────────────┴───────────────┴──────────────┘
 ```
