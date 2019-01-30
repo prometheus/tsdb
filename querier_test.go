@@ -1536,90 +1536,153 @@ func (it *listSeriesIterator) Err() error {
 	return nil
 }
 
-func BenchmarkQueryIteratorOverMultipleBlocks(b *testing.B) {
-	numBlocks := 20
-	nSeries := 1000
-	numSamplesPerSeriesPerBlock := 2000
-
-	dir, err := ioutil.TempDir("", "bench_query_iterator")
-	testutil.Ok(b, err)
-	defer os.RemoveAll(dir)
-
-	var blocks []*Block
-	for i := int64(0); i < int64(numBlocks); i++ {
-		block, err := OpenBlock(nil, createBlock(b, dir, genSeries(nSeries, 10, (2*i)*int64(numSamplesPerSeriesPerBlock), ((2*i)+1)*int64(numSamplesPerSeriesPerBlock))), nil)
-		testutil.Ok(b, err)
-		blocks = append(blocks, block)
-		defer block.Close()
+func BenchmarkQueryIterator(b *testing.B) {
+	cases := []struct {
+		numBlocks                   int
+		numSeries                   int
+		numSamplesPerSeriesPerBlock int
+		overlapPercentages          []int // >=0, <=100, this is w.r.t. the previous block.
+	}{
+		{
+			numBlocks:                   20,
+			numSeries:                   1000,
+			numSamplesPerSeriesPerBlock: 20000,
+			overlapPercentages:          []int{0, 10, 30, 50},
+		},
 	}
 
-	sq := &querier{
-		blocks: make([]Querier, 0, len(blocks)),
-	}
-	defer sq.Close()
-	for _, blk := range blocks {
-		q, err := NewBlockQuerier(blk, math.MinInt64, math.MaxInt64)
-		testutil.Ok(b, err)
-		sq.blocks = append(sq.blocks, q)
-	}
+	for _, c := range cases {
+		for _, overlapPercentage := range c.overlapPercentages {
+			benchMsg := fmt.Sprintf("nBlocks=%d,nSeries=%d,numSamplesPerSeriesPerBlock=%d,overlap=%d%%",
+				c.numBlocks, c.numSeries, c.numSamplesPerSeriesPerBlock, overlapPercentage)
 
-	b.ResetTimer()
-	b.ReportAllocs()
+			b.Run(benchMsg, func(b *testing.B) {
+				dir, err := ioutil.TempDir("", "bench_query_iterator")
+				testutil.Ok(b, err)
+				defer func() {
+					testutil.Ok(b, os.RemoveAll(dir))
+				}()
 
-	ss, err := sq.Select(labels.NewMustRegexpMatcher("__name__", ".+"))
-	for ss.Next() {
-		s := ss.At()
-		it := s.Iterator()
-		for it.Next() {
+				var blocks []*Block
+				overlapDelta := int64(overlapPercentage * c.numSamplesPerSeriesPerBlock / 100)
+				for i := int64(0); i < int64(c.numBlocks); i++ {
+					offset := i * overlapDelta
+					mint := i*int64(c.numSamplesPerSeriesPerBlock) - offset
+					maxt := mint + int64(c.numSamplesPerSeriesPerBlock) - 1
+					block, err := OpenBlock(nil, createBlock(b, dir, genSeries(c.numSeries, 10, mint, maxt)), nil)
+					testutil.Ok(b, err)
+					blocks = append(blocks, block)
+					defer block.Close()
+				}
+
+				que := &querier{
+					blocks: make([]Querier, 0, len(blocks)),
+				}
+				for _, blk := range blocks {
+					q, err := NewBlockQuerier(blk, math.MinInt64, math.MaxInt64)
+					testutil.Ok(b, err)
+					que.blocks = append(que.blocks, q)
+				}
+
+				var sq Querier = que
+				if overlapPercentage > 0 {
+					sq = &verticalQuerier{
+						querier: *que,
+					}
+				}
+				defer sq.Close()
+
+				b.ResetTimer()
+				b.ReportAllocs()
+
+				ss, err := sq.Select(labels.NewMustRegexpMatcher("__name__", ".*"))
+				testutil.Ok(b, err)
+				for ss.Next() {
+					it := ss.At().Iterator()
+					for it.Next() {
+					}
+					testutil.Ok(b, it.Err())
+				}
+				testutil.Ok(b, ss.Err())
+				testutil.Ok(b, err)
+			})
 		}
-		testutil.Ok(b, it.Err())
 	}
-	testutil.Ok(b, ss.Err())
-	testutil.Ok(b, err)
 }
 
-func BenchmarkQuerySeekOverMultipleBlocks(b *testing.B) {
-	numBlocks := 20
-	nSeries := 100
-	numSamplesPerSeriesPerBlock := 200
-
-	dir, err := ioutil.TempDir("", "bench_query_seek")
-	testutil.Ok(b, err)
-	defer os.RemoveAll(dir)
-
-	var blocks []*Block
-	for i := int64(0); i < int64(numBlocks); i++ {
-		block, err := OpenBlock(nil, createBlock(b, dir, genSeries(nSeries, 10, (2*i)*int64(numSamplesPerSeriesPerBlock), ((2*i)+1)*int64(numSamplesPerSeriesPerBlock))), nil)
-		testutil.Ok(b, err)
-		blocks = append(blocks, block)
-		defer block.Close()
+func BenchmarkQuerySeek(b *testing.B) {
+	cases := []struct {
+		numBlocks                   int
+		numSeries                   int
+		numSamplesPerSeriesPerBlock int
+		overlapPercentages          []int // >=0, <=100, this is w.r.t. the previous block.
+	}{
+		{
+			numBlocks:                   20,
+			numSeries:                   100,
+			numSamplesPerSeriesPerBlock: 2000,
+			overlapPercentages:          []int{0, 10, 30, 50},
+		},
 	}
 
-	sq := &querier{
-		blocks: make([]Querier, 0, len(blocks)),
-	}
-	defer sq.Close()
-	for _, blk := range blocks {
-		q, err := NewBlockQuerier(blk, math.MinInt64, math.MaxInt64)
-		testutil.Ok(b, err)
-		sq.blocks = append(sq.blocks, q)
-	}
+	for _, c := range cases {
+		for _, overlapPercentage := range c.overlapPercentages {
+			benchMsg := fmt.Sprintf("nBlocks=%d,nSeries=%d,numSamplesPerSeriesPerBlock=%d,overlap=%d%%",
+				c.numBlocks, c.numSeries, c.numSamplesPerSeriesPerBlock, overlapPercentage)
 
-	b.ResetTimer()
-	b.ReportAllocs()
+			b.Run(benchMsg, func(b *testing.B) {
+				dir, err := ioutil.TempDir("", "bench_query_iterator")
+				testutil.Ok(b, err)
+				defer func() {
+					testutil.Ok(b, os.RemoveAll(dir))
+				}()
 
-	ss, err := sq.Select(labels.NewMustRegexpMatcher("__name__", ".+"))
-	for ss.Next() {
-		s := ss.At()
-		it := s.Iterator()
-		for i := int64(0); i < int64(numBlocks); i++ {
-			st := i * 1000000000
-			for t := int64(0); t <= int64(numSamplesPerSeriesPerBlock); t++ {
-				it.Seek(st + (t * 1000))
-			}
+				var blocks []*Block
+				overlapDelta := int64(overlapPercentage * c.numSamplesPerSeriesPerBlock / 100)
+				for i := int64(0); i < int64(c.numBlocks); i++ {
+					offset := i * overlapDelta
+					mint := i*int64(c.numSamplesPerSeriesPerBlock) - offset
+					maxt := mint + int64(c.numSamplesPerSeriesPerBlock) - 1
+					block, err := OpenBlock(nil, createBlock(b, dir, genSeries(c.numSeries, 10, mint, maxt)), nil)
+					testutil.Ok(b, err)
+					blocks = append(blocks, block)
+					defer block.Close()
+				}
+
+				que := &querier{
+					blocks: make([]Querier, 0, len(blocks)),
+				}
+				for _, blk := range blocks {
+					q, err := NewBlockQuerier(blk, math.MinInt64, math.MaxInt64)
+					testutil.Ok(b, err)
+					que.blocks = append(que.blocks, q)
+				}
+
+				var sq Querier = que
+				if overlapPercentage > 0 {
+					sq = &verticalQuerier{
+						querier: *que,
+					}
+				}
+				defer sq.Close()
+
+				mint := blocks[0].meta.MinTime
+				maxt := blocks[len(blocks)-1].meta.MaxTime
+
+				b.ResetTimer()
+				b.ReportAllocs()
+
+				ss, err := sq.Select(labels.NewMustRegexpMatcher("__name__", ".*"))
+				for ss.Next() {
+					it := ss.At().Iterator()
+					for t := mint; t <= maxt; t++ {
+						it.Seek(t)
+					}
+					testutil.Ok(b, it.Err())
+				}
+				testutil.Ok(b, ss.Err())
+				testutil.Ok(b, err)
+			})
 		}
-		testutil.Ok(b, it.Err())
 	}
-	testutil.Ok(b, ss.Err())
-	testutil.Ok(b, err)
 }
