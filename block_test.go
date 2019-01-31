@@ -102,11 +102,12 @@ func genSeries(totalSeries, labelCount int, mint, maxt int64) []Series {
 	}
 	series := make([]Series, totalSeries)
 
+	lbls := make(map[string]string, labelCount)
+	for len(lbls) < labelCount {
+		lbls[randString()] = randString()
+	}
 	for i := 0; i < totalSeries; i++ {
-		lbls := make(map[string]string, labelCount)
-		for len(lbls) < labelCount {
-			lbls[randString()] = randString()
-		}
+
 		samples := make([]tsdbutil.Sample, 0, maxt-mint+1)
 		for t := mint; t <= maxt; t++ {
 			samples = append(samples, sample{t: t, v: rand.Float64()})
