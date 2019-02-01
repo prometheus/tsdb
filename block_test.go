@@ -103,8 +103,10 @@ func genSeries(totalSeries, labelCount int, mint, maxt int64) []Series {
 	series := make([]Series, totalSeries)
 
 	lbls := make(map[string]string, labelCount)
+	var lastKey string
 	for len(lbls) < labelCount {
-		lbls[randString()] = randString()
+		lastKey := randString()
+		lbls[lastKey] = randString()
 	}
 	for i := 0; i < totalSeries; i++ {
 
@@ -112,6 +114,7 @@ func genSeries(totalSeries, labelCount int, mint, maxt int64) []Series {
 		for t := mint; t <= maxt; t++ {
 			samples = append(samples, sample{t: t, v: rand.Float64()})
 		}
+		lbls[lastKey] = randString() // Add at least one unique label to make these different series.
 		series[i] = newSeries(lbls, samples)
 	}
 
