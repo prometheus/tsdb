@@ -259,13 +259,16 @@ func TestIndexRW_SymbolsOrder(t *testing.T) {
 	ir, err := NewFileReader(fn)
 	testutil.Ok(t, err)
 
-	err = ir.readSymbols(int(ir.toc.symbols))
+	toc, err := NewTOCFromByteSlice(ir.b)
 	testutil.Ok(t, err)
 
-	testutil.Equals(t, len(ir.symbolSlice), len(exp))
+	ir.symbolsV2, ir.symbolsV1, err = ReadSymbols(ir.b, ir.version, int(toc.Symbols))
+	testutil.Ok(t, err)
 
-	for i := range ir.symbolSlice {
-		testutil.Equals(t, ir.symbolSlice[i], exp[i])
+	testutil.Equals(t, len(ir.symbolsV2), len(exp))
+
+	for i := range ir.symbolsV2 {
+		testutil.Equals(t, ir.symbolsV2[i], exp[i])
 	}
 
 	testutil.Ok(t, ir.Close())
