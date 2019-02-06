@@ -42,7 +42,7 @@ import (
 func main() {
 	var (
 		cli                  = kingpin.New(filepath.Base(os.Args[0]), "CLI tool for tsdb")
-		noLock               = cli.Flag("no-lock", "don't lock the tsdb. ").Bool()
+		noLock               = cli.Flag("no-lock", "don't try to lock the tsdb").Bool()
 		benchCmd             = cli.Command("bench", "run benchmarks")
 		benchWriteCmd        = benchCmd.Command("write", "run a write performance benchmark")
 		benchWriteOutPath    = benchWriteCmd.Flag("out", "set the output path").Default("benchout").String()
