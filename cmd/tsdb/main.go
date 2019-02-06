@@ -33,6 +33,7 @@ import (
 	"github.com/go-kit/kit/log"
 	"github.com/pkg/errors"
 	"github.com/prometheus/tsdb"
+	"github.com/prometheus/tsdb/chunks"
 	"github.com/prometheus/tsdb/labels"
 	"gopkg.in/alecthomas/kingpin.v2"
 )
@@ -42,12 +43,16 @@ func main() {
 		cli                  = kingpin.New(filepath.Base(os.Args[0]), "CLI tool for tsdb")
 		benchCmd             = cli.Command("bench", "run benchmarks")
 		benchWriteCmd        = benchCmd.Command("write", "run a write performance benchmark")
-		benchWriteOutPath    = benchWriteCmd.Flag("out", "set the output path").Default("benchout/").String()
+		benchWriteOutPath    = benchWriteCmd.Flag("out", "set the output path").Default("benchout").String()
 		benchWriteNumMetrics = benchWriteCmd.Flag("metrics", "number of metrics to read").Default("10000").Int()
-		benchSamplesFile     = benchWriteCmd.Arg("file", "input file with samples data, default is (../../testdata/20kseries.json)").Default("../../testdata/20kseries.json").String()
+		benchSamplesFile     = benchWriteCmd.Arg("file", "input file with samples data, default is ("+filepath.Join("..", "testdata", "20kseries.json")+")").Default(filepath.Join("..", "testdata", "20kseries.json")).String()
 		listCmd              = cli.Command("ls", "list db blocks")
 		listCmdHumanReadable = listCmd.Flag("human-readable", "print human readable values").Short('h').Bool()
-		listPath             = listCmd.Arg("db path", "database path (default is benchout/storage)").Default("benchout/storage").String()
+		listPath             = listCmd.Arg("db path", "database path (default is "+filepath.Join("benchout", "storage")+")").Default(filepath.Join("benchout", "storage")).String()
+		analyzeCmd           = cli.Command("analyze", "analyze churn, label pair cardinality.")
+		analyzePath          = analyzeCmd.Arg("db path", "database path (default is "+filepath.Join("benchout", "storage")+")").Default(filepath.Join("benchout", "storage")).String()
+		analyzeBlockID       = analyzeCmd.Arg("block id", "block to analyze (default is the last block)").String()
+		analyzeLimit         = analyzeCmd.Flag("limit", "how many items to show in each list").Default("20").Int()
 	)
 
 	switch kingpin.MustParse(cli.Parse(os.Args[1:])) {
@@ -64,6 +69,27 @@ func main() {
 			exitWithError(err)
 		}
 		printBlocks(db.Blocks(), listCmdHumanReadable)
+	case analyzeCmd.FullCommand():
+		db, err := tsdb.Open(*analyzePath, nil, nil, nil)
+		if err != nil {
+			exitWithError(err)
+		}
+		blocks := db.Blocks()
+		var block *tsdb.Block
+		if *analyzeBlockID != "" {
+			for _, b := range blocks {
+				if b.Meta().ULID.String() == *analyzeBlockID {
+					block = b
+					break
+				}
+			}
+		} else if len(blocks) > 0 {
+			block = blocks[len(blocks)-1]
+		}
+		if block == nil {
+			exitWithError(fmt.Errorf("Block not found"))
+		}
+		analyzeBlock(block, *analyzeLimit)
 	}
 	flag.CommandLine.Set("log.level", "debug")
 }
@@ -104,7 +130,6 @@ func (b *writeBenchmark) run() {
 	l = log.With(l, "ts", log.DefaultTimestampUTC, "caller", log.DefaultCaller)
 
 	st, err := tsdb.Open(dir, l, nil, &tsdb.Options{
-		WALFlushInterval:  200 * time.Millisecond,
 		RetentionDuration: 15 * 24 * 60 * 60 * 1000, // 15 days in milliseconds
 		BlockRanges:       tsdb.ExponentialBlockRanges(2*60*60*1000, 5, 3),
 	})
@@ -113,7 +138,7 @@ func (b *writeBenchmark) run() {
 	}
 	b.storage = st
 
-	var metrics []labels.Labels
+	var labels []labels.Labels
 
 	measureTime("readData", func() {
 		f, err := os.Open(b.samplesFile)
@@ -122,7 +147,7 @@ func (b *writeBenchmark) run() {
 		}
 		defer f.Close()
 
-		metrics, err = readPrometheusLabels(f, b.numMetrics)
+		labels, err = readPrometheusLabels(f, b.numMetrics)
 		if err != nil {
 			exitWithError(err)
 		}
@@ -132,7 +157,7 @@ func (b *writeBenchmark) run() {
 
 	dur := measureTime("ingestScrapes", func() {
 		b.startProfiling()
-		total, err = b.ingestScrapes(metrics, 3000)
+		total, err = b.ingestScrapes(labels, 3000)
 		if err != nil {
 			exitWithError(err)
 		}
@@ -145,7 +170,9 @@ func (b *writeBenchmark) run() {
 		if err := b.storage.Close(); err != nil {
 			exitWithError(err)
 		}
-		b.stopProfiling()
+		if err := b.stopProfiling(); err != nil {
+			exitWithError(err)
+		}
 	})
 }
 
@@ -186,7 +213,7 @@ func (b *writeBenchmark) ingestScrapes(lbls []labels.Labels, scrapeCount int) (u
 	return total, nil
 }
 
-func (b *writeBenchmark) ingestScrapesShard(metrics []labels.Labels, scrapeCount int, baset int64) (uint64, error) {
+func (b *writeBenchmark) ingestScrapesShard(lbls []labels.Labels, scrapeCount int, baset int64) (uint64, error) {
 	ts := baset
 
 	type sample struct {
@@ -195,9 +222,9 @@ func (b *writeBenchmark) ingestScrapesShard(metrics []labels.Labels, scrapeCount
 		ref    *uint64
 	}
 
-	scrape := make([]*sample, 0, len(metrics))
+	scrape := make([]*sample, 0, len(lbls))
 
-	for _, m := range metrics {
+	for _, m := range lbls {
 		scrape = append(scrape, &sample{
 			labels: m,
 			value:  123456789,
@@ -248,7 +275,9 @@ func (b *writeBenchmark) startProfiling() {
 	if err != nil {
 		exitWithError(fmt.Errorf("bench: could not create cpu profile: %v", err))
 	}
-	pprof.StartCPUProfile(b.cpuprof)
+	if err := pprof.StartCPUProfile(b.cpuprof); err != nil {
+		exitWithError(fmt.Errorf("bench: could not start CPU profile: %v", err))
+	}
 
 	// Start memory profiling.
 	b.memprof, err = os.Create(filepath.Join(b.outPath, "mem.prof"))
@@ -271,29 +300,36 @@ func (b *writeBenchmark) startProfiling() {
 	runtime.SetMutexProfileFraction(20)
 }
 
-func (b *writeBenchmark) stopProfiling() {
+func (b *writeBenchmark) stopProfiling() error {
 	if b.cpuprof != nil {
 		pprof.StopCPUProfile()
 		b.cpuprof.Close()
 		b.cpuprof = nil
 	}
 	if b.memprof != nil {
-		pprof.Lookup("heap").WriteTo(b.memprof, 0)
+		if err := pprof.Lookup("heap").WriteTo(b.memprof, 0); err != nil {
+			return fmt.Errorf("error writing mem profile: %v", err)
+		}
 		b.memprof.Close()
 		b.memprof = nil
 	}
 	if b.blockprof != nil {
-		pprof.Lookup("block").WriteTo(b.blockprof, 0)
+		if err := pprof.Lookup("block").WriteTo(b.blockprof, 0); err != nil {
+			return fmt.Errorf("error writing block profile: %v", err)
+		}
 		b.blockprof.Close()
 		b.blockprof = nil
 		runtime.SetBlockProfileRate(0)
 	}
 	if b.mtxprof != nil {
-		pprof.Lookup("mutex").WriteTo(b.mtxprof, 0)
+		if err := pprof.Lookup("mutex").WriteTo(b.mtxprof, 0); err != nil {
+			return fmt.Errorf("error writing mutex profile: %v", err)
+		}
 		b.mtxprof.Close()
 		b.mtxprof = nil
 		runtime.SetMutexProfileFraction(0)
 	}
+	return nil
 }
 
 func measureTime(stage string, f func()) time.Duration {
@@ -371,4 +407,133 @@ func getFormatedTime(timestamp int64, humanReadable *bool) string {
 		return time.Unix(timestamp/1000, 0).String()
 	}
 	return strconv.FormatInt(timestamp, 10)
+}
+
+func analyzeBlock(b *tsdb.Block, limit int) {
+	fmt.Printf("Block path: %s\n", b.Dir())
+	meta := b.Meta()
+	// Presume 1ms resolution that Prometheus uses.
+	fmt.Printf("Duration: %s\n", (time.Duration(meta.MaxTime-meta.MinTime) * 1e6).String())
+	fmt.Printf("Series: %d\n", meta.Stats.NumSeries)
+	ir, err := b.Index()
+	if err != nil {
+		exitWithError(err)
+	}
+	defer ir.Close()
+
+	allLabelNames, err := ir.LabelNames()
+	if err != nil {
+		exitWithError(err)
+	}
+	fmt.Printf("Label names: %d\n", len(allLabelNames))
+
+	type postingInfo struct {
+		key    string
+		metric uint64
+	}
+	postingInfos := []postingInfo{}
+
+	printInfo := func(postingInfos []postingInfo) {
+		sort.Slice(postingInfos, func(i, j int) bool { return postingInfos[i].metric > postingInfos[j].metric })
+
+		for i, pc := range postingInfos {
+			fmt.Printf("%d %s\n", pc.metric, pc.key)
+			if i >= limit {
+				break
+			}
+		}
+	}
+
+	labelsUncovered := map[string]uint64{}
+	labelpairsUncovered := map[string]uint64{}
+	labelpairsCount := map[string]uint64{}
+	entries := 0
+	p, err := ir.Postings("", "") // The special all key.
+	if err != nil {
+		exitWithError(err)
+	}
+	lbls := labels.Labels{}
+	chks := []chunks.Meta{}
+	for p.Next() {
+		if err = ir.Series(p.At(), &lbls, &chks); err != nil {
+			exitWithError(err)
+		}
+		// Amount of the block time range not covered by this series.
+		uncovered := uint64(meta.MaxTime-meta.MinTime) - uint64(chks[len(chks)-1].MaxTime-chks[0].MinTime)
+		for _, lbl := range lbls {
+			key := lbl.Name + "=" + lbl.Value
+			labelsUncovered[lbl.Name] += uncovered
+			labelpairsUncovered[key] += uncovered
+			labelpairsCount[key]++
+			entries++
+		}
+	}
+	if p.Err() != nil {
+		exitWithError(p.Err())
+	}
+	fmt.Printf("Postings (unique label pairs): %d\n", len(labelpairsUncovered))
+	fmt.Printf("Postings entries (total label pairs): %d\n", entries)
+
+	postingInfos = postingInfos[:0]
+	for k, m := range labelpairsUncovered {
+		postingInfos = append(postingInfos, postingInfo{k, uint64(float64(m) / float64(meta.MaxTime-meta.MinTime))})
+	}
+
+	fmt.Printf("\nLabel pairs most involved in churning:\n")
+	printInfo(postingInfos)
+
+	postingInfos = postingInfos[:0]
+	for k, m := range labelsUncovered {
+		postingInfos = append(postingInfos, postingInfo{k, uint64(float64(m) / float64(meta.MaxTime-meta.MinTime))})
+	}
+
+	fmt.Printf("\nLabel names most involved in churning:\n")
+	printInfo(postingInfos)
+
+	postingInfos = postingInfos[:0]
+	for k, m := range labelpairsCount {
+		postingInfos = append(postingInfos, postingInfo{k, m})
+	}
+
+	fmt.Printf("\nMost common label pairs:\n")
+	printInfo(postingInfos)
+
+	postingInfos = postingInfos[:0]
+	for _, n := range allLabelNames {
+		lv, err := ir.LabelValues(n)
+		if err != nil {
+			exitWithError(err)
+		}
+		postingInfos = append(postingInfos, postingInfo{n, uint64(lv.Len())})
+	}
+	fmt.Printf("\nHighest cardinality labels:\n")
+	printInfo(postingInfos)
+
+	postingInfos = postingInfos[:0]
+	lv, err := ir.LabelValues("__name__")
+	if err != nil {
+		exitWithError(err)
+	}
+	for i := 0; i < lv.Len(); i++ {
+		names, err := lv.At(i)
+		if err != nil {
+			exitWithError(err)
+		}
+		for _, n := range names {
+			postings, err := ir.Postings("__name__", n)
+			if err != nil {
+				exitWithError(err)
+			}
+			count := 0
+			for postings.Next() {
+				count++
+			}
+			if postings.Err() != nil {
+				exitWithError(postings.Err())
+			}
+			postingInfos = append(postingInfos, postingInfo{n, uint64(count)})
+		}
+	}
+	fmt.Printf("\nHighest cardinality metric names:\n")
+	printInfo(postingInfos)
 }

@@ -140,11 +140,9 @@ func (m mockIndex) Series(ref uint64, lset *labels.Labels, chks *[]chunks.Meta) 
 
 func (m mockIndex) LabelIndices() ([][]string, error) {
 	res := make([][]string, 0, len(m.labelIndex))
-
 	for k := range m.labelIndex {
 		res = append(res, []string{k})
 	}
-
 	return res, nil
 }
 
@@ -239,7 +237,7 @@ func TestPersistence_index_e2e(t *testing.T) {
 	testutil.Ok(t, err)
 	defer os.RemoveAll(dir)
 
-	lbls, err := labels.ReadLabels("../testdata/20kseries.json", 20000)
+	lbls, err := labels.ReadLabels(filepath.Join("..", "testdata", "20kseries.json"), 20000)
 	testutil.Ok(t, err)
 
 	// Sort labels as the index writer expects series in sorted order.
@@ -322,10 +320,12 @@ func TestPersistence_index_e2e(t *testing.T) {
 	testutil.Ok(t, err)
 	mi.WritePostings("", "", newListPostings(all))
 
-	for l := range postings.m {
-		err = iw.WritePostings(l.Name, l.Value, postings.Get(l.Name, l.Value))
-		testutil.Ok(t, err)
-		mi.WritePostings(l.Name, l.Value, postings.Get(l.Name, l.Value))
+	for n, e := range postings.m {
+		for v := range e {
+			err = iw.WritePostings(n, v, postings.Get(n, v))
+			testutil.Ok(t, err)
+			mi.WritePostings(n, v, postings.Get(n, v))
+		}
 	}
 
 	err = iw.Close()
@@ -339,6 +339,7 @@ func TestPersistence_index_e2e(t *testing.T) {
 		testutil.Ok(t, err)
 
 		expp, err := mi.Postings(p.Name, p.Value)
+		testutil.Ok(t, err)
 
 		var lset, explset labels.Labels
 		var chks, expchks []chunks.Meta
@@ -352,6 +353,7 @@ func TestPersistence_index_e2e(t *testing.T) {
 			testutil.Ok(t, err)
 
 			err = mi.Series(expp.At(), &explset, &expchks)
+			testutil.Ok(t, err)
 			testutil.Equals(t, explset, lset)
 			testutil.Equals(t, expchks, chks)
 		}
@@ -378,13 +380,28 @@ func TestPersistence_index_e2e(t *testing.T) {
 		}
 	}
 
+	gotSymbols, err := ir.Symbols()
+	testutil.Ok(t, err)
+
+	testutil.Equals(t, len(mi.symbols), len(gotSymbols))
+	for s := range mi.symbols {
+		_, ok := gotSymbols[s]
+		testutil.Assert(t, ok, "")
+	}
+
 	testutil.Ok(t, ir.Close())
+}
+
+func TestDecbufUvariantWithInvalidBuffer(t *testing.T) {
+	b := realByteSlice([]byte{0x81, 0x81, 0x81, 0x81, 0x81, 0x81})
+
+	db := newDecbufUvarintAt(b, 0)
+	testutil.NotOk(t, db.err())
 }
 
 func TestReaderWithInvalidBuffer(t *testing.T) {
 	b := realByteSlice([]byte{0x81, 0x81, 0x81, 0x81, 0x81, 0x81})
-	r := &Reader{b: b}
 
-	db := r.decbufUvarintAt(0)
-	testutil.NotOk(t, db.err())
+	_, err := NewReader(b)
+	testutil.NotOk(t, err)
 }

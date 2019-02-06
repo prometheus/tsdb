@@ -222,7 +222,7 @@ func (a *xorAppender) writeVDelta(v float64) {
 }
 
 type xorIterator struct {
-	br       *bstream
+	br       bstream
 	numTotal uint16
 	numRead  uint16
 
@@ -250,7 +250,7 @@ func (it *xorIterator) Next() bool {
 	}
 
 	if it.numRead == 0 {
-		t, err := binary.ReadVarint(it.br)
+		t, err := binary.ReadVarint(&it.br)
 		if err != nil {
 			it.err = err
 			return false
@@ -267,7 +267,7 @@ func (it *xorIterator) Next() bool {
 		return true
 	}
 	if it.numRead == 1 {
-		tDelta, err := binary.ReadUvarint(it.br)
+		tDelta, err := binary.ReadUvarint(&it.br)
 		if err != nil {
 			it.err = err
 			return false

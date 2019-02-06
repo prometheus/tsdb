@@ -33,9 +33,13 @@ type Querier interface {
 
 	// LabelValues returns all potential values for a label name.
 	LabelValues(string) ([]string, error)
+
 	// LabelValuesFor returns all potential values for a label name.
 	// under the constraint of another label.
 	LabelValuesFor(string, labels.Label) ([]string, error)
+
+	// LabelNames returns all the unique label names present in the block in sorted order.
+	LabelNames() ([]string, error)
 
 	// Close releases the resources of the Querier.
 	Close() error
@@ -58,6 +62,28 @@ type querier struct {
 
 func (q *querier) LabelValues(n string) ([]string, error) {
 	return q.lvals(q.blocks, n)
+}
+
+// LabelNames returns all the unique label names present querier blocks.
+func (q *querier) LabelNames() ([]string, error) {
+	labelNamesMap := make(map[string]struct{})
+	for _, b := range q.blocks {
+		names, err := b.LabelNames()
+		if err != nil {
+			return nil, errors.Wrap(err, "LabelNames() from Querier")
+		}
+		for _, name := range names {
+			labelNamesMap[name] = struct{}{}
+		}
+	}
+
+	labelNames := make([]string, 0, len(labelNamesMap))
+	for name := range labelNamesMap {
+		labelNames = append(labelNames, name)
+	}
+	sort.Strings(labelNames)
+
+	return labelNames, nil
 }
 
 func (q *querier) lvals(qs []Querier, n string) ([]string, error) {
@@ -187,6 +213,10 @@ func (q *blockQuerier) LabelValues(name string) ([]string, error) {
 	return res, nil
 }
 
+func (q *blockQuerier) LabelNames() ([]string, error) {
+	return q.index.LabelNames()
+}
+
 func (q *blockQuerier) LabelValuesFor(string, labels.Label) ([]string, error) {
 	return nil, fmt.Errorf("not implemented")
 }
@@ -217,39 +247,8 @@ func PostingsForMatchers(ix IndexReader, ms ...labels.Matcher) (index.Postings, 
 	return ix.SortedPostings(index.Intersect(its...)), nil
 }
 
-// tuplesByPrefix uses binary search to find prefix matches within ts.
-func tuplesByPrefix(m *labels.PrefixMatcher, ts StringTuples) ([]string, error) {
-	var outErr error
-	tslen := ts.Len()
-	i := sort.Search(tslen, func(i int) bool {
-		vs, err := ts.At(i)
-		if err != nil {
-			outErr = fmt.Errorf("Failed to read tuple %d/%d: %v", i, tslen, err)
-			return true
-		}
-		val := vs[0]
-		l := len(m.Prefix())
-		if l > len(vs) {
-			l = len(val)
-		}
-		return val[:l] >= m.Prefix()
-	})
-	if outErr != nil {
-		return nil, outErr
-	}
-	var matches []string
-	for ; i < tslen; i++ {
-		vs, err := ts.At(i)
-		if err != nil || !m.Matches(vs[0]) {
-			return matches, err
-		}
-		matches = append(matches, vs[0])
-	}
-	return matches, nil
-}
-
 func postingsForMatcher(ix IndexReader, m labels.Matcher) (index.Postings, error) {
-	// If the matcher selects an empty value, it selects all the series which dont
+	// If the matcher selects an empty value, it selects all the series which don't
 	// have the label name set too. See: https://github.com/prometheus/prometheus/issues/3575
 	// and https://github.com/prometheus/prometheus/pull/3578#issuecomment-351653555
 	if m.Matches("") {
@@ -271,21 +270,13 @@ func postingsForMatcher(ix IndexReader, m labels.Matcher) (index.Postings, error
 	}
 
 	var res []string
-	if pm, ok := m.(*labels.PrefixMatcher); ok {
-		res, err = tuplesByPrefix(pm, tpls)
+	for i := 0; i < tpls.Len(); i++ {
+		vals, err := tpls.At(i)
 		if err != nil {
 			return nil, err
 		}
-
-	} else {
-		for i := 0; i < tpls.Len(); i++ {
-			vals, err := tpls.At(i)
-			if err != nil {
-				return nil, err
-			}
-			if m.Matches(vals[0]) {
-				res = append(res, vals[0])
-			}
+		if m.Matches(vals[0]) {
+			res = append(res, vals[0])
 		}
 	}
 
@@ -478,7 +469,7 @@ type baseChunkSeries struct {
 // over them. It drops chunks based on tombstones in the given reader.
 func LookupChunkSeries(ir IndexReader, tr TombstoneReader, ms ...labels.Matcher) (ChunkSeriesSet, error) {
 	if tr == nil {
-		tr = NewMemTombstones()
+		tr = newMemTombstones()
 	}
 	p, err := PostingsForMatchers(ir, ms...)
 	if err != nil {
@@ -499,8 +490,8 @@ func (s *baseChunkSeries) Err() error { return s.err }
 
 func (s *baseChunkSeries) Next() bool {
 	var (
-		lset     labels.Labels
-		chkMetas []chunks.Meta
+		lset     = make(labels.Labels, len(s.lset))
+		chkMetas = make([]chunks.Meta, len(s.chks))
 		err      error
 	)
 
@@ -590,11 +581,9 @@ func (s *populatedChunkSeries) Next() bool {
 				// This means that the chunk has be garbage collected. Remove it from the list.
 				if s.err == ErrNotFound {
 					s.err = nil
-
 					// Delete in-place.
-					chks = append(chks[:j], chks[j+1:]...)
+					s.chks = append(chks[:j], chks[j+1:]...)
 				}
-
 				return false
 			}
 		}
@@ -907,30 +896,6 @@ Outer:
 
 func (it *deletedIterator) Err() error {
 	return it.it.Err()
-}
-
-type mockSeriesSet struct {
-	next   func() bool
-	series func() Series
-	err    func() error
-}
-
-func (m *mockSeriesSet) Next() bool { return m.next() }
-func (m *mockSeriesSet) At() Series { return m.series() }
-func (m *mockSeriesSet) Err() error { return m.err() }
-
-func newListSeriesSet(list []Series) *mockSeriesSet {
-	i := -1
-	return &mockSeriesSet{
-		next: func() bool {
-			i++
-			return i < len(list)
-		},
-		series: func() Series {
-			return list[i]
-		},
-		err: func() error { return nil },
-	}
 }
 
 type errSeriesSet struct {
