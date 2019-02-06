@@ -35,12 +35,14 @@ import (
 	"github.com/prometheus/tsdb"
 	"github.com/prometheus/tsdb/chunks"
 	"github.com/prometheus/tsdb/labels"
+	"github.com/prometheus/tsdb/wal"
 	"gopkg.in/alecthomas/kingpin.v2"
 )
 
 func main() {
 	var (
 		cli                  = kingpin.New(filepath.Base(os.Args[0]), "CLI tool for tsdb")
+		noLock               = cli.Flag("no-lock", "don't lock the tsdb. ").Bool()
 		benchCmd             = cli.Command("bench", "run benchmarks")
 		benchWriteCmd        = benchCmd.Command("write", "run a write performance benchmark")
 		benchWriteOutPath    = benchWriteCmd.Flag("out", "set the output path").Default("benchout").String()
@@ -55,6 +57,13 @@ func main() {
 		analyzeLimit         = analyzeCmd.Flag("limit", "how many items to show in each list").Default("20").Int()
 	)
 
+	options := &tsdb.Options{
+		WALSegmentSize:    wal.DefaultSegmentSize,
+		RetentionDuration: 15 * 24 * 60 * 60 * 1000, // 15 days in milliseconds
+		BlockRanges:       tsdb.ExponentialBlockRanges(int64(2*time.Hour)/1e6, 3, 5),
+		NoLockfile:        false,
+	}
+
 	switch kingpin.MustParse(cli.Parse(os.Args[1:])) {
 	case benchWriteCmd.FullCommand():
 		wb := &writeBenchmark{
@@ -64,13 +73,15 @@ func main() {
 		}
 		wb.run()
 	case listCmd.FullCommand():
-		db, err := tsdb.Open(*listPath, nil, nil, nil)
+		options.NoLockfile = *noLock
+		db, err := tsdb.Open(*listPath, nil, nil, options)
 		if err != nil {
 			exitWithError(err)
 		}
 		printBlocks(db.Blocks(), listCmdHumanReadable)
 	case analyzeCmd.FullCommand():
-		db, err := tsdb.Open(*analyzePath, nil, nil, nil)
+		options.NoLockfile = *noLock
+		db, err := tsdb.Open(*analyzePath, nil, nil, options)
 		if err != nil {
 			exitWithError(err)
 		}
