@@ -105,7 +105,7 @@ func genSeries(totalSeries, labelCount int, mint, maxt int64) []Series {
 	lbls := make(map[string]string, labelCount)
 	var lastKey string
 	for len(lbls) < labelCount {
-		lastKey := randString()
+		lastKey = randString()
 		lbls[lastKey] = randString()
 	}
 	for i := 0; i < totalSeries; i++ {
