@@ -1759,8 +1759,103 @@ func TestVerticalCompaction(t *testing.T) {
 				sample{20, 0}, sample{22, 0},
 			}},
 		},
+		// Case 5: series are merged properly when there are multiple series.
+		// |-------------------------------------|
+		//            |------------|
+		//      |-------------------------|
+		{
+			blockSeries: [][]Series{
+				[]Series{
+					newSeries(map[string]string{"a": "b"}, []tsdbutil.Sample{
+						sample{0, 0}, sample{1, 0}, sample{2, 0}, sample{4, 0},
+						sample{5, 0}, sample{8, 0}, sample{9, 0}, sample{10, 0},
+						sample{13, 0}, sample{15, 0}, sample{16, 0}, sample{17, 0},
+						sample{20, 0}, sample{22, 0},
+					}),
+					newSeries(map[string]string{"b": "c"}, []tsdbutil.Sample{
+						sample{0, 0}, sample{1, 0}, sample{2, 0}, sample{4, 0},
+						sample{5, 0}, sample{8, 0}, sample{9, 0}, sample{10, 0},
+						sample{13, 0}, sample{15, 0}, sample{16, 0}, sample{17, 0},
+						sample{20, 0}, sample{22, 0},
+					}),
+					newSeries(map[string]string{"c": "d"}, []tsdbutil.Sample{
+						sample{0, 0}, sample{1, 0}, sample{2, 0}, sample{4, 0},
+						sample{5, 0}, sample{8, 0}, sample{9, 0}, sample{10, 0},
+						sample{13, 0}, sample{15, 0}, sample{16, 0}, sample{17, 0},
+						sample{20, 0}, sample{22, 0},
+					}),
+				},
+				[]Series{
+					newSeries(map[string]string{"__name__": "a"}, []tsdbutil.Sample{
+						sample{7, 59}, sample{8, 59}, sample{9, 59}, sample{10, 59},
+						sample{11, 59},
+					}),
+					newSeries(map[string]string{"a": "b"}, []tsdbutil.Sample{
+						sample{7, 59}, sample{8, 59}, sample{9, 59}, sample{10, 59},
+						sample{11, 59},
+					}),
+					newSeries(map[string]string{"aa": "bb"}, []tsdbutil.Sample{
+						sample{7, 59}, sample{8, 59}, sample{9, 59}, sample{10, 59},
+						sample{11, 59},
+					}),
+					newSeries(map[string]string{"c": "d"}, []tsdbutil.Sample{
+						sample{7, 59}, sample{8, 59}, sample{9, 59}, sample{10, 59},
+						sample{11, 59},
+					}),
+				},
+				[]Series{
+					newSeries(map[string]string{"a": "b"}, []tsdbutil.Sample{
+						sample{3, 99}, sample{5, 99}, sample{6, 99}, sample{8, 99},
+						sample{9, 99}, sample{10, 99}, sample{13, 99}, sample{15, 99},
+						sample{16, 99}, sample{17, 99},
+					}),
+					newSeries(map[string]string{"aa": "bb"}, []tsdbutil.Sample{
+						sample{3, 99}, sample{5, 99}, sample{6, 99}, sample{8, 99},
+						sample{9, 99}, sample{10, 99}, sample{13, 99}, sample{15, 99},
+						sample{16, 99}, sample{17, 99},
+					}),
+					newSeries(map[string]string{"c": "d"}, []tsdbutil.Sample{
+						sample{3, 99}, sample{5, 99}, sample{6, 99}, sample{8, 99},
+						sample{9, 99}, sample{10, 99}, sample{13, 99}, sample{15, 99},
+						sample{16, 99}, sample{17, 99},
+					}),
+				},
+			},
+			expSeries: map[string][]tsdbutil.Sample{
+				`{__name__="a"}`: {
+					sample{7, 59}, sample{8, 59}, sample{9, 59}, sample{10, 59},
+					sample{11, 59},
+				},
+				`{a="b"}`: {
+					sample{0, 0}, sample{1, 0}, sample{2, 0}, sample{3, 99},
+					sample{4, 0}, sample{5, 99}, sample{6, 99}, sample{7, 59},
+					sample{8, 59}, sample{9, 59}, sample{10, 59}, sample{11, 59},
+					sample{13, 99}, sample{15, 99}, sample{16, 99}, sample{17, 99},
+					sample{20, 0}, sample{22, 0},
+				},
+				`{aa="bb"}`: {
+					sample{3, 99}, sample{5, 99}, sample{6, 99}, sample{7, 59},
+					sample{8, 59}, sample{9, 59}, sample{10, 59}, sample{11, 59},
+					sample{13, 99}, sample{15, 99}, sample{16, 99}, sample{17, 99},
+				},
+				`{b="c"}`: {
+					sample{0, 0}, sample{1, 0}, sample{2, 0}, sample{4, 0},
+					sample{5, 0}, sample{8, 0}, sample{9, 0}, sample{10, 0},
+					sample{13, 0}, sample{15, 0}, sample{16, 0}, sample{17, 0},
+					sample{20, 0}, sample{22, 0},
+				},
+				`{c="d"}`: {
+					sample{0, 0}, sample{1, 0}, sample{2, 0}, sample{3, 99},
+					sample{4, 0}, sample{5, 99}, sample{6, 99}, sample{7, 59},
+					sample{8, 59}, sample{9, 59}, sample{10, 59}, sample{11, 59},
+					sample{13, 99}, sample{15, 99}, sample{16, 99}, sample{17, 99},
+					sample{20, 0}, sample{22, 0},
+				},
+			},
+		},
 	}
 
+	defaultMatcher := labels.NewMustRegexpMatcher("__name__", ".*")
 	for _, c := range cases {
 		if ok := t.Run("", func(t *testing.T) {
 
@@ -1784,7 +1879,7 @@ func TestVerticalCompaction(t *testing.T) {
 			// Vertical Query Merging test.
 			querier, err := db.Querier(0, 100)
 			testutil.Ok(t, err)
-			actSeries := query(t, querier, labels.NewEqualMatcher("a", "b"))
+			actSeries := query(t, querier, defaultMatcher)
 			testutil.Equals(t, c.expSeries, actSeries)
 
 			// Vertical compaction.
@@ -1799,7 +1894,7 @@ func TestVerticalCompaction(t *testing.T) {
 			// Query test after merging the overlapping blocks.
 			querier, err = db.Querier(0, 100)
 			testutil.Ok(t, err)
-			actSeries = query(t, querier, labels.NewEqualMatcher("a", "b"))
+			actSeries = query(t, querier, defaultMatcher)
 			testutil.Equals(t, c.expSeries, actSeries)
 		}); !ok {
 			return
