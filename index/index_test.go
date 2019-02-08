@@ -189,13 +189,13 @@ func TestIndexRW_Postings(t *testing.T) {
 		labels.FromStrings("a", "1", "b", "4"),
 	}
 
-	err = iw.AddSymbols(map[string]struct{}{
-		"a": {},
-		"b": {},
-		"1": {},
-		"2": {},
-		"3": {},
-		"4": {},
+	err = iw.AddSymbols(map[string]int{
+		"a": 1,
+		"b": 2,
+		"1": 1,
+		"2": 4,
+		"3": 5,
+		"4": 3,
 	})
 	testutil.Ok(t, err)
 
@@ -232,6 +232,48 @@ func TestIndexRW_Postings(t *testing.T) {
 	testutil.Ok(t, ir.Close())
 }
 
+func TestIndexRW_SymbolsOrder(t *testing.T) {
+	dir, err := ioutil.TempDir("", "test_index_order")
+	testutil.Ok(t, err)
+	defer os.RemoveAll(dir)
+
+	fn := filepath.Join(dir, "index")
+
+	iw, err := NewWriter(fn)
+	testutil.Ok(t, err)
+
+	err = iw.AddSymbols(map[string]int{
+		"a": 1,
+		"b": 2,
+		"c": 1,
+		"2": 4,
+		"3": 5,
+		"4": 3,
+	})
+
+	testutil.Ok(t, err)
+	testutil.Ok(t, iw.Close())
+
+	exp := []string{"3", "2", "4", "b", "c", "a"}
+
+	ir, err := NewFileReader(fn)
+	testutil.Ok(t, err)
+
+	toc, err := NewTOCFromByteSlice(ir.b)
+	testutil.Ok(t, err)
+
+	ir.symbolsV2, ir.symbolsV1, err = ReadSymbols(ir.b, ir.version, int(toc.Symbols))
+	testutil.Ok(t, err)
+
+	testutil.Equals(t, len(ir.symbolsV2), len(exp))
+
+	for i := range ir.symbolsV2 {
+		testutil.Equals(t, ir.symbolsV2[i], exp[i])
+	}
+
+	testutil.Ok(t, ir.Close())
+}
+
 func TestPersistence_index_e2e(t *testing.T) {
 	dir, err := ioutil.TempDir("", "test_persistence_e2e")
 	testutil.Ok(t, err)
@@ -243,11 +285,11 @@ func TestPersistence_index_e2e(t *testing.T) {
 	// Sort labels as the index writer expects series in sorted order.
 	sort.Sort(labels.Slice(lbls))
 
-	symbols := map[string]struct{}{}
+	symbols := make(map[string]int)
 	for _, lset := range lbls {
 		for _, l := range lset {
-			symbols[l.Name] = struct{}{}
-			symbols[l.Value] = struct{}{}
+			symbols[l.Name] = 0
+			symbols[l.Value] = 0
 		}
 	}
 

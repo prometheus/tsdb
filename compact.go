@@ -589,7 +589,7 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 
 	var (
 		set        ChunkSeriesSet
-		allSymbols = make(map[string]struct{}, 1<<16)
+		allSymbols = make(map[string]int, 1<<16)
 		closers    = []io.Closer{}
 	)
 	defer func() { closeAll(closers...) }()
@@ -618,7 +618,7 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 			return errors.Wrap(err, "read symbols")
 		}
 		for s := range symbols {
-			allSymbols[s] = struct{}{}
+			allSymbols[s] = symbols[s]
 		}
 
 		all, err := indexr.Postings(index.AllPostingsKey())

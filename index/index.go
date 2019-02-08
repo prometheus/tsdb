@@ -62,6 +62,17 @@ func (s indexWriterSeriesSlice) Less(i, j int) bool {
 	return labels.Compare(s[i].labels, s[j].labels) < 0
 }
 
+type symbolFrequencyPair struct {
+	symbol    string
+	frequency int
+}
+
+type symbolFrequencylist []symbolFrequencyPair
+
+func (s symbolFrequencylist) Len() int              { return len(s) }
+func (s symbolFrequencylist) Swap(i, j int)         { s[i], s[j] = s[j], s[i] }
+func (s symbolFrequencylist) Greater(i, j int) bool { return s[i].frequency > s[j].frequency }
+
 type indexWriterStage uint8
 
 const (
@@ -368,17 +379,24 @@ func (w *Writer) AddSeries(ref uint64, lset labels.Labels, chunks ...chunks.Meta
 	return nil
 }
 
-func (w *Writer) AddSymbols(sym map[string]struct{}) error {
+func (w *Writer) AddSymbols(sym map[string]int) error {
 	if err := w.ensureStage(idxStageSymbols); err != nil {
 		return err
 	}
 	// Generate sorted list of strings we will store as reference table.
-	symbols := make([]string, 0, len(sym))
+	symbols := make(symbolFrequencylist, 0, len(sym))
 
-	for s := range sym {
-		symbols = append(symbols, s)
+	for k, v := range sym {
+		symbols = append(symbols, symbolFrequencyPair{k, v})
 	}
-	sort.Strings(symbols)
+	sort.Slice(symbols, func(i, j int) bool {
+		// We get the symbols back as a map so we need to be sure
+		// to sort by symbol if the frequencies are the same.
+		if symbols[i].frequency == symbols[j].frequency {
+			return symbols[i].symbol > symbols[j].symbol
+		}
+		return symbols.Greater(i, j)
+	})
 
 	w.buf1.reset()
 	w.buf2.reset()
@@ -388,8 +406,8 @@ func (w *Writer) AddSymbols(sym map[string]struct{}) error {
 	w.symbols = make(map[string]uint32, len(symbols))
 
 	for index, s := range symbols {
-		w.symbols[s] = uint32(index)
-		w.buf2.putUvarintStr(s)
+		w.symbols[s.symbol] = uint32(index)
+		w.buf2.putUvarintStr(s.symbol)
 	}
 
 	w.buf1.putBE32int(w.buf2.len())
@@ -812,14 +830,14 @@ func (r *Reader) lookupSymbol(o uint32) (string, error) {
 }
 
 // Symbols returns a set of symbols that exist within the index.
-func (r *Reader) Symbols() (map[string]struct{}, error) {
-	res := make(map[string]struct{}, len(r.symbolsV1)+len(r.symbolsV2))
+func (r *Reader) Symbols() (map[string]int, error) {
+	res := make(map[string]int, len(r.symbolsV1)+len(r.symbolsV2))
 
 	for _, s := range r.symbolsV1 {
-		res[s] = struct{}{}
+		res[s] = 0
 	}
 	for _, s := range r.symbolsV2 {
-		res[s] = struct{}{}
+		res[s] = 0
 	}
 	return res, nil
 }

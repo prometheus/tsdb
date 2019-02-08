@@ -1272,7 +1272,7 @@ type mockIndex struct {
 	series     map[uint64]series
 	labelIndex map[string][]string
 	postings   map[labels.Label][]uint64
-	symbols    map[string]struct{}
+	symbols    map[string]int
 }
 
 func newMockIndex() mockIndex {
@@ -1280,12 +1280,12 @@ func newMockIndex() mockIndex {
 		series:     make(map[uint64]series),
 		labelIndex: make(map[string][]string),
 		postings:   make(map[labels.Label][]uint64),
-		symbols:    make(map[string]struct{}),
+		symbols:    make(map[string]int),
 	}
 	return ix
 }
 
-func (m mockIndex) Symbols() (map[string]struct{}, error) {
+func (m mockIndex) Symbols() (map[string]int, error) {
 	return m.symbols, nil
 }
 
@@ -1294,8 +1294,8 @@ func (m mockIndex) AddSeries(ref uint64, l labels.Labels, chunks ...chunks.Meta)
 		return errors.Errorf("series with reference %d already added", ref)
 	}
 	for _, lbl := range l {
-		m.symbols[lbl.Name] = struct{}{}
-		m.symbols[lbl.Value] = struct{}{}
+		m.symbols[lbl.Name] = 0
+		m.symbols[lbl.Value] = 0
 	}
 
 	s := series{l: l}

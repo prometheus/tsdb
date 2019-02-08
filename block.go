@@ -36,7 +36,7 @@ import (
 type IndexWriter interface {
 	// AddSymbols registers all string symbols that are encountered in series
 	// and other indices.
-	AddSymbols(sym map[string]struct{}) error
+	AddSymbols(sym map[string]int) error
 
 	// AddSeries populates the index writer with a series and its offsets
 	// of chunks that the index can reference.
@@ -63,7 +63,7 @@ type IndexWriter interface {
 type IndexReader interface {
 	// Symbols returns a set of string symbols that may occur in series' labels
 	// and indices.
-	Symbols() (map[string]struct{}, error)
+	Symbols() (map[string]int, error)
 
 	// LabelValues returns the possible label values.
 	LabelValues(names ...string) (index.StringTuples, error)
@@ -405,7 +405,7 @@ type blockIndexReader struct {
 	b  *Block
 }
 
-func (r blockIndexReader) Symbols() (map[string]struct{}, error) {
+func (r blockIndexReader) Symbols() (map[string]int, error) {
 	s, err := r.ir.Symbols()
 	return s, errors.Wrapf(err, "block: %s", r.b.Meta().ULID)
 }
