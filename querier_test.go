@@ -1255,7 +1255,7 @@ func BenchmarkPersistedQueries(b *testing.B) {
 				testutil.Ok(b, err)
 				defer os.RemoveAll(dir)
 
-				block, err := OpenBlock(nil, createBlock(b, dir, genSeries(nSeries, 10, 1, int64(nSamples))), nil)
+				block, err := OpenBlock(nil, createBlock(b, dir, genSeries(nSeries, 10, nil, 1, int64(nSamples))), nil)
 				testutil.Ok(b, err)
 				defer block.Close()
 
@@ -1547,7 +1547,7 @@ func BenchmarkQueryIterator(b *testing.B) {
 			numBlocks:                   20,
 			numSeries:                   1000,
 			numSamplesPerSeriesPerBlock: 20000,
-			overlapPercentages:          []int{0, 10, 30, 50},
+			overlapPercentages:          []int{0, 10, 30},
 		},
 	}
 
@@ -1563,13 +1563,25 @@ func BenchmarkQueryIterator(b *testing.B) {
 					testutil.Ok(b, os.RemoveAll(dir))
 				}()
 
-				var blocks []*Block
-				overlapDelta := int64(overlapPercentage * c.numSamplesPerSeriesPerBlock / 100)
+				var (
+					blocks          []*Block
+					overlapDelta    = int64(overlapPercentage * c.numSamplesPerSeriesPerBlock / 100)
+					prefilledLabels []map[string]string
+					generatedSeries []Series
+				)
 				for i := int64(0); i < int64(c.numBlocks); i++ {
 					offset := i * overlapDelta
 					mint := i*int64(c.numSamplesPerSeriesPerBlock) - offset
 					maxt := mint + int64(c.numSamplesPerSeriesPerBlock) - 1
-					block, err := OpenBlock(nil, createBlock(b, dir, genSeries(c.numSeries, 10, mint, maxt)), nil)
+					if len(prefilledLabels) == 0 {
+						generatedSeries = genSeries(c.numSeries, 10, nil, mint, maxt)
+						for _, s := range generatedSeries {
+							prefilledLabels = append(prefilledLabels, s.Labels().Map())
+						}
+					} else {
+						generatedSeries = genSeries(c.numSeries, 10, prefilledLabels, mint, maxt)
+					}
+					block, err := OpenBlock(nil, createBlock(b, dir, generatedSeries), nil)
 					testutil.Ok(b, err)
 					blocks = append(blocks, block)
 					defer block.Close()
@@ -1637,13 +1649,25 @@ func BenchmarkQuerySeek(b *testing.B) {
 					testutil.Ok(b, os.RemoveAll(dir))
 				}()
 
-				var blocks []*Block
-				overlapDelta := int64(overlapPercentage * c.numSamplesPerSeriesPerBlock / 100)
+				var (
+					blocks          []*Block
+					overlapDelta    = int64(overlapPercentage * c.numSamplesPerSeriesPerBlock / 100)
+					prefilledLabels []map[string]string
+					generatedSeries []Series
+				)
 				for i := int64(0); i < int64(c.numBlocks); i++ {
 					offset := i * overlapDelta
 					mint := i*int64(c.numSamplesPerSeriesPerBlock) - offset
 					maxt := mint + int64(c.numSamplesPerSeriesPerBlock) - 1
-					block, err := OpenBlock(nil, createBlock(b, dir, genSeries(c.numSeries, 10, mint, maxt)), nil)
+					if len(prefilledLabels) == 0 {
+						generatedSeries = genSeries(c.numSeries, 10, nil, mint, maxt)
+						for _, s := range generatedSeries {
+							prefilledLabels = append(prefilledLabels, s.Labels().Map())
+						}
+					} else {
+						generatedSeries = genSeries(c.numSeries, 10, prefilledLabels, mint, maxt)
+					}
+					block, err := OpenBlock(nil, createBlock(b, dir, generatedSeries), nil)
 					testutil.Ok(b, err)
 					blocks = append(blocks, block)
 					defer block.Close()
