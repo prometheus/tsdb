@@ -767,14 +767,18 @@ func BenchmarkCompaction(b *testing.B) {
 		b.Run(fmt.Sprintf("type=%s,blocks=%d,series=%d,samplesPerSeriesPerBlock=%d", c.compactionType, nBlocks, nSeries, c.ranges[0][1]-c.ranges[0][0]+1), func(b *testing.B) {
 			dir, err := ioutil.TempDir("", "bench_compaction")
 			testutil.Ok(b, err)
-			defer os.RemoveAll(dir)
+			defer func() {
+				testutil.Ok(b, os.RemoveAll(dir))
+			}()
 			blockDirs := make([]string, 0, len(c.ranges))
 			var blocks []*Block
 			for _, r := range c.ranges {
 				block, err := OpenBlock(nil, createBlock(b, dir, genSeries(nSeries, 10, r[0], r[1])), nil)
 				testutil.Ok(b, err)
 				blocks = append(blocks, block)
-				defer block.Close()
+				defer func() {
+					testutil.Ok(b, block.Close())
+				}()
 				blockDirs = append(blockDirs, block.Dir())
 			}
 
