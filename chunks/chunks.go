@@ -64,9 +64,7 @@ func (cm *Meta) OverlapsClosedInterval(mint, maxt int64) bool {
 }
 
 var (
-	errInvalidSize     = fmt.Errorf("invalid size")
-	errInvalidFlag     = fmt.Errorf("invalid flag")
-	errInvalidChecksum = fmt.Errorf("invalid checksum")
+	errInvalidSize = fmt.Errorf("invalid size")
 )
 
 var castagnoliTable *crc32.Table
@@ -416,7 +414,7 @@ func NewDirReader(dir string, pool chunkenc.Pool) (*Reader, error) {
 }
 
 func (s *Reader) Close() error {
-	return closeAll(s.cs...)
+	return closeAll(s.cs)
 }
 
 // Size returns the size of the chunks.
@@ -424,30 +422,31 @@ func (s *Reader) Size() int64 {
 	return s.size
 }
 
+// Chunk returns a chunk from a given reference.
 func (s *Reader) Chunk(ref uint64) (chunkenc.Chunk, error) {
 	var (
-		seq = int(ref >> 32)
-		off = int((ref << 32) >> 32)
+		sgmSeq    = int(ref >> 32)
+		sgmOffset = int((ref << 32) >> 32)
 	)
-	if seq >= len(s.bs) {
-		return nil, errors.Errorf("reference sequence %d out of range", seq)
+	if sgmSeq >= len(s.bs) {
+		return nil, errors.Errorf("reference sequence %d out of range", sgmSeq)
 	}
-	b := s.bs[seq]
+	chkS := s.bs[sgmSeq]
 
-	if off >= b.Len() {
-		return nil, errors.Errorf("offset %d beyond data size %d", off, b.Len())
+	if sgmOffset >= chkS.Len() {
+		return nil, errors.Errorf("offset %d beyond data size %d", sgmOffset, chkS.Len())
 	}
 	// With the minimum chunk length this should never cause us reading
 	// over the end of the slice.
-	r := b.Range(off, off+binary.MaxVarintLen32)
+	chk := chkS.Range(sgmOffset, sgmOffset+binary.MaxVarintLen32)
 
-	l, n := binary.Uvarint(r)
+	chkLen, n := binary.Uvarint(chk)
 	if n <= 0 {
 		return nil, errors.Errorf("reading chunk length failed with %d", n)
 	}
-	r = b.Range(off+n, off+n+1+int(l))
+	chk = chkS.Range(sgmOffset+n, sgmOffset+n+1+int(chkLen))
 
-	return s.pool.Get(chunkenc.Encoding(r[0]), r[1:1+l])
+	return s.pool.Get(chunkenc.Encoding(chk[0]), chk[1:1+chkLen])
 }
 
 func nextSequenceFile(dir string) (string, int, error) {
@@ -483,7 +482,7 @@ func sequenceFiles(dir string) ([]string, error) {
 	return res, nil
 }
 
-func closeAll(cs ...io.Closer) (err error) {
+func closeAll(cs []io.Closer) (err error) {
 	for _, c := range cs {
 		if e := c.Close(); e != nil {
 			err = e

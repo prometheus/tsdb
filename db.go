@@ -16,6 +16,7 @@ package tsdb
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -126,6 +127,9 @@ type DB struct {
 	// changing the autoCompact var.
 	autoCompactMtx sync.Mutex
 	autoCompact    bool
+
+	// Cancel a running compaction when a shutdown is initiated.
+	compactCancel context.CancelFunc
 }
 
 type dbMetrics struct {
@@ -271,10 +275,13 @@ func Open(dir string, l log.Logger, r prometheus.Registerer, opts *Options) (db 
 		db.lockf = lockf
 	}
 
-	db.compactor, err = NewLeveledCompactor(r, l, opts.BlockRanges, db.chunkPool)
+	ctx, cancel := context.WithCancel(context.Background())
+	db.compactor, err = NewLeveledCompactor(ctx, r, l, opts.BlockRanges, db.chunkPool)
 	if err != nil {
+		cancel()
 		return nil, errors.Wrap(err, "create leveled compactor")
 	}
+	db.compactCancel = cancel
 
 	segmentSize := wal.DefaultSegmentSize
 	if opts.WALSegmentSize > 0 {
@@ -425,6 +432,9 @@ func (db *DB) compact() (err error) {
 		runtime.GC()
 
 		if err := db.reload(); err != nil {
+			if err := os.RemoveAll(filepath.Join(db.dir, uid.String())); err != nil {
+				return errors.Wrapf(err, "delete persisted head block after failed db reload:%s", uid)
+			}
 			return errors.Wrap(err, "reload blocks")
 		}
 		if (uid == ulid.ULID{}) {
@@ -454,12 +464,16 @@ func (db *DB) compact() (err error) {
 		default:
 		}
 
-		if _, err := db.compactor.Compact(db.dir, plan, db.blocks); err != nil {
+		uid, err := db.compactor.Compact(db.dir, plan, db.blocks)
+		if err != nil {
 			return errors.Wrapf(err, "compact %s", plan)
 		}
 		runtime.GC()
 
 		if err := db.reload(); err != nil {
+			if err := os.RemoveAll(filepath.Join(db.dir, uid.String())); err != nil {
+				return errors.Wrapf(err, "delete compacted block after failed db reload:%s", uid)
+			}
 			return errors.Wrap(err, "reload blocks")
 		}
 		runtime.GC()
@@ -505,7 +519,13 @@ func (db *DB) reload() (err error) {
 		}
 	}
 	if len(corrupted) > 0 {
-		return errors.Wrap(err, "unexpected corrupted block")
+		// Close all new blocks to release the lock for windows.
+		for _, block := range loadable {
+			if _, loaded := db.getBlock(block.Meta().ULID); !loaded {
+				block.Close()
+			}
+		}
+		return fmt.Errorf("unexpected corrupted block:%v", corrupted)
 	}
 
 	// All deletable blocks should not be loaded.
@@ -791,6 +811,7 @@ func (db *DB) Head() *Head {
 // Close the partition.
 func (db *DB) Close() error {
 	close(db.stopc)
+	db.compactCancel()
 	<-db.donec
 
 	db.mtx.Lock()
@@ -1073,7 +1094,7 @@ func (es MultiError) Err() error {
 	return es
 }
 
-func closeAll(cs ...io.Closer) error {
+func closeAll(cs []io.Closer) error {
 	var merr MultiError
 
 	for _, c := range cs {
