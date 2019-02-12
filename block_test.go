@@ -45,7 +45,7 @@ func TestSetCompactionFailed(t *testing.T) {
 	testutil.Ok(t, err)
 	defer os.RemoveAll(tmpdir)
 
-	blockDir := createBlock(t, tmpdir, genSeries(1, 1, nil, 0, 0))
+	blockDir := createBlock(t, tmpdir, genSeries(1, 1, 0, 0))
 	b, err := OpenBlock(nil, blockDir, nil)
 	testutil.Ok(t, err)
 	testutil.Equals(t, false, b.meta.Compaction.Failed)
@@ -96,27 +96,9 @@ func createBlock(tb testing.TB, dir string, series []Series) string {
 }
 
 // genSeries generates series with a given number of labels and values.
-// If `prefilledLabels` is not empty, then the number of series and the labels
-// for them will be taken from `prefilledLabels`, and `totalSeries` `labelCount`
-// will be ignored.
-func genSeries(totalSeries, labelCount int, prefilledLabels []map[string]string, mint, maxt int64) []Series {
-	if (totalSeries == 0 || labelCount == 0) && len(prefilledLabels) == 0 {
+func genSeries(totalSeries, labelCount int, mint, maxt int64) []Series {
+	if totalSeries == 0 || labelCount == 0 {
 		return nil
-	}
-
-	if len(prefilledLabels) > 0 {
-		series := make([]Series, 0, len(prefilledLabels))
-		for _, lbls := range prefilledLabels {
-			if len(lbls) == 0 {
-				continue
-			}
-			samples := make([]tsdbutil.Sample, 0, maxt-mint+1)
-			for t := mint; t <= maxt; t++ {
-				samples = append(samples, sample{t: t, v: rand.Float64()})
-			}
-			series = append(series, newSeries(lbls, samples))
-		}
-		return series
 	}
 
 	series := make([]Series, totalSeries)
@@ -130,6 +112,26 @@ func genSeries(totalSeries, labelCount int, prefilledLabels []map[string]string,
 			samples = append(samples, sample{t: t, v: rand.Float64()})
 		}
 		series[i] = newSeries(lbls, samples)
+	}
+	return series
+}
+
+// populateSeries generates series from given labels, mint and maxt.
+func populateSeries(lbls []map[string]string, mint, maxt int64) []Series {
+	if len(lbls) == 0 {
+		return nil
+	}
+
+	series := make([]Series, 0, len(lbls))
+	for _, lbl := range lbls {
+		if len(lbl) == 0 {
+			continue
+		}
+		samples := make([]tsdbutil.Sample, 0, maxt-mint+1)
+		for t := mint; t <= maxt; t++ {
+			samples = append(samples, sample{t: t, v: rand.Float64()})
+		}
+		series = append(series, newSeries(lbl, samples))
 	}
 	return series
 }

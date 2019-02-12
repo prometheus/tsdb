@@ -1255,7 +1255,7 @@ func BenchmarkPersistedQueries(b *testing.B) {
 				testutil.Ok(b, err)
 				defer os.RemoveAll(dir)
 
-				block, err := OpenBlock(nil, createBlock(b, dir, genSeries(nSeries, 10, nil, 1, int64(nSamples))), nil)
+				block, err := OpenBlock(nil, createBlock(b, dir, genSeries(nSeries, 10, 1, int64(nSamples))), nil)
 				testutil.Ok(b, err)
 				defer block.Close()
 
@@ -1574,12 +1574,12 @@ func BenchmarkQueryIterator(b *testing.B) {
 					mint := i*int64(c.numSamplesPerSeriesPerBlock) - offset
 					maxt := mint + int64(c.numSamplesPerSeriesPerBlock) - 1
 					if len(prefilledLabels) == 0 {
-						generatedSeries = genSeries(c.numSeries, 10, nil, mint, maxt)
+						generatedSeries = genSeries(c.numSeries, 10, mint, maxt)
 						for _, s := range generatedSeries {
 							prefilledLabels = append(prefilledLabels, s.Labels().Map())
 						}
 					} else {
-						generatedSeries = genSeries(c.numSeries, 10, prefilledLabels, mint, maxt)
+						generatedSeries = populateSeries(prefilledLabels, mint, maxt)
 					}
 					block, err := OpenBlock(nil, createBlock(b, dir, generatedSeries), nil)
 					testutil.Ok(b, err)
@@ -1660,12 +1660,12 @@ func BenchmarkQuerySeek(b *testing.B) {
 					mint := i*int64(c.numSamplesPerSeriesPerBlock) - offset
 					maxt := mint + int64(c.numSamplesPerSeriesPerBlock) - 1
 					if len(prefilledLabels) == 0 {
-						generatedSeries = genSeries(c.numSeries, 10, nil, mint, maxt)
+						generatedSeries = genSeries(c.numSeries, 10, mint, maxt)
 						for _, s := range generatedSeries {
 							prefilledLabels = append(prefilledLabels, s.Labels().Map())
 						}
 					} else {
-						generatedSeries = genSeries(c.numSeries, 10, prefilledLabels, mint, maxt)
+						generatedSeries = populateSeries(prefilledLabels, mint, maxt)
 					}
 					block, err := OpenBlock(nil, createBlock(b, dir, generatedSeries), nil)
 					testutil.Ok(b, err)
