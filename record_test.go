@@ -17,6 +17,7 @@ package tsdb
 import (
 	"testing"
 
+	"github.com/pkg/errors"
 	"github.com/prometheus/tsdb/labels"
 	"github.com/prometheus/tsdb/testutil"
 )
@@ -72,42 +73,48 @@ func TestRecord_EncodeDecode(t *testing.T) {
 	}, decTstones)
 }
 
-// Refer to PR#521, this function is to test the be64() of decbuf in encoding_helpers.go
+// Refer to PR#521, this function is to test the be64() of decbuf in encoding_helpers.go.
 // Provided corrupted records, test if the invalid size error can be returned by be64() correctly.
-func TestRecord_CorruputedRecord(t *testing.T) {
+func TestRecord_Corruputed(t *testing.T) {
 	var enc RecordEncoder
 	var dec RecordDecoder
 
-	// Test corrupted sereis record
-	series := []RefSeries{
-		{
-			Ref:    100,
-			Labels: labels.FromStrings("abc", "def", "123", "456"),
-		},
-	}
-	// Cut the encoded series record
-	_, err := dec.Series(enc.Series(series, nil)[:4], nil)
-	testutil.NotOk(t, err)
-	testutil.Assert(t, err.Error() == "invalid size", "")
+	// Test corrupted sereis record.
+	t.Run("Test corrupted series record", func(t *testing.T) {
+		series := []RefSeries{
+			{
+				Ref:    100,
+				Labels: labels.FromStrings("abc", "def", "123", "456"),
+			},
+		}
 
-	// Test corrupted sample record
-	samples := []RefSample{
-		{Ref: 0, T: 12423423, V: 1.2345},
-	}
-	// Cut the encoded sample record
-	_, err = dec.Samples(enc.Samples(samples, nil)[:4], nil)
-	testutil.NotOk(t, err)
-	testutil.Assert(t, err.Error() == "decode error after 0 samples: invalid size", "")
+		corrupted := enc.Series(series, nil)[:5]
+		_, err := dec.Series(corrupted, nil)
+		testutil.Equals(t, err, errInvalidSize)
+	})
 
-	// Test corrupted tombstone record
-	tstones := []Stone{
-		{ref: 123, intervals: Intervals{
-			{Mint: -1000, Maxt: 1231231},
-			{Mint: 5000, Maxt: 0},
-		}},
-	}
-	// Cut the encoded tombstone record
-	_, err = dec.Tombstones(enc.Tombstones(tstones, nil)[:4], nil)
-	testutil.NotOk(t, err)
-	testutil.Assert(t, err.Error() == "invalid size", "")
+	// Test corrupted sample record.
+	t.Run("Test corrupted sample record", func(t *testing.T) {
+		samples := []RefSample{
+			{Ref: 0, T: 12423423, V: 1.2345},
+		}
+
+		corrupted := enc.Samples(samples, nil)[:5]
+		_, err := dec.Samples(corrupted, nil)
+		testutil.Equals(t, errors.Cause(err), errInvalidSize)
+	})
+
+	// Test corrupted tombstone record.
+	t.Run("Test corrupted tombstone record", func(t *testing.T) {
+		tstones := []Stone{
+			{ref: 123, intervals: Intervals{
+				{Mint: -1000, Maxt: 1231231},
+				{Mint: 5000, Maxt: 0},
+			}},
+		}
+
+		corrupted := enc.Tombstones(tstones, nil)[:5]
+		_, err := dec.Tombstones(corrupted, nil)
+		testutil.Equals(t, err, errInvalidSize)
+	})
 }
