@@ -440,7 +440,7 @@ outer:
 
 			fi, err := os.Stat(SegmentName(dir, seg.i))
 			testutil.Ok(t, err)
-			testutil.Assert(t, r.TotalRead() == fi.Size(), "expected to have read whole segment, but read %d or %d", r.TotalRead(), fi.Size())
+			testutil.Assert(t, r.TotalRead() == fi.Size(), "expected to have read whole segment, but read %d of %d", r.TotalRead(), fi.Size())
 
 			seg, err = OpenReadSegment(SegmentName(dir, seg.i+1))
 			testutil.Ok(t, err)

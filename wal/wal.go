@@ -950,7 +950,7 @@ func (r *LiveReader) Next() bool {
 	for {
 		if ok, err := r.buildRecord(); ok {
 			return true
-		} else if err != nil {
+		} else if err != nil && err != io.EOF {
 			r.err = err
 			return false
 		}
