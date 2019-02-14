@@ -475,7 +475,9 @@ func TestWAL_FuzzWriteRead_Live(t *testing.T) {
 			break
 		}
 	}
-	testutil.Ok(t, r.Err())
+	if r.Err() != io.EOF {
+		testutil.Ok(t, r.Err())
+	}
 }
 func TestWAL_FuzzWriteRead(t *testing.T) {
 	const count = 25000

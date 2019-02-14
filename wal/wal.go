@@ -930,10 +930,10 @@ func (r *LiveReader) TotalRead() int64 {
 	return r.total
 }
 
-func (r *LiveReader) fillBuffer() error {
+func (r *LiveReader) fillBuffer() (int, error) {
 	n, err := r.rdr.Read(r.buf[r.writeIndex:len(r.buf)])
 	r.writeIndex += n
-	return err
+	return n, err
 }
 
 // Shift the buffer up to the read index.
@@ -948,21 +948,19 @@ func (r *LiveReader) shiftBuffer() {
 // read for the current io.Reader.
 func (r *LiveReader) Next() bool {
 	for {
-		if r.buildRecord() {
+		if ok, err := r.buildRecord(); ok {
 			return true
-		}
-		if r.err != nil && r.err != io.EOF {
+		} else if err != nil {
+			r.err = err
 			return false
 		}
 		if r.readIndex == pageSize {
 			r.shiftBuffer()
 		}
 		if r.writeIndex != pageSize {
-			if err := r.fillBuffer(); err != nil {
-				// We expect to get EOF, since we're reading the segment file as it's being written.
-				if err != io.EOF {
-					r.err = err
-				}
+			n, err := r.fillBuffer()
+			if n == 0 || (err != nil && err != io.EOF) {
+				r.err = err
 				return false
 			}
 		}
@@ -979,41 +977,38 @@ func (r *LiveReader) Record() []byte {
 // if there was an error or if we weren't able to read a record for any reason.
 // Returns true if we read a full record. Any record data is appeneded to
 // LiveReader.rec
-func (r *LiveReader) buildRecord() bool {
+func (r *LiveReader) buildRecord() (bool, error) {
 	for {
 		// Check that we have data in the internal buffer to read.
 		if r.writeIndex <= r.readIndex {
-			return false
+			return false, nil
 		}
 
 		// Attempt to read a record, partial or otherwise.
 		temp, n, err := readRecord(r.buf[r.readIndex:r.writeIndex], r.hdr[:], r.total)
-		r.readIndex += n
-		r.total += int64(n)
 		if err != nil {
-			r.err = err
-			return false
+			return false, err
 		}
 
 		if temp == nil {
-			return false
+			return false, nil
 		}
 
+		r.readIndex += n
+		r.total += int64(n)
 		rt := recType(r.hdr[0])
-
 		if rt == recFirst || rt == recFull {
 			r.rec = r.rec[:0]
 		}
 		r.rec = append(r.rec, temp...)
 
 		if err := validateRecord(rt, r.index); err != nil {
-			r.err = err
 			r.index = 0
-			return false
+			return false, err
 		}
 		if rt == recLast || rt == recFull {
 			r.index = 0
-			return true
+			return true, nil
 		}
 		// Only increment i for non-zero records since we use it
 		// to determine valid content record sequences.
