@@ -88,8 +88,7 @@ func TestRecord_CorruputedRecord(t *testing.T) {
 	// Cut the encoded series record
 	_, err := dec.Series(enc.Series(series, nil)[:4], nil)
 	testutil.NotOk(t, err)
-	testutil.Assert(t, err.Error()=="invalid size", "")
-
+	testutil.Assert(t, err.Error() == "invalid size", "")
 
 	// Test corrupted sample record
 	samples := []RefSample{
@@ -98,8 +97,7 @@ func TestRecord_CorruputedRecord(t *testing.T) {
 	// Cut the encoded sample record
 	_, err = dec.Samples(enc.Samples(samples, nil)[:4], nil)
 	testutil.NotOk(t, err)
-	testutil.Assert(t, err.Error()=="decode error after 0 samples: invalid size", "")
-
+	testutil.Assert(t, err.Error() == "decode error after 0 samples: invalid size", "")
 
 	// Test corrupted tombstone record
 	tstones := []Stone{
@@ -111,5 +109,5 @@ func TestRecord_CorruputedRecord(t *testing.T) {
 	// Cut the encoded tombstone record
 	_, err = dec.Tombstones(enc.Tombstones(tstones, nil)[:4], nil)
 	testutil.NotOk(t, err)
-	testutil.Assert(t, err.Error()=="invalid size", "")
+	testutil.Assert(t, err.Error() == "invalid size", "")
 }
