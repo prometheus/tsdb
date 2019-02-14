@@ -107,7 +107,7 @@ func newCompactorMetrics(r prometheus.Registerer) *compactorMetrics {
 		Help: "Total number of compactions that failed for the partition.",
 	})
 	m.overlappingBlocks = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "prometheus_tsdb_compactions_overlapping_total",
+		Name: "prometheus_tsdb_vertical_compactions_total",
 		Help: "Total number of compactions done on overlapping blocks.",
 	})
 	m.duration = prometheus.NewHistogram(prometheus.HistogramOpts{

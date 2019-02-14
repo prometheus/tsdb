@@ -197,7 +197,7 @@ func (w *Writer) write(b []byte) error {
 }
 
 // MergeOverlappingChunks removes the samples whose timestamp is overlapping.
-// The first appearing sample is retained in case there is overlapping.
+// The last appearing sample is retained in case there is overlapping.
 // This assumes that `chks []Meta` is sorted w.r.t. MinTime.
 func MergeOverlappingChunks(chks []Meta) ([]Meta, error) {
 	if len(chks) < 2 {
@@ -264,6 +264,12 @@ func MergeChunks(a, b chunkenc.Chunk) (*chunkenc.XORChunk, error) {
 		bt, bv := bit.At()
 		app.Append(bt, bv)
 		bok = bit.Next()
+	}
+	if ait.Err() != nil {
+		return nil, ait.Err()
+	}
+	if bit.Err() != nil {
+		return nil, bit.Err()
 	}
 	return newChunk, nil
 }
