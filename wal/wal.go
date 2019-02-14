@@ -985,17 +985,17 @@ func (r *LiveReader) buildRecord() (bool, error) {
 		}
 
 		// Attempt to read a record, partial or otherwise.
-		temp, n, err := readRecord(r.buf[r.readIndex:r.writeIndex], r.hdr[:], r.total)
+		temp, n, err := readRecord(r.buf[:], r.readIndex, r.writeIndex, r.hdr[:])
 		if err != nil {
 			return false, err
 		}
 
+		r.readIndex += n
+		r.total += int64(n)
 		if temp == nil {
 			return false, nil
 		}
 
-		r.readIndex += n
-		r.total += int64(n)
 		rt := recType(r.hdr[0])
 		if rt == recFirst || rt == recFull {
 			r.rec = r.rec[:0]
@@ -1051,71 +1051,44 @@ func validateRecord(typ recType, i int) error {
 // be a full record (recFull) if the record fits within the bounds of a single page.
 // Returns a byte slice of the record data read, the number of bytes read, and an error
 // if there's a non-zero byte in a page term record or the record checksum fails.
-// TODO(callum) the EOF errors we're returning from this function should theoretically
-// never happen, add a metric for them.
-func readRecord(buf []byte, header []byte, total int64) ([]byte, int, error) {
-	readIndex := 0
-	header[0] = buf[0]
-	readIndex++
-	total++
-
-	// The rest of this function is mostly from Reader.Next().
-	typ := recType(header[0])
-	// Gobble up zero bytes.
-	if typ == recPageTerm {
-		// We are pedantic and check whether the zeros are actually up to a page boundary.
-		// It's not strictly necessary but may catch sketchy state early.
-		k := pageSize - (total % pageSize)
-		if k == pageSize {
-			return nil, 1, nil // Initial 0 byte was last page byte.
+func readRecord(buf []byte, start, end int, header []byte) ([]byte, int, error) {
+	// Special case: for recPageTerm, check that are all zeros to end of page,
+	// consume them but don't return them.
+	if buf[start] == byte(recPageTerm) {
+		if end != pageSize {
+			return nil, 0, io.EOF
 		}
 
-		if k <= int64(len(buf)-readIndex) {
-			for _, v := range buf[readIndex : int64(readIndex)+k] {
-				readIndex++
-				if v != 0 {
-					return nil, readIndex, errors.New("unexpected non-zero byte in page term bytes")
-				}
+		for i := start; i < end; i++ {
+			if buf[i] != 0 {
+				return nil, 0, errors.New("unexpected non-zero byte in page term bytes")
 			}
-			return nil, readIndex, nil
 		}
-		// Not enough bytes to read the rest of the page term rec.
-		// This theoretically should never happen, since we're only shifting the
-		// internal buffer of the live reader when we read to the end of page.
-		// Treat this the same as an EOF, it's an error we would expect to see.
+
+		return nil, end - start, nil
+	}
+
+	// Not a recPageTerm; read the record and check the checksum.
+	if end-start < recordHeaderSize {
 		return nil, 0, io.EOF
 	}
 
-	if readIndex+recordHeaderSize-1 > len(buf) {
-		// Treat this the same as an EOF, it's an error we would expect to see.
+	copy(header, buf[start:start+recordHeaderSize])
+	length := int(binary.BigEndian.Uint16(header[1:]))
+	crc := binary.BigEndian.Uint32(header[3:])
+	if start+recordHeaderSize+length > pageSize {
+		return nil, 0, errors.New("record too big for page")
+	}
+	if start+recordHeaderSize+length > end {
 		return nil, 0, io.EOF
 	}
 
-	copy(header[1:], buf[readIndex:readIndex+len(header[1:])])
-	readIndex += recordHeaderSize - 1
-	total += int64(recordHeaderSize - 1)
-	var (
-		length = binary.BigEndian.Uint16(header[1:])
-		crc    = binary.BigEndian.Uint32(header[3:])
-	)
-	readTo := int(length) + readIndex
-	if readTo > len(buf) {
-		if (readTo - readIndex) > pageSize {
-			return nil, 0, errors.Errorf("invalid record, record size would be larger than max page size: %d", int(length))
-		}
-		// Not enough data to read all of the record data.
-		// Treat this the same as an EOF, it's an error we would expect to see.
-		return nil, 0, io.EOF
+	rec := buf[start+recordHeaderSize : start+recordHeaderSize+length]
+	if c := crc32.Checksum(rec, castagnoliTable); c != crc {
+		return nil, 0, errors.Errorf("unexpected checksum %x, expected %x", c, crc)
 	}
-	recData := buf[readIndex:readTo]
-	readIndex += int(length)
-	total += int64(length)
 
-	// TODO(callum) what should we do here, throw out the record? We should add a metric at least.
-	if c := crc32.Checksum(recData, castagnoliTable); c != crc {
-		return recData, readIndex, errors.Errorf("unexpected checksum %x, expected %x", c, crc)
-	}
-	return recData, readIndex, nil
+	return rec, length + recordHeaderSize, nil
 }
 
 func min(i, j int) int {

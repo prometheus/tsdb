@@ -311,7 +311,7 @@ func TestLiveReaderCorrupt_ReallyMessedUp(t *testing.T) {
 	r := NewLiveReader(seg)
 	testutil.Assert(t, r.Next() == true, "expected one records")
 	testutil.Assert(t, r.Next() == false, "expected one records")
-	testutil.Assert(t, r.Err() == io.EOF, "expected error, got: %v", r.Err())
+	testutil.Assert(t, r.Err().Error() == "record too big for page", "expected error, got: %v", r.Err())
 }
 
 func TestLiveReaderCorrupt_RecordTooLongAndShort(t *testing.T) {
@@ -355,59 +355,24 @@ func TestLiveReaderCorrupt_RecordTooLongAndShort(t *testing.T) {
 
 	r := NewLiveReader(seg)
 	testutil.Assert(t, r.Next() == false, "expected no records")
-	testutil.Assert(t, r.Err().Error() == fmt.Sprintf("invalid record, record size would be larger than max page size: %d", 0xFFFF), "expected error, got: %v", r.Err())
+	testutil.Assert(t, r.Err().Error() == "record too big for page", "expected error, got: %v", r.Err())
 }
 
 func TestWAL_FuzzWriteRead_Live(t *testing.T) {
-	const count = 500
-	var input [][]byte
-	lock := sync.RWMutex{}
-	var recs [][]byte
-	var index int
-
-	// Get size of segment.
-	getSegmentSize := func(dir string, index int) (int64, error) {
-		i := int64(-1)
-		fi, err := os.Stat(SegmentName(dir, index))
-		if err == nil {
-			i = fi.Size()
-		}
-		return i, err
-	}
-
-	readSegment := func(r *LiveReader) {
-		for r.Next() {
-			rec := r.Record()
-			lock.RLock()
-			l := len(input)
-			lock.RUnlock()
-			if index >= l {
-				t.Fatalf("read too many records")
-			}
-			lock.RLock()
-			if !bytes.Equal(input[index], rec) {
-				t.Fatalf("record %d (len %d) does not match (expected len %d)",
-					index, len(rec), len(input[index]))
-			}
-			lock.RUnlock()
-			index++
-		}
-		if r.Err() != io.EOF {
-			testutil.Ok(t, r.Err())
-		}
-	}
-
 	dir, err := ioutil.TempDir("", "wal_fuzz_live")
-	t.Log("created dir: ", dir)
 	testutil.Ok(t, err)
-	defer func() {
-		os.RemoveAll(dir)
-	}()
+	defer os.RemoveAll(dir)
 
 	w, err := NewSize(nil, nil, dir, 128*pageSize)
 	testutil.Ok(t, err)
 
+	// In the background, generate a stream of random records and write them
+	// to the WAL.
+	const count = 500
+	input := make(chan []byte, count) // buffering required as we sometimes batch WAL writes.
+	done := make(chan struct{})
 	go func() {
+		var recs [][]byte
 		for i := 0; i < count; i++ {
 			var sz int64
 			switch i % 5 {
@@ -422,20 +387,22 @@ func TestWAL_FuzzWriteRead_Live(t *testing.T) {
 			rec := make([]byte, rand.Int63n(sz))
 			_, err := rand.Read(rec)
 			testutil.Ok(t, err)
-			lock.Lock()
-			input = append(input, rec)
-			lock.Unlock()
-			recs = append(recs, rec)
+
+			input <- rec
 
 			// Randomly batch up records.
+			recs = append(recs, rec)
 			if rand.Intn(4) < 3 {
 				testutil.Ok(t, w.Log(recs...))
 				recs = recs[:0]
 			}
 		}
 		testutil.Ok(t, w.Log(recs...))
+		time.Sleep(100 * time.Millisecond)
+		close(done)
 	}()
 
+	// Tail the WAL and compare the results.
 	m, _, err := w.Segments()
 	testutil.Ok(t, err)
 
@@ -445,39 +412,50 @@ func TestWAL_FuzzWriteRead_Live(t *testing.T) {
 	r := NewLiveReader(seg)
 	segmentTicker := time.NewTicker(100 * time.Millisecond)
 	readTicker := time.NewTicker(10 * time.Millisecond)
+
+	readSegment := func(r *LiveReader) bool {
+		for r.Next() {
+			rec := r.Record()
+			expected, ok := <-input
+			testutil.Assert(t, ok, "unexpected record")
+			testutil.Assert(t, bytes.Equal(expected, rec), "record does not match expected")
+		}
+		testutil.Assert(t, r.Err() == io.EOF, "expected EOF, got: %v", r.Err())
+		return true
+	}
+
+outer:
 	for {
 		select {
 		case <-segmentTicker.C:
 			// check if new segments exist
 			_, last, err := w.Segments()
 			testutil.Ok(t, err)
-			if last > seg.i {
-				for {
-					readSegment(r)
-					if r.Err() != io.EOF {
-						testutil.Ok(t, r.Err())
-					}
-					size, err := getSegmentSize(dir, seg.i)
-					testutil.Ok(t, err)
-					// make sure we've read all of the current segment before rotating
-					if r.TotalRead() == size {
-						break
-					}
-				}
-				seg, err = OpenReadSegment(SegmentName(dir, seg.i+1))
-				testutil.Ok(t, err)
-				r = NewLiveReader(seg)
+			if last <= seg.i {
+				continue
 			}
+
+			// read to end of segment.
+			readSegment(r)
+
+			fi, err := os.Stat(SegmentName(dir, seg.i))
+			testutil.Ok(t, err)
+			testutil.Assert(t, r.TotalRead() == fi.Size(), "expected to have read whole segment, but read %d or %d", r.TotalRead(), fi.Size())
+
+			seg, err = OpenReadSegment(SegmentName(dir, seg.i+1))
+			testutil.Ok(t, err)
+			r = NewLiveReader(seg)
+
 		case <-readTicker.C:
 			readSegment(r)
-		}
-		if index == count {
-			break
+
+		case <-done:
+			readSegment(r)
+			break outer
 		}
 	}
-	if r.Err() != io.EOF {
-		testutil.Ok(t, r.Err())
-	}
+
+	testutil.Assert(t, r.Err() == io.EOF, "expected EOF")
 }
 func TestWAL_FuzzWriteRead(t *testing.T) {
 	const count = 25000
