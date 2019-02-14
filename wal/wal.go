@@ -908,8 +908,9 @@ func NewLiveReader(r io.Reader) *LiveReader {
 	return &LiveReader{rdr: r}
 }
 
-// Reader reads WAL records from an io.Reader. It buffers partial record data for
-// the next read.
+// Reader reads WAL records from an io.Reader. It allows reading of WALs
+// that are still in the process of being written, and returns records
+// as soon as they can read.
 type LiveReader struct {
 	rdr        io.Reader
 	err        error
@@ -922,10 +923,15 @@ type LiveReader struct {
 	index      int   // Used to track partial records, should be 0 at the start of every new record.
 }
 
+// Err returns any errors encountered reading the WAL.  io.EOFs are not terminal
+// and Next can be tried again.  Non-EOFs are terminal, and the reader should
+// not be used again.  It is up to the user to decide when to stop trying should
+// io.EOF be returned.
 func (r *LiveReader) Err() error {
 	return r.err
 }
 
+// TotalRead returns the number of bytes consumed from this segment.
 func (r *LiveReader) TotalRead() int64 {
 	return r.total
 }
@@ -936,27 +942,31 @@ func (r *LiveReader) fillBuffer() (int, error) {
 	return n, err
 }
 
-// Shift the buffer up to the read index.
-func (r *LiveReader) shiftBuffer() {
-	copied := copy(r.buf[0:], r.buf[r.readIndex:r.writeIndex])
-	r.readIndex = 0
-	r.writeIndex = copied
-}
-
-// Next returns true if r.rec will contain a full record.
-// False does not indicate that there will never be more data to
-// read for the current io.Reader.
+// Next returns true if Record() will contain a full record.
+// False guarantees there are no more records if the segment is closed,
+// otherwise if Err() == io.EOF you should try again when more data
+// has been written.
 func (r *LiveReader) Next() bool {
 	for {
+		// If buildRecord returns a non-EOF error, its game up - the WAL is
+		// corrupt. If buildRecord returns an EOF, we try and read more. If
+		// that fails to read anything (n=0 && err=EOF), we return EOF and
+		// the user can try again later.
+		// If we have a full page, buildRecord is guaranteed to return non-EOF
+		// or a record; it has checks the records fit in pages.
 		if ok, err := r.buildRecord(); ok {
 			return true
 		} else if err != nil && err != io.EOF {
 			r.err = err
 			return false
 		}
+
+		// If we've consumed the whole page, reset the indexed and continue.
 		if r.readIndex == pageSize {
-			r.shiftBuffer()
+			r.readIndex = 0
+			r.writeIndex = 0
 		}
+
 		if r.writeIndex != pageSize {
 			n, err := r.fillBuffer()
 			if n == 0 || (err != nil && err != io.EOF) {
@@ -975,7 +985,7 @@ func (r *LiveReader) Record() []byte {
 
 // Rebuild a full record from potentially partial records. Returns false
 // if there was an error or if we weren't able to read a record for any reason.
-// Returns true if we read a full record. Any record data is appeneded to
+// Returns true if we read a full record. Any record data is appended to
 // LiveReader.rec
 func (r *LiveReader) buildRecord() (bool, error) {
 	for {
