@@ -555,6 +555,14 @@ func (db *DB) reload() (err error) {
 	db.blocks = loadable
 	db.mtx.Unlock()
 
+	blockMetas := make([]BlockMeta, 0, len(loadable))
+	for _, b := range loadable {
+		blockMetas = append(blockMetas, b.Meta())
+	}
+	if overlaps := OverlappingBlocks(blockMetas); len(overlaps) > 0 {
+		level.Warn(db.logger).Log("msg", "overlapping blocks found during reload", "detail", overlaps.String())
+	}
+
 	for _, b := range oldBlocks {
 		if _, ok := deletable[b.Meta().ULID]; ok {
 			deletable[b.Meta().ULID] = b
