@@ -225,6 +225,139 @@ func TestReader_Live(t *testing.T) {
 	}
 }
 
+func TestLiveReaderCorrupt_ShortFile(t *testing.T) {
+	// Write a corrupt WAL segment, there is one record of pageSize in length,
+	// but the segment is only half written.
+	dir, err := ioutil.TempDir("", "wal_live_corrupt")
+	testutil.Ok(t, err)
+	defer os.RemoveAll(dir)
+
+	w, err := NewSize(nil, nil, dir, pageSize)
+	testutil.Ok(t, err)
+
+	rec := make([]byte, pageSize-recordHeaderSize)
+	_, err = rand.Read(rec)
+	testutil.Ok(t, err)
+
+	err = w.Log(rec)
+	testutil.Ok(t, err)
+
+	err = w.Close()
+	testutil.Ok(t, err)
+
+	segmentFile, err := os.OpenFile(filepath.Join(dir, "00000000"), os.O_RDWR, 0666)
+	testutil.Ok(t, err)
+
+	err = segmentFile.Truncate(pageSize / 2)
+	testutil.Ok(t, err)
+
+	err = segmentFile.Close()
+	testutil.Ok(t, err)
+
+	// Try and LiveReader it.
+	m, _, err := w.Segments()
+	testutil.Ok(t, err)
+
+	seg, err := OpenReadSegment(SegmentName(dir, m))
+	testutil.Ok(t, err)
+
+	r := NewLiveReader(seg)
+	testutil.Assert(t, r.Next() == false, "expected no records")
+	testutil.Assert(t, r.Err() == io.EOF, "expected error, got: %v", r.Err())
+}
+
+func TestLiveReaderCorrupt_ReallyMessedUp(t *testing.T) {
+	// Write a corrupt WAL segment, the last record is too long for the page,
+	// but in general not too long.
+	dir, err := ioutil.TempDir("", "wal_live_corrupt")
+	testutil.Ok(t, err)
+	defer os.RemoveAll(dir)
+
+	segmentFile, err := os.OpenFile(filepath.Join(dir, "00000000"), os.O_CREATE|os.O_RDWR, 0666)
+	testutil.Ok(t, err)
+
+	writeRecord := func(len int) {
+		rec := make([]byte, len)
+		_, err = rand.Read(rec)
+		testutil.Ok(t, err)
+
+		buf := make([]byte, recordHeaderSize)
+		buf[0] = byte(recFull)
+		binary.BigEndian.PutUint16(buf[1:], uint16(len))
+		binary.BigEndian.PutUint32(buf[3:], uint32(crc32.Checksum(rec, castagnoliTable)))
+		_, err = segmentFile.Write(buf)
+		testutil.Ok(t, err)
+
+		_, err = segmentFile.Write(rec)
+		testutil.Ok(t, err)
+	}
+
+	writeRecord(pageSize / 2)
+	writeRecord(pageSize / 2)
+
+	err = segmentFile.Close()
+	testutil.Ok(t, err)
+
+	// Try and LiveReader it.
+	w, err := NewSize(nil, nil, dir, pageSize)
+	testutil.Ok(t, err)
+
+	m, _, err := w.Segments()
+	testutil.Ok(t, err)
+
+	seg, err := OpenReadSegment(SegmentName(dir, m))
+	testutil.Ok(t, err)
+
+	r := NewLiveReader(seg)
+	testutil.Assert(t, r.Next() == true, "expected one records")
+	testutil.Assert(t, r.Next() == false, "expected one records")
+	testutil.Assert(t, r.Err() == io.EOF, "expected error, got: %v", r.Err())
+}
+
+func TestLiveReaderCorrupt_RecordTooLongAndShort(t *testing.T) {
+	// Write a corrupt WAL segment, when record len > page size.
+	dir, err := ioutil.TempDir("", "wal_live_corrupt")
+	testutil.Ok(t, err)
+	defer os.RemoveAll(dir)
+
+	w, err := NewSize(nil, nil, dir, pageSize*2)
+	testutil.Ok(t, err)
+
+	rec := make([]byte, pageSize-recordHeaderSize)
+	_, err = rand.Read(rec)
+	testutil.Ok(t, err)
+
+	err = w.Log(rec)
+	testutil.Ok(t, err)
+
+	err = w.Close()
+	testutil.Ok(t, err)
+
+	segmentFile, err := os.OpenFile(filepath.Join(dir, "00000000"), os.O_RDWR, 0666)
+	testutil.Ok(t, err)
+
+	// Override the record length
+	buf := make([]byte, 3)
+	buf[0] = byte(recFull)
+	binary.BigEndian.PutUint16(buf[1:], 0xFFFF)
+	_, err = segmentFile.WriteAt(buf, 0)
+	testutil.Ok(t, err)
+
+	err = segmentFile.Close()
+	testutil.Ok(t, err)
+
+	// Try and LiveReader it.
+	m, _, err := w.Segments()
+	testutil.Ok(t, err)
+
+	seg, err := OpenReadSegment(SegmentName(dir, m))
+	testutil.Ok(t, err)
+
+	r := NewLiveReader(seg)
+	testutil.Assert(t, r.Next() == false, "expected no records")
+	testutil.Assert(t, r.Err().Error() == fmt.Sprintf("invalid record, record size would be larger than max page size: %d", 0xFFFF), "expected error, got: %v", r.Err())
+}
+
 func TestWAL_FuzzWriteRead_Live(t *testing.T) {
 	const count = 500
 	var input [][]byte
