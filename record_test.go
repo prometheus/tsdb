@@ -79,7 +79,6 @@ func TestRecord_Corruputed(t *testing.T) {
 	var enc RecordEncoder
 	var dec RecordDecoder
 
-	// Test corrupted sereis record.
 	t.Run("Test corrupted series record", func(t *testing.T) {
 		series := []RefSeries{
 			{
@@ -93,7 +92,6 @@ func TestRecord_Corruputed(t *testing.T) {
 		testutil.Equals(t, err, errInvalidSize)
 	})
 
-	// Test corrupted sample record.
 	t.Run("Test corrupted sample record", func(t *testing.T) {
 		samples := []RefSample{
 			{Ref: 0, T: 12423423, V: 1.2345},
@@ -104,7 +102,6 @@ func TestRecord_Corruputed(t *testing.T) {
 		testutil.Equals(t, errors.Cause(err), errInvalidSize)
 	})
 
-	// Test corrupted tombstone record.
 	t.Run("Test corrupted tombstone record", func(t *testing.T) {
 		tstones := []Stone{
 			{ref: 123, intervals: Intervals{
