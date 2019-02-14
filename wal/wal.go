@@ -961,7 +961,7 @@ func (r *LiveReader) Next() bool {
 			return false
 		}
 
-		// If we've consumed the whole page, reset the indexed and continue.
+		// If we've consumed the whole page, reset the indices and continue.
 		if r.readIndex == pageSize {
 			r.readIndex = 0
 			r.writeIndex = 0
