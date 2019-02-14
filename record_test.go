@@ -73,8 +73,8 @@ func TestRecord_EncodeDecode(t *testing.T) {
 	}, decTstones)
 }
 
-// Refer to PR#521, this function is to test the be64() of decbuf in encoding_helpers.go.
-// Provided corrupted records, test if the invalid size error can be returned by be64() correctly.
+// TestRecord_Corruputed ensures that corrupted records return the correct error.
+// Bugfix check for pull/521 and pull/523.
 func TestRecord_Corruputed(t *testing.T) {
 	var enc RecordEncoder
 	var dec RecordDecoder
@@ -87,7 +87,7 @@ func TestRecord_Corruputed(t *testing.T) {
 			},
 		}
 
-		corrupted := enc.Series(series, nil)[:5]
+		corrupted := enc.Series(series, nil)[:8]
 		_, err := dec.Series(corrupted, nil)
 		testutil.Equals(t, err, errInvalidSize)
 	})
@@ -97,7 +97,7 @@ func TestRecord_Corruputed(t *testing.T) {
 			{Ref: 0, T: 12423423, V: 1.2345},
 		}
 
-		corrupted := enc.Samples(samples, nil)[:5]
+		corrupted := enc.Samples(samples, nil)[:8]
 		_, err := dec.Samples(corrupted, nil)
 		testutil.Equals(t, errors.Cause(err), errInvalidSize)
 	})
@@ -110,7 +110,7 @@ func TestRecord_Corruputed(t *testing.T) {
 			}},
 		}
 
-		corrupted := enc.Tombstones(tstones, nil)[:5]
+		corrupted := enc.Tombstones(tstones, nil)[:8]
 		_, err := dec.Tombstones(corrupted, nil)
 		testutil.Equals(t, err, errInvalidSize)
 	})
