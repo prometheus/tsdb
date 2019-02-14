@@ -71,3 +71,45 @@ func TestRecord_EncodeDecode(t *testing.T) {
 		{ref: 13, intervals: Intervals{{Mint: 5000, Maxt: 1000}}},
 	}, decTstones)
 }
+
+// Refer to PR#521, this function is to test the be64() of decbuf in encoding_helpers.go
+// Provided corrupted records, test if the invalid size error can be returned by be64() correctly.
+func TestRecord_CorruputedRecord(t *testing.T) {
+	var enc RecordEncoder
+	var dec RecordDecoder
+
+	// Test corrupted sereis record
+	series := []RefSeries{
+		{
+			Ref:    100,
+			Labels: labels.FromStrings("abc", "def", "123", "456"),
+		},
+	}
+	// Cut the encoded series record
+	_, err := dec.Series(enc.Series(series, nil)[:4], nil)
+	testutil.NotOk(t, err)
+	testutil.Assert(t, err.Error()=="invalid size", "")
+
+
+	// Test corrupted sample record
+	samples := []RefSample{
+		{Ref: 0, T: 12423423, V: 1.2345},
+	}
+	// Cut the encoded sample record
+	_, err = dec.Samples(enc.Samples(samples, nil)[:4], nil)
+	testutil.NotOk(t, err)
+	testutil.Assert(t, err.Error()=="decode error after 0 samples: invalid size", "")
+
+
+	// Test corrupted tombstone record
+	tstones := []Stone{
+		{ref: 123, intervals: Intervals{
+			{Mint: -1000, Maxt: 1231231},
+			{Mint: 5000, Maxt: 0},
+		}},
+	}
+	// Cut the encoded tombstone record
+	_, err = dec.Tombstones(enc.Tombstones(tstones, nil)[:4], nil)
+	testutil.NotOk(t, err)
+	testutil.Assert(t, err.Error()=="invalid size", "")
+}
