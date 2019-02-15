@@ -16,73 +16,17 @@ package wal
 
 import (
 	"bytes"
+	"fmt"
+	"io"
 	"io/ioutil"
 	"math/rand"
 	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/go-kit/kit/log"
 	"github.com/prometheus/tsdb/testutil"
 )
-
-func TestWAL_FuzzWriteRead(t *testing.T) {
-	const count = 25000
-
-	dir, err := ioutil.TempDir("", "walfuzz")
-	testutil.Ok(t, err)
-	defer os.RemoveAll(dir)
-
-	w, err := NewSize(nil, nil, dir, 128*pageSize)
-	testutil.Ok(t, err)
-
-	var input [][]byte
-	var recs [][]byte
-
-	for i := 0; i < count; i++ {
-		var sz int
-		switch i % 5 {
-		case 0, 1:
-			sz = 50
-		case 2, 3:
-			sz = pageSize
-		default:
-			sz = 8 * pageSize
-		}
-		rec := make([]byte, rand.Intn(sz))
-		_, err := rand.Read(rec)
-		testutil.Ok(t, err)
-
-		input = append(input, rec)
-		recs = append(recs, rec)
-
-		// Randomly batch up records.
-		if rand.Intn(4) < 3 {
-			testutil.Ok(t, w.Log(recs...))
-			recs = recs[:0]
-		}
-	}
-	testutil.Ok(t, w.Log(recs...))
-
-	m, n, err := w.Segments()
-	testutil.Ok(t, err)
-
-	rc, err := NewSegmentsRangeReader(SegmentRange{Dir: dir, First: m, Last: n})
-	testutil.Ok(t, err)
-	defer rc.Close()
-
-	rdr := NewReader(rc)
-
-	for i := 0; rdr.Next(); i++ {
-		rec := rdr.Record()
-		if i >= len(input) {
-			t.Fatal("read too many records")
-		}
-		if !bytes.Equal(input[i], rec) {
-			t.Fatalf("record %d (len %d) does not match (expected len %d)",
-				i, len(rec), len(input[i]))
-		}
-	}
-	testutil.Ok(t, rdr.Err())
-}
 
 func TestWAL_Repair(t *testing.T) {
 

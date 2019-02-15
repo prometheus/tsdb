@@ -90,6 +90,7 @@ var testReaderCases = []struct {
 	},
 	// Two records the together are too big for a page.
 	// NB currently the non-live reader succeeds on this. I think this is a bug.
+	// but we've seen it in production.
 	{
 		t: []record{
 			{recFull, data[:pageSize/2]},
@@ -99,7 +100,6 @@ var testReaderCases = []struct {
 			data[:pageSize/2],
 			data[:pageSize/2],
 		},
-		// fail: true,
 	},
 	// Invalid orders of record types.
 	{
@@ -217,7 +217,90 @@ func TestReader_Live(t *testing.T) {
 	}
 }
 
-func TestWAL_FuzzWriteRead_Live(t *testing.T) {
+const fuzzLen = 500
+
+func generateRandomEntries(w *WAL, records chan []byte) error {
+	var recs [][]byte
+	for i := 0; i < fuzzLen; i++ {
+		var sz int64
+		switch i % 5 {
+		case 0, 1:
+			sz = 50
+		case 2, 3:
+			sz = pageSize
+		default:
+			sz = pageSize * 8
+		}
+
+		rec := make([]byte, rand.Int63n(sz))
+		if _, err := rand.Read(rec); err != nil {
+			return err
+		}
+
+		records <- rec
+
+		// Randomly batch up records.
+		recs = append(recs, rec)
+		if rand.Intn(4) < 3 {
+			if err := w.Log(recs...); err != nil {
+				return err
+			}
+			recs = recs[:0]
+		}
+	}
+	return w.Log(recs...)
+}
+
+func allSegments(dir string) (io.Reader, error) {
+	seg, err := listSegments(dir)
+	if err != nil {
+		return nil, err
+	}
+
+	var readers []io.Reader
+	for _, r := range seg {
+		f, err := os.Open(filepath.Join(dir, r.name))
+		if err != nil {
+			return nil, err
+		}
+		readers = append(readers, f)
+	}
+	return io.MultiReader(readers...), nil
+}
+
+func TestReaderFuzz(t *testing.T) {
+	for name, fn := range readerConstructors {
+		t.Run(name, func(t *testing.T) {
+			dir, err := ioutil.TempDir("", "wal_fuzz_live")
+			testutil.Ok(t, err)
+			defer os.RemoveAll(dir)
+
+			w, err := NewSize(nil, nil, dir, 128*pageSize)
+			testutil.Ok(t, err)
+
+			// Buffering required as we're not reading concurrently.
+			input := make(chan []byte, fuzzLen)
+			err = generateRandomEntries(w, input)
+			testutil.Ok(t, err)
+			close(input)
+
+			err = w.Close()
+			testutil.Ok(t, err)
+
+			sr, err := allSegments(w.Dir())
+			testutil.Ok(t, err)
+
+			reader := fn(sr)
+			for expected := range input {
+				testutil.Assert(t, reader.Next(), "expected record: %v", reader.Err())
+				testutil.Equals(t, expected, reader.Record(), "read wrong record")
+			}
+			testutil.Assert(t, !reader.Next(), "unexpected record")
+		})
+	}
+}
+
+func TestReaderFuzz_Live(t *testing.T) {
 	dir, err := ioutil.TempDir("", "wal_fuzz_live")
 	testutil.Ok(t, err)
 	defer os.RemoveAll(dir)
@@ -227,36 +310,11 @@ func TestWAL_FuzzWriteRead_Live(t *testing.T) {
 
 	// In the background, generate a stream of random records and write them
 	// to the WAL.
-	const count = 1000
-	input := make(chan []byte, count) // buffering required as we sometimes batch WAL writes.
+	input := make(chan []byte, fuzzLen/10) // buffering required as we sometimes batch WAL writes.
 	done := make(chan struct{})
 	go func() {
-		var recs [][]byte
-		for i := 0; i < count; i++ {
-			var sz int64
-			switch i % 5 {
-			case 0, 1:
-				sz = 50
-			case 2, 3:
-				sz = pageSize
-			default:
-				sz = pageSize * 8
-			}
-
-			rec := make([]byte, rand.Int63n(sz))
-			_, err := rand.Read(rec)
-			testutil.Ok(t, err)
-
-			input <- rec
-
-			// Randomly batch up records.
-			recs = append(recs, rec)
-			if rand.Intn(4) < 3 {
-				testutil.Ok(t, w.Log(recs...))
-				recs = recs[:0]
-			}
-		}
-		testutil.Ok(t, w.Log(recs...))
+		err := generateRandomEntries(w, input)
+		testutil.Ok(t, err)
 		time.Sleep(100 * time.Millisecond)
 		close(done)
 	}()
@@ -277,7 +335,7 @@ func TestWAL_FuzzWriteRead_Live(t *testing.T) {
 			rec := r.Record()
 			expected, ok := <-input
 			testutil.Assert(t, ok, "unexpected record")
-			testutil.Assert(t, bytes.Equal(expected, rec), "record does not match expected")
+			testutil.Equals(t, expected, rec, "record does not match expected")
 		}
 		testutil.Assert(t, r.Err() == io.EOF, "expected EOF, got: %v", r.Err())
 		return true
