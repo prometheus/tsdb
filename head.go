@@ -30,6 +30,7 @@ import (
 	"github.com/prometheus/tsdb/chunks"
 	"github.com/prometheus/tsdb/index"
 	"github.com/prometheus/tsdb/labels"
+	"github.com/prometheus/tsdb/tsdbutil"
 	"github.com/prometheus/tsdb/wal"
 )
 
@@ -616,14 +617,6 @@ func (h *rangeHead) Tombstones() (TombstoneReader, error) {
 	return emptyTombstoneReader, nil
 }
 
-func (h *rangeHead) MinTime() int64 {
-	return h.mint
-}
-
-func (h *rangeHead) MaxTime() int64 {
-	return h.maxt
-}
-
 // initAppender is a helper to initialize the time bounds of the head
 // upon the first sample it receives.
 type initAppender struct {
@@ -1117,7 +1110,7 @@ func (h *headIndexReader) Symbols() (map[string]struct{}, error) {
 // LabelValues returns the possible label values
 func (h *headIndexReader) LabelValues(names ...string) (index.StringTuples, error) {
 	if len(names) != 1 {
-		return nil, errInvalidSize
+		return nil, tsdbutil.ErrInvalidSize
 	}
 
 	h.head.symMtx.RLock()
@@ -1716,3 +1709,4 @@ func (ss stringset) slice() []string {
 	sort.Strings(slice)
 	return slice
 }
+
