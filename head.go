@@ -1717,4 +1717,3 @@ func (ss stringset) slice() []string {
 	sort.Strings(slice)
 	return slice
 }
-

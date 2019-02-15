@@ -1095,24 +1095,24 @@ func (dec *Decoder) Series(b []byte, lbls *labels.Labels, chks *[]chunks.Meta) e
 // after offset to hold the big endian encoded content length, followed by the contents and the expected
 // checksum.
 func newDecbufAt(bs ByteSlice, off int) tsdbutil.Decbuf {
-    if bs.Len() < off+4 {
-        return tsdbutil.Decbuf{E: tsdbutil.ErrInvalidSize}
-    }
-    b := bs.Range(off, off+4)
-    l := int(binary.BigEndian.Uint32(b))
+	if bs.Len() < off+4 {
+		return tsdbutil.Decbuf{E: tsdbutil.ErrInvalidSize}
+	}
+	b := bs.Range(off, off+4)
+	l := int(binary.BigEndian.Uint32(b))
 
-    if bs.Len() < off+4+l+4 {
-        return tsdbutil.Decbuf{E: tsdbutil.ErrInvalidSize}
-    }
+	if bs.Len() < off+4+l+4 {
+		return tsdbutil.Decbuf{E: tsdbutil.ErrInvalidSize}
+	}
 
-    // Load bytes holding the contents plus a CRC32 checksum.
-    b = bs.Range(off+4, off+4+l+4)
-    dec := tsdbutil.Decbuf{B: b[:len(b)-4]}
+	// Load bytes holding the contents plus a CRC32 checksum.
+	b = bs.Range(off+4, off+4+l+4)
+	dec := tsdbutil.Decbuf{B: b[:len(b)-4]}
 
-    if exp := binary.BigEndian.Uint32(b[len(b)-4:]); DecbufCrc32(&dec) != exp {
-        return tsdbutil.Decbuf{E: tsdbutil.ErrInvalidChecksum}
-    }
-    return dec
+	if exp := binary.BigEndian.Uint32(b[len(b)-4:]); DecbufCrc32(&dec) != exp {
+		return tsdbutil.Decbuf{E: tsdbutil.ErrInvalidChecksum}
+	}
+	return dec
 }
 
 // decbufUvarintAt returns a new decoding buffer. It expects the first bytes
@@ -1149,4 +1149,3 @@ func newDecbufUvarintAt(bs ByteSlice, off int) tsdbutil.Decbuf {
 func DecbufCrc32(d *tsdbutil.Decbuf) uint32 {
 	return crc32.Checksum(d.B, castagnoliTable)
 }
-

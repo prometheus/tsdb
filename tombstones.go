@@ -297,4 +297,3 @@ func (itvs Intervals) add(n Interval) Intervals {
 	itvs = append(itvs, n)
 	return itvs
 }
-

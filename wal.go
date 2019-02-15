@@ -1304,4 +1304,3 @@ func MigrateWAL(logger log.Logger, dir string) (err error) {
 	}
 	return nil
 }
-

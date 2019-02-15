@@ -206,4 +206,3 @@ func (e *RecordEncoder) Tombstones(tstones []Stone, b []byte) []byte {
 	}
 	return buf.Get()
 }
-
