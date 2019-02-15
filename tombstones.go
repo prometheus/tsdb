@@ -127,7 +127,7 @@ func readTombstones(dir string) (TombstoneReader, SizeReader, error) {
 	}
 
 	if len(b) < 5 {
-		return nil, sr, errors.Wrap(errInvalidSize, "tombstones header")
+		return nil, sr, errors.Wrap(tsdbutil.ErrInvalidSize, "tombstones header")
 	}
 
 	d := &tsdbutil.Decbuf{B: b[:len(b)-4]} // 4 for the checksum.

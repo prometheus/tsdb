@@ -31,6 +31,7 @@ import (
 	"github.com/prometheus/tsdb/index"
 	"github.com/prometheus/tsdb/labels"
 	"github.com/prometheus/tsdb/wal"
+        "github.com/prometheus/tsdb/tsdbutil"
 )
 
 var (
@@ -1117,7 +1118,7 @@ func (h *headIndexReader) Symbols() (map[string]struct{}, error) {
 // LabelValues returns the possible label values
 func (h *headIndexReader) LabelValues(names ...string) (index.StringTuples, error) {
 	if len(names) != 1 {
-		return nil, errInvalidSize
+		return nil, tsdbutil.ErrInvalidSize
 	}
 
 	h.head.symMtx.RLock()
