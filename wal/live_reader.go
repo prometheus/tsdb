@@ -11,7 +11,13 @@ import (
 
 // NewLiveReader returns a new live reader.
 func NewLiveReader(r io.Reader) *LiveReader {
-	return &LiveReader{rdr: r}
+	return &LiveReader{
+		rdr: r,
+
+		// Until we understand how they come about, make readers permissive
+		// to records spanning pages.
+		permissive: true,
+	}
 }
 
 // LiveReader reads WAL records from an io.Reader. It allows reading of WALs
@@ -30,6 +36,11 @@ type LiveReader struct {
 
 	// For testing, we can treat EOF as a non-error.
 	eofNonErr bool
+
+	// We sometime see records span page boundaries.  Should never happen, but it
+	// does.  Until we track down why, set permissive to true to tolerate it.
+	// NB the non-ive Reader implementation allows for this.
+	permissive bool
 }
 
 // Err returns any errors encountered reading the WAL.  io.EOFs are not terminal
@@ -74,10 +85,19 @@ func (r *LiveReader) Next() bool {
 			return false
 		}
 
-		// If we've consumed the whole page, reset the indices and continue.
-		if r.readIndex == pageSize {
+		// If we've filled the page and not found a record, this
+		// means records have started to span pages.  Shouldn't happen
+		// but does and until we found out why, we need to deal with this.
+		if r.permissive && r.writeIndex == pageSize && r.readIndex > 0 {
+			copy(r.buf[r.readIndex:], r.buf[:])
+			r.writeIndex -= r.readIndex
 			r.readIndex = 0
+			continue
+		}
+
+		if r.readIndex == pageSize {
 			r.writeIndex = 0
+			r.readIndex = 0
 		}
 
 		if r.writeIndex != pageSize {
@@ -108,7 +128,7 @@ func (r *LiveReader) buildRecord() (bool, error) {
 		}
 
 		// Attempt to read a record, partial or otherwise.
-		temp, n, err := readRecord(r.buf[:], r.readIndex, r.writeIndex, r.hdr[:])
+		temp, n, err := readRecord(r.buf[:], r.readIndex, r.writeIndex, r.hdr[:], r.permissive)
 		if err != nil {
 			return false, err
 		}
@@ -174,7 +194,8 @@ func validateRecord(typ recType, i int) error {
 // be a full record (recFull) if the record fits within the bounds of a single page.
 // Returns a byte slice of the record data read, the number of bytes read, and an error
 // if there's a non-zero byte in a page term record or the record checksum fails.
-func readRecord(buf []byte, start, end int, header []byte) ([]byte, int, error) {
+// This is a non-method function to make it clear it does not mutate the reader.
+func readRecord(buf []byte, start, end int, header []byte, permissive bool) ([]byte, int, error) {
 	// Special case: for recPageTerm, check that are all zeros to end of page,
 	// consume them but don't return them.
 	if buf[start] == byte(recPageTerm) {
@@ -199,7 +220,10 @@ func readRecord(buf []byte, start, end int, header []byte) ([]byte, int, error) 
 	copy(header, buf[start:start+recordHeaderSize])
 	length := int(binary.BigEndian.Uint16(header[1:]))
 	crc := binary.BigEndian.Uint32(header[3:])
-	if start+recordHeaderSize+length > pageSize {
+	if !permissive && start+recordHeaderSize+length > pageSize {
+		return nil, 0, fmt.Errorf("record would overflow current page: %d > %d", start+recordHeaderSize+length, pageSize)
+	}
+	if recordHeaderSize+length > pageSize {
 		return nil, 0, fmt.Errorf("record would overflow current page: %d > %d", start+recordHeaderSize+length, pageSize)
 	}
 	if start+recordHeaderSize+length > end {

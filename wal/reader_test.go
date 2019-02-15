@@ -97,8 +97,9 @@ var testReaderCases = []struct {
 		},
 		exp: [][]byte{
 			data[:pageSize/2],
+			data[:pageSize/2],
 		},
-		fail: true,
+		// fail: true,
 	},
 	// Invalid orders of record types.
 	{
