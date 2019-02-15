@@ -396,7 +396,7 @@ func TestDecbufUvariantWithInvalidBuffer(t *testing.T) {
 	b := realByteSlice([]byte{0x81, 0x81, 0x81, 0x81, 0x81, 0x81})
 
 	db := newDecbufUvarintAt(b, 0)
-	testutil.NotOk(t, db.err())
+	testutil.NotOk(t, db.Err())
 }
 
 func TestReaderWithInvalidBuffer(t *testing.T) {
