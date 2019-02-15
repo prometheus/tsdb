@@ -908,9 +908,9 @@ func NewLiveReader(r io.Reader) *LiveReader {
 	return &LiveReader{rdr: r}
 }
 
-// Reader reads WAL records from an io.Reader. It allows reading of WALs
-// that are still in the process of being written, and returns records
-// as soon as they can read.
+// LiveReader reads WAL records from an io.Reader. It allows reading of WALs
+// that are still in the process of being written, and returns records as soon
+// as they can be read.
 type LiveReader struct {
 	rdr        io.Reader
 	err        error
@@ -943,17 +943,18 @@ func (r *LiveReader) fillBuffer() (int, error) {
 }
 
 // Next returns true if Record() will contain a full record.
-// False guarantees there are no more records if the segment is closed,
-// otherwise if Err() == io.EOF you should try again when more data
-// has been written.
+// If Next returns false, you should always checked the contents of Error().
+// Return false guarantees there are no more records if the segment is closed
+// and not corrupt, otherwise if Err() == io.EOF you should try again when more
+// data has been written.
 func (r *LiveReader) Next() bool {
 	for {
-		// If buildRecord returns a non-EOF error, its game up - the WAL is
+		// If buildRecord returns a non-EOF error, its game up - the segment is
 		// corrupt. If buildRecord returns an EOF, we try and read more. If
 		// that fails to read anything (n=0 && err=EOF), we return EOF and
 		// the user can try again later.
-		// If we have a full page, buildRecord is guaranteed to return non-EOF
-		// or a record; it has checks the records fit in pages.
+		// If we have a full page, buildRecord is guaranteed to return a record
+		// or a non-EOF; it has checks the records fit in pages.
 		if ok, err := r.buildRecord(); ok {
 			return true
 		} else if err != nil && err != io.EOF {
@@ -1087,7 +1088,7 @@ func readRecord(buf []byte, start, end int, header []byte) ([]byte, int, error) 
 	length := int(binary.BigEndian.Uint16(header[1:]))
 	crc := binary.BigEndian.Uint32(header[3:])
 	if start+recordHeaderSize+length > pageSize {
-		return nil, 0, errors.New("record too big for page")
+		return nil, 0, fmt.Errorf("record would overflow current page: %d > %d", start+recordHeaderSize+length, pageSize)
 	}
 	if start+recordHeaderSize+length > end {
 		return nil, 0, io.EOF
