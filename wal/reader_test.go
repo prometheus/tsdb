@@ -178,27 +178,27 @@ func TestReader(t *testing.T) {
 }
 
 func TestReader_Live(t *testing.T) {
-	for i, c := range testReaderCases {
+	for i := range testReaderCases {
 		t.Run(strconv.Itoa(i), func(t *testing.T) {
 			writeFd, err := ioutil.TempFile("", "TestReader_Live")
 			testutil.Ok(t, err)
 			defer os.Remove(writeFd.Name())
 
-			go func() {
-				for _, rec := range c.t {
+			go func(i int) {
+				for _, rec := range testReaderCases[i].t {
 					rec := encodedRecord(rec.t, rec.b)
 					_, err := writeFd.Write(rec)
 					testutil.Ok(t, err)
 					runtime.Gosched()
 				}
 				writeFd.Close()
-			}()
+			}(i)
 
 			// Read from a second FD on the same file.
 			readFd, err := os.Open(writeFd.Name())
 			testutil.Ok(t, err)
 			reader := NewLiveReader(readFd)
-			for _, exp := range c.exp {
+			for _, exp := range testReaderCases[i].exp {
 				for !reader.Next() {
 					testutil.Assert(t, reader.Err() == io.EOF, "expect EOF, got: %v", reader.Err())
 					runtime.Gosched()
@@ -209,7 +209,7 @@ func TestReader_Live(t *testing.T) {
 			}
 
 			testutil.Assert(t, !reader.Next(), "unexpected record")
-			if c.fail {
+			if testReaderCases[i].fail {
 				testutil.Assert(t, reader.Err() != nil, "expected error")
 			}
 		})
