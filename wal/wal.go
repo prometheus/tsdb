@@ -332,6 +332,7 @@ func (w *WAL) Repair(origErr error) error {
 		return err
 	}
 	w.segment = s
+	w.donePages = 0
 
 	f, err := os.Open(tmpfn)
 	if err != nil {
