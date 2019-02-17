@@ -19,8 +19,8 @@ import (
 	"sort"
 
 	"github.com/pkg/errors"
+	"github.com/prometheus/tsdb/encoding"
 	"github.com/prometheus/tsdb/labels"
-	"github.com/prometheus/tsdb/tsdbutil"
 )
 
 // RecordType represents the data type of a record.
@@ -57,7 +57,7 @@ func (d *RecordDecoder) Type(rec []byte) RecordType {
 
 // Series appends series in rec to the given slice.
 func (d *RecordDecoder) Series(rec []byte, series []RefSeries) ([]RefSeries, error) {
-	dec := tsdbutil.Decbuf{B: rec}
+	dec := encoding.Decbuf{B: rec}
 
 	if RecordType(dec.Byte()) != RecordSeries {
 		return nil, errors.New("invalid record type")
@@ -89,7 +89,7 @@ func (d *RecordDecoder) Series(rec []byte, series []RefSeries) ([]RefSeries, err
 
 // Samples appends samples in rec to the given slice.
 func (d *RecordDecoder) Samples(rec []byte, samples []RefSample) ([]RefSample, error) {
-	dec := tsdbutil.Decbuf{B: rec}
+	dec := encoding.Decbuf{B: rec}
 
 	if RecordType(dec.Byte()) != RecordSamples {
 		return nil, errors.New("invalid record type")
@@ -124,7 +124,7 @@ func (d *RecordDecoder) Samples(rec []byte, samples []RefSample) ([]RefSample, e
 
 // Tombstones appends tombstones in rec to the given slice.
 func (d *RecordDecoder) Tombstones(rec []byte, tstones []Stone) ([]Stone, error) {
-	dec := tsdbutil.Decbuf{B: rec}
+	dec := encoding.Decbuf{B: rec}
 
 	if RecordType(dec.Byte()) != RecordTombstones {
 		return nil, errors.New("invalid record type")
@@ -153,7 +153,7 @@ type RecordEncoder struct {
 
 // Series appends the encoded series to b and returns the resulting slice.
 func (e *RecordEncoder) Series(series []RefSeries, b []byte) []byte {
-	buf := tsdbutil.Encbuf{B: b}
+	buf := encoding.Encbuf{B: b}
 	buf.PutByte(byte(RecordSeries))
 
 	for _, s := range series {
@@ -170,7 +170,7 @@ func (e *RecordEncoder) Series(series []RefSeries, b []byte) []byte {
 
 // Samples appends the encoded samples to b and returns the resulting slice.
 func (e *RecordEncoder) Samples(samples []RefSample, b []byte) []byte {
-	buf := tsdbutil.Encbuf{B: b}
+	buf := encoding.Encbuf{B: b}
 	buf.PutByte(byte(RecordSamples))
 
 	if len(samples) == 0 {
@@ -194,7 +194,7 @@ func (e *RecordEncoder) Samples(samples []RefSample, b []byte) []byte {
 
 // Tombstones appends the encoded tombstones to b and returns the resulting slice.
 func (e *RecordEncoder) Tombstones(tstones []Stone, b []byte) []byte {
-	buf := tsdbutil.Encbuf{B: b}
+	buf := encoding.Encbuf{B: b}
 	buf.PutByte(byte(RecordTombstones))
 
 	for _, s := range tstones {

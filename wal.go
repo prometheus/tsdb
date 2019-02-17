@@ -31,9 +31,9 @@ import (
 	"github.com/go-kit/kit/log/level"
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/tsdb/encoding"
 	"github.com/prometheus/tsdb/fileutil"
 	"github.com/prometheus/tsdb/labels"
-	"github.com/prometheus/tsdb/tsdbutil"
 	"github.com/prometheus/tsdb/wal"
 )
 
@@ -288,15 +288,15 @@ func (w *SegmentWAL) Reader() WALReader {
 	}
 }
 
-func (w *SegmentWAL) getBuffer() *tsdbutil.Encbuf {
+func (w *SegmentWAL) getBuffer() *encoding.Encbuf {
 	b := w.buffers.Get()
 	if b == nil {
-		return &tsdbutil.Encbuf{B: make([]byte, 0, 64*1024)}
+		return &encoding.Encbuf{B: make([]byte, 0, 64*1024)}
 	}
-	return b.(*tsdbutil.Encbuf)
+	return b.(*encoding.Encbuf)
 }
 
-func (w *SegmentWAL) putBuffer(b *tsdbutil.Encbuf) {
+func (w *SegmentWAL) putBuffer(b *encoding.Encbuf) {
 	b.Reset()
 	w.buffers.Put(b)
 }
@@ -784,7 +784,7 @@ const (
 	walDeletesSimple = 1
 )
 
-func (w *SegmentWAL) encodeSeries(buf *tsdbutil.Encbuf, series []RefSeries) uint8 {
+func (w *SegmentWAL) encodeSeries(buf *encoding.Encbuf, series []RefSeries) uint8 {
 	for _, s := range series {
 		buf.PutBE64(s.Ref)
 		buf.PutUvarint(len(s.Labels))
@@ -797,7 +797,7 @@ func (w *SegmentWAL) encodeSeries(buf *tsdbutil.Encbuf, series []RefSeries) uint
 	return walSeriesSimple
 }
 
-func (w *SegmentWAL) encodeSamples(buf *tsdbutil.Encbuf, samples []RefSample) uint8 {
+func (w *SegmentWAL) encodeSamples(buf *encoding.Encbuf, samples []RefSample) uint8 {
 	if len(samples) == 0 {
 		return walSamplesSimple
 	}
@@ -818,7 +818,7 @@ func (w *SegmentWAL) encodeSamples(buf *tsdbutil.Encbuf, samples []RefSample) ui
 	return walSamplesSimple
 }
 
-func (w *SegmentWAL) encodeDeletes(buf *tsdbutil.Encbuf, stones []Stone) uint8 {
+func (w *SegmentWAL) encodeDeletes(buf *encoding.Encbuf, stones []Stone) uint8 {
 	for _, s := range stones {
 		for _, iv := range s.intervals {
 			buf.PutBE64(s.ref)
@@ -1116,7 +1116,7 @@ func (r *walReader) entry(cr io.Reader) (WALEntryType, byte, []byte, error) {
 }
 
 func (r *walReader) decodeSeries(flag byte, b []byte, res *[]RefSeries) error {
-	dec := tsdbutil.Decbuf{B: b}
+	dec := encoding.Decbuf{B: b}
 
 	for len(dec.B) > 0 && dec.Err() == nil {
 		ref := dec.Be64()
@@ -1147,7 +1147,7 @@ func (r *walReader) decodeSamples(flag byte, b []byte, res *[]RefSample) error {
 	if len(b) == 0 {
 		return nil
 	}
-	dec := tsdbutil.Decbuf{B: b}
+	dec := encoding.Decbuf{B: b}
 
 	var (
 		baseRef  = dec.Be64()
@@ -1176,7 +1176,7 @@ func (r *walReader) decodeSamples(flag byte, b []byte, res *[]RefSample) error {
 }
 
 func (r *walReader) decodeDeletes(flag byte, b []byte, res *[]Stone) error {
-	dec := &tsdbutil.Decbuf{B: b}
+	dec := &encoding.Decbuf{B: b}
 
 	for dec.Len() > 0 && dec.Err() == nil {
 		*res = append(*res, Stone{

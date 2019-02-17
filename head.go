@@ -28,9 +28,9 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/tsdb/chunkenc"
 	"github.com/prometheus/tsdb/chunks"
+	"github.com/prometheus/tsdb/encoding"
 	"github.com/prometheus/tsdb/index"
 	"github.com/prometheus/tsdb/labels"
-	"github.com/prometheus/tsdb/tsdbutil"
 	"github.com/prometheus/tsdb/wal"
 )
 
@@ -1118,7 +1118,7 @@ func (h *headIndexReader) Symbols() (map[string]struct{}, error) {
 // LabelValues returns the possible label values
 func (h *headIndexReader) LabelValues(names ...string) (index.StringTuples, error) {
 	if len(names) != 1 {
-		return nil, tsdbutil.ErrInvalidSize
+		return nil, encoding.ErrInvalidSize
 	}
 
 	h.head.symMtx.RLock()

@@ -23,7 +23,7 @@ import (
 	"sync"
 
 	"github.com/pkg/errors"
-	"github.com/prometheus/tsdb/tsdbutil"
+	"github.com/prometheus/tsdb/encoding"
 )
 
 const tombstoneFilename = "tombstones"
@@ -65,7 +65,7 @@ func writeTombstoneFile(dir string, tr TombstoneReader) error {
 		}
 	}()
 
-	buf := tsdbutil.Encbuf{B: make([]byte, 3*binary.MaxVarintLen64)}
+	buf := encoding.Encbuf{B: make([]byte, 3*binary.MaxVarintLen64)}
 	buf.Reset()
 	// Write the meta.
 	buf.PutBE32(MagicTombstone)
@@ -127,10 +127,10 @@ func readTombstones(dir string) (TombstoneReader, SizeReader, error) {
 	}
 
 	if len(b) < 5 {
-		return nil, sr, errors.Wrap(tsdbutil.ErrInvalidSize, "tombstones header")
+		return nil, sr, errors.Wrap(encoding.ErrInvalidSize, "tombstones header")
 	}
 
-	d := &tsdbutil.Decbuf{B: b[:len(b)-4]} // 4 for the checksum.
+	d := &encoding.Decbuf{B: b[:len(b)-4]} // 4 for the checksum.
 	if mg := d.Be32(); mg != MagicTombstone {
 		return nil, sr, fmt.Errorf("invalid magic number %x", mg)
 	}

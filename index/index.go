@@ -28,9 +28,9 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/prometheus/tsdb/chunks"
+	"github.com/prometheus/tsdb/encoding"
 	"github.com/prometheus/tsdb/fileutil"
 	"github.com/prometheus/tsdb/labels"
-	"github.com/prometheus/tsdb/tsdbutil"
 )
 
 const (
@@ -119,8 +119,8 @@ type Writer struct {
 	stage indexWriterStage
 
 	// Reusable memory.
-	buf1    tsdbutil.Encbuf
-	buf2    tsdbutil.Encbuf
+	buf1    encoding.Encbuf
+	buf2    encoding.Encbuf
 	uint32s []uint32
 
 	symbols       map[string]uint32 // symbol offsets
@@ -149,15 +149,15 @@ type TOC struct {
 // NewTOCFromByteSlice return parsed TOC from given index byte slice.
 func NewTOCFromByteSlice(bs ByteSlice) (*TOC, error) {
 	if bs.Len() < indexTOCLen {
-		return nil, tsdbutil.ErrInvalidSize
+		return nil, encoding.ErrInvalidSize
 	}
 	b := bs.Range(bs.Len()-indexTOCLen, bs.Len())
 
 	expCRC := binary.BigEndian.Uint32(b[len(b)-4:])
-	d := tsdbutil.Decbuf{B: b[:len(b)-4]}
+	d := encoding.Decbuf{B: b[:len(b)-4]}
 
-	if DecbufCrc32(&d) != expCRC {
-		return nil, errors.Wrap(tsdbutil.ErrInvalidChecksum, "read TOC")
+	if DecbufCrc32(&d, castagnoliTable) != expCRC {
+		return nil, errors.Wrap(encoding.ErrInvalidChecksum, "read TOC")
 	}
 
 	if err := d.Err(); err != nil {
@@ -203,8 +203,8 @@ func NewWriter(fn string) (*Writer, error) {
 		stage: idxStageNone,
 
 		// Reusable memory.
-		buf1:    tsdbutil.Encbuf{B: make([]byte, 0, 1<<22)},
-		buf2:    tsdbutil.Encbuf{B: make([]byte, 0, 1<<22)},
+		buf1:    encoding.Encbuf{B: make([]byte, 0, 1<<22)},
+		buf2:    encoding.Encbuf{B: make([]byte, 0, 1<<22)},
 		uint32s: make([]uint32, 0, 1<<15),
 
 		// Caches.
@@ -638,7 +638,7 @@ func newReader(b ByteSlice, c io.Closer) (*Reader, error) {
 
 	// Verify header.
 	if r.b.Len() < HeaderLen {
-		return nil, errors.Wrap(tsdbutil.ErrInvalidSize, "index header")
+		return nil, errors.Wrap(encoding.ErrInvalidSize, "index header")
 	}
 	if m := binary.BigEndian.Uint32(r.b.Range(0, 4)); m != MagicIndex {
 		return nil, errors.Errorf("invalid magic number %x", m)
@@ -719,7 +719,7 @@ func (r *Reader) PostingsRanges() (map[labels.Label]Range, error) {
 
 	for k, e := range r.postings {
 		for v, start := range e {
-			d := newDecbufAt(r.b, int(start))
+			d := newDecbufAt(r.b, int(start), castagnoliTable)
 			if d.Err() != nil {
 				return nil, d.Err()
 			}
@@ -739,7 +739,7 @@ func ReadSymbols(bs ByteSlice, version int, off int) ([]string, map[uint32]strin
 	if off == 0 {
 		return nil, nil, nil
 	}
-	d := newDecbufAt(bs, off)
+	d := newDecbufAt(bs, off, castagnoliTable)
 
 	var (
 		origLen     = d.Len()
@@ -770,7 +770,7 @@ func ReadSymbols(bs ByteSlice, version int, off int) ([]string, map[uint32]strin
 // ReadOffsetTable reads an offset table and at the given position calls f for each
 // found entry. If f returns an error it stops decoding and returns the received error.
 func ReadOffsetTable(bs ByteSlice, off uint64, f func([]string, uint64) error) error {
-	d := newDecbufAt(bs, int(off))
+	d := newDecbufAt(bs, int(off), castagnoliTable)
 	cnt := d.Be32()
 
 	for d.Err() == nil && d.Len() > 0 && cnt > 0 {
@@ -838,7 +838,7 @@ func (r *Reader) LabelValues(names ...string) (StringTuples, error) {
 		//return nil, fmt.Errorf("label index doesn't exist")
 	}
 
-	d := newDecbufAt(r.b, int(off))
+	d := newDecbufAt(r.b, int(off), castagnoliTable)
 
 	nc := d.Be32int()
 	d.Be32() // consume unused value entry count.
@@ -877,7 +877,7 @@ func (r *Reader) Series(id uint64, lbls *labels.Labels, chks *[]chunks.Meta) err
 	if r.version == FormatV2 {
 		offset = id * 16
 	}
-	d := newDecbufUvarintAt(r.b, int(offset))
+	d := newDecbufUvarintAt(r.b, int(offset), castagnoliTable)
 	if d.Err() != nil {
 		return d.Err()
 	}
@@ -894,7 +894,7 @@ func (r *Reader) Postings(name, value string) (Postings, error) {
 	if !ok {
 		return EmptyPostings(), nil
 	}
-	d := newDecbufAt(r.b, int(off))
+	d := newDecbufAt(r.b, int(off), castagnoliTable)
 	if d.Err() != nil {
 		return nil, errors.Wrap(d.Err(), "get postings entry")
 	}
@@ -947,7 +947,7 @@ type stringTuples struct {
 
 func NewStringTuples(entries []string, length int) (*stringTuples, error) {
 	if len(entries)%length != 0 {
-		return nil, errors.Wrap(tsdbutil.ErrInvalidSize, "string tuple list")
+		return nil, errors.Wrap(encoding.ErrInvalidSize, "string tuple list")
 	}
 	return &stringTuples{entries: entries, length: length}, nil
 }
@@ -991,7 +991,7 @@ func (t *serializedStringTuples) Len() int {
 
 func (t *serializedStringTuples) At(i int) ([]string, error) {
 	if len(t.idsBytes) < (i+t.idsCount)*4 {
-		return nil, tsdbutil.ErrInvalidSize
+		return nil, encoding.ErrInvalidSize
 	}
 	res := make([]string, 0, t.idsCount)
 
@@ -1018,7 +1018,7 @@ type Decoder struct {
 
 // Postings returns a postings list for b and its number of elements.
 func (dec *Decoder) Postings(b []byte) (int, Postings, error) {
-	d := tsdbutil.Decbuf{B: b}
+	d := encoding.Decbuf{B: b}
 	n := d.Be32int()
 	l := d.Get()
 	return n, newBigEndianPostings(l), d.Err()
@@ -1029,7 +1029,7 @@ func (dec *Decoder) Series(b []byte, lbls *labels.Labels, chks *[]chunks.Meta) e
 	*lbls = (*lbls)[:0]
 	*chks = (*chks)[:0]
 
-	d := tsdbutil.Decbuf{B: b}
+	d := encoding.Decbuf{B: b}
 
 	k := d.Uvarint()
 
@@ -1089,63 +1089,4 @@ func (dec *Decoder) Series(b []byte, lbls *labels.Labels, chks *[]chunks.Meta) e
 		})
 	}
 	return d.Err()
-}
-
-// newDecbufAt returns a new decoding buffer. It expects the first 4 bytes
-// after offset to hold the big endian encoded content length, followed by the contents and the expected
-// checksum.
-func newDecbufAt(bs ByteSlice, off int) tsdbutil.Decbuf {
-	if bs.Len() < off+4 {
-		return tsdbutil.Decbuf{E: tsdbutil.ErrInvalidSize}
-	}
-	b := bs.Range(off, off+4)
-	l := int(binary.BigEndian.Uint32(b))
-
-	if bs.Len() < off+4+l+4 {
-		return tsdbutil.Decbuf{E: tsdbutil.ErrInvalidSize}
-	}
-
-	// Load bytes holding the contents plus a CRC32 checksum.
-	b = bs.Range(off+4, off+4+l+4)
-	dec := tsdbutil.Decbuf{B: b[:len(b)-4]}
-
-	if exp := binary.BigEndian.Uint32(b[len(b)-4:]); DecbufCrc32(&dec) != exp {
-		return tsdbutil.Decbuf{E: tsdbutil.ErrInvalidChecksum}
-	}
-	return dec
-}
-
-// decbufUvarintAt returns a new decoding buffer. It expects the first bytes
-// after offset to hold the uvarint-encoded buffers length, followed by the contents and the expected
-// checksum.
-func newDecbufUvarintAt(bs ByteSlice, off int) tsdbutil.Decbuf {
-	// We never have to access this method at the far end of the byte slice. Thus just checking
-	// against the MaxVarintLen32 is sufficient.
-	if bs.Len() < off+binary.MaxVarintLen32 {
-		return tsdbutil.Decbuf{E: tsdbutil.ErrInvalidSize}
-	}
-	b := bs.Range(off, off+binary.MaxVarintLen32)
-
-	l, n := binary.Uvarint(b)
-	if n <= 0 || n > binary.MaxVarintLen32 {
-		return tsdbutil.Decbuf{E: errors.Errorf("invalid uvarint %d", n)}
-	}
-
-	if bs.Len() < off+n+int(l)+4 {
-		return tsdbutil.Decbuf{E: tsdbutil.ErrInvalidSize}
-	}
-
-	// Load bytes holding the contents plus a CRC32 checksum.
-	b = bs.Range(off+n, off+n+int(l)+4)
-	dec := tsdbutil.Decbuf{B: b[:len(b)-4]}
-
-	if DecbufCrc32(&dec) != binary.BigEndian.Uint32(b[len(b)-4:]) {
-		return tsdbutil.Decbuf{E: tsdbutil.ErrInvalidChecksum}
-	}
-	return dec
-}
-
-// DecbufCrc32 returns a CRC32 checksum over the remaining bytes.
-func DecbufCrc32(d *tsdbutil.Decbuf) uint32 {
-	return crc32.Checksum(d.B, castagnoliTable)
 }
