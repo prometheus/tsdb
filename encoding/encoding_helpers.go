@@ -178,10 +178,10 @@ func (d *Decbuf) Err() error  { return d.E }
 func (d *Decbuf) Len() int    { return len(d.B) }
 func (d *Decbuf) Get() []byte { return d.B }
 
-// newDecbufAt returns a new decoding buffer. It expects the first 4 bytes
+// NewDecbufAt returns a new decoding buffer. It expects the first 4 bytes
 // after offset to hold the big endian encoded content length, followed by the contents and the expected
 // checksum.
-func newDecbufAt(bs ByteSlice, off int, castagnoliTable *crc32.Table) Decbuf {
+func NewDecbufAt(bs ByteSlice, off int, castagnoliTable *crc32.Table) Decbuf {
 	if bs.Len() < off+4 {
 		return Decbuf{E: ErrInvalidSize}
 	}
@@ -202,10 +202,10 @@ func newDecbufAt(bs ByteSlice, off int, castagnoliTable *crc32.Table) Decbuf {
 	return dec
 }
 
-// newDecbufUvarintAt returns a new decoding buffer. It expects the first bytes
+// NewDecbufUvarintAt returns a new decoding buffer. It expects the first bytes
 // after offset to hold the uvarint-encoded buffers length, followed by the contents and the expected
 // checksum.
-func newDecbufUvarintAt(bs ByteSlice, off int, castagnoliTable *crc32.Table) Decbuf {
+func NewDecbufUvarintAt(bs ByteSlice, off int, castagnoliTable *crc32.Table) Decbuf {
 	// We never have to access this method at the far end of the byte slice. Thus just checking
 	// against the MaxVarintLen32 is sufficient.
 	if bs.Len() < off+binary.MaxVarintLen32 {

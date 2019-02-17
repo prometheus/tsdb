@@ -156,7 +156,7 @@ func NewTOCFromByteSlice(bs ByteSlice) (*TOC, error) {
 	expCRC := binary.BigEndian.Uint32(b[len(b)-4:])
 	d := encoding.Decbuf{B: b[:len(b)-4]}
 
-	if DecbufCrc32(&d, castagnoliTable) != expCRC {
+	if encoding.DecbufCrc32(&d, castagnoliTable) != expCRC {
 		return nil, errors.Wrap(encoding.ErrInvalidChecksum, "read TOC")
 	}
 
@@ -719,7 +719,7 @@ func (r *Reader) PostingsRanges() (map[labels.Label]Range, error) {
 
 	for k, e := range r.postings {
 		for v, start := range e {
-			d := newDecbufAt(r.b, int(start), castagnoliTable)
+			d := encoding.NewDecbufAt(r.b, int(start), castagnoliTable)
 			if d.Err() != nil {
 				return nil, d.Err()
 			}
@@ -739,7 +739,7 @@ func ReadSymbols(bs ByteSlice, version int, off int) ([]string, map[uint32]strin
 	if off == 0 {
 		return nil, nil, nil
 	}
-	d := newDecbufAt(bs, off, castagnoliTable)
+	d := encoding.NewDecbufAt(bs, off, castagnoliTable)
 
 	var (
 		origLen     = d.Len()
@@ -770,7 +770,7 @@ func ReadSymbols(bs ByteSlice, version int, off int) ([]string, map[uint32]strin
 // ReadOffsetTable reads an offset table and at the given position calls f for each
 // found entry. If f returns an error it stops decoding and returns the received error.
 func ReadOffsetTable(bs ByteSlice, off uint64, f func([]string, uint64) error) error {
-	d := newDecbufAt(bs, int(off), castagnoliTable)
+	d := encoding.NewDecbufAt(bs, int(off), castagnoliTable)
 	cnt := d.Be32()
 
 	for d.Err() == nil && d.Len() > 0 && cnt > 0 {
@@ -838,7 +838,7 @@ func (r *Reader) LabelValues(names ...string) (StringTuples, error) {
 		//return nil, fmt.Errorf("label index doesn't exist")
 	}
 
-	d := newDecbufAt(r.b, int(off), castagnoliTable)
+	d := encoding.NewDecbufAt(r.b, int(off), castagnoliTable)
 
 	nc := d.Be32int()
 	d.Be32() // consume unused value entry count.
@@ -877,7 +877,7 @@ func (r *Reader) Series(id uint64, lbls *labels.Labels, chks *[]chunks.Meta) err
 	if r.version == FormatV2 {
 		offset = id * 16
 	}
-	d := newDecbufUvarintAt(r.b, int(offset), castagnoliTable)
+	d := encoding.NewDecbufUvarintAt(r.b, int(offset), castagnoliTable)
 	if d.Err() != nil {
 		return d.Err()
 	}
@@ -894,7 +894,7 @@ func (r *Reader) Postings(name, value string) (Postings, error) {
 	if !ok {
 		return EmptyPostings(), nil
 	}
-	d := newDecbufAt(r.b, int(off), castagnoliTable)
+	d := encoding.NewDecbufAt(r.b, int(off), castagnoliTable)
 	if d.Err() != nil {
 		return nil, errors.Wrap(d.Err(), "get postings entry")
 	}
