@@ -156,7 +156,7 @@ func NewTOCFromByteSlice(bs ByteSlice) (*TOC, error) {
 	expCRC := binary.BigEndian.Uint32(b[len(b)-4:])
 	d := encoding.Decbuf{B: b[:len(b)-4]}
 
-	if encoding.DecbufCrc32(&d, castagnoliTable) != expCRC {
+	if d.Crc32(castagnoliTable) != expCRC {
 		return nil, errors.Wrap(encoding.ErrInvalidChecksum, "read TOC")
 	}
 

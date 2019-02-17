@@ -91,9 +91,68 @@ type Decbuf struct {
 	E error
 }
 
+// NewDecbufAt returns a new decoding buffer. It expects the first 4 bytes
+// after offset to hold the big endian encoded content length, followed by the contents and the expected
+// checksum.
+func NewDecbufAt(bs ByteSlice, off int, castagnoliTable *crc32.Table) Decbuf {
+	if bs.Len() < off+4 {
+		return Decbuf{E: ErrInvalidSize}
+	}
+	b := bs.Range(off, off+4)
+	l := int(binary.BigEndian.Uint32(b))
+
+	if bs.Len() < off+4+l+4 {
+		return Decbuf{E: ErrInvalidSize}
+	}
+
+	// Load bytes holding the contents plus a CRC32 checksum.
+	b = bs.Range(off+4, off+4+l+4)
+	dec := Decbuf{B: b[:len(b)-4]}
+
+	if exp := binary.BigEndian.Uint32(b[len(b)-4:]); dec.Crc32(castagnoliTable) != exp {
+		return Decbuf{E: ErrInvalidChecksum}
+	}
+	return dec
+}
+
+// NewDecbufUvarintAt returns a new decoding buffer. It expects the first bytes
+// after offset to hold the uvarint-encoded buffers length, followed by the contents and the expected
+// checksum.
+func NewDecbufUvarintAt(bs ByteSlice, off int, castagnoliTable *crc32.Table) Decbuf {
+	// We never have to access this method at the far end of the byte slice. Thus just checking
+	// against the MaxVarintLen32 is sufficient.
+	if bs.Len() < off+binary.MaxVarintLen32 {
+		return Decbuf{E: ErrInvalidSize}
+	}
+	b := bs.Range(off, off+binary.MaxVarintLen32)
+
+	l, n := binary.Uvarint(b)
+	if n <= 0 || n > binary.MaxVarintLen32 {
+		return Decbuf{E: errors.Errorf("invalid uvarint %d", n)}
+	}
+
+	if bs.Len() < off+n+int(l)+4 {
+		return Decbuf{E: ErrInvalidSize}
+	}
+
+	// Load bytes holding the contents plus a CRC32 checksum.
+	b = bs.Range(off+n, off+n+int(l)+4)
+	dec := Decbuf{B: b[:len(b)-4]}
+
+	if dec.Crc32(castagnoliTable) != binary.BigEndian.Uint32(b[len(b)-4:]) {
+		return Decbuf{E: ErrInvalidChecksum}
+	}
+	return dec
+}
+
 func (d *Decbuf) Uvarint() int     { return int(d.Uvarint64()) }
 func (d *Decbuf) Be32int() int     { return int(d.Be32()) }
 func (d *Decbuf) Be64int64() int64 { return int64(d.Be64()) }
+
+// Crc32 returns a CRC32 checksum over the remaining bytes.
+func (d *Decbuf) Crc32(castagnoliTable *crc32.Table) uint32 {
+	return crc32.Checksum(d.B, castagnoliTable)
+}
 
 func (d *Decbuf) UvarintStr() string {
 	l := d.Uvarint64()
@@ -177,65 +236,6 @@ func (d *Decbuf) Byte() byte {
 func (d *Decbuf) Err() error  { return d.E }
 func (d *Decbuf) Len() int    { return len(d.B) }
 func (d *Decbuf) Get() []byte { return d.B }
-
-// NewDecbufAt returns a new decoding buffer. It expects the first 4 bytes
-// after offset to hold the big endian encoded content length, followed by the contents and the expected
-// checksum.
-func NewDecbufAt(bs ByteSlice, off int, castagnoliTable *crc32.Table) Decbuf {
-	if bs.Len() < off+4 {
-		return Decbuf{E: ErrInvalidSize}
-	}
-	b := bs.Range(off, off+4)
-	l := int(binary.BigEndian.Uint32(b))
-
-	if bs.Len() < off+4+l+4 {
-		return Decbuf{E: ErrInvalidSize}
-	}
-
-	// Load bytes holding the contents plus a CRC32 checksum.
-	b = bs.Range(off+4, off+4+l+4)
-	dec := Decbuf{B: b[:len(b)-4]}
-
-	if exp := binary.BigEndian.Uint32(b[len(b)-4:]); DecbufCrc32(&dec, castagnoliTable) != exp {
-		return Decbuf{E: ErrInvalidChecksum}
-	}
-	return dec
-}
-
-// NewDecbufUvarintAt returns a new decoding buffer. It expects the first bytes
-// after offset to hold the uvarint-encoded buffers length, followed by the contents and the expected
-// checksum.
-func NewDecbufUvarintAt(bs ByteSlice, off int, castagnoliTable *crc32.Table) Decbuf {
-	// We never have to access this method at the far end of the byte slice. Thus just checking
-	// against the MaxVarintLen32 is sufficient.
-	if bs.Len() < off+binary.MaxVarintLen32 {
-		return Decbuf{E: ErrInvalidSize}
-	}
-	b := bs.Range(off, off+binary.MaxVarintLen32)
-
-	l, n := binary.Uvarint(b)
-	if n <= 0 || n > binary.MaxVarintLen32 {
-		return Decbuf{E: errors.Errorf("invalid uvarint %d", n)}
-	}
-
-	if bs.Len() < off+n+int(l)+4 {
-		return Decbuf{E: ErrInvalidSize}
-	}
-
-	// Load bytes holding the contents plus a CRC32 checksum.
-	b = bs.Range(off+n, off+n+int(l)+4)
-	dec := Decbuf{B: b[:len(b)-4]}
-
-	if DecbufCrc32(&dec, castagnoliTable) != binary.BigEndian.Uint32(b[len(b)-4:]) {
-		return Decbuf{E: ErrInvalidChecksum}
-	}
-	return dec
-}
-
-// DecbufCrc32 returns a CRC32 checksum over the remaining bytes.
-func DecbufCrc32(d *Decbuf, castagnoliTable *crc32.Table) uint32 {
-	return crc32.Checksum(d.B, castagnoliTable)
-}
 
 // ByteSlice abstracts a byte slice.
 type ByteSlice interface {
