@@ -594,7 +594,8 @@ func TestCorruptAndCarryOn(t *testing.T) {
 				t.Log("segment", segment.index, "size", fi.Size())
 				testutil.Equals(t, int64(3*pageSize), fi.Size())
 
-				f.Close()
+				err = f.Close()
+				testutil.Ok(t, err)
 			}
 		}
 
@@ -628,12 +629,9 @@ func TestCorruptAndCarryOn(t *testing.T) {
 			t.Log("records", records)
 		}
 
-		// Now try and repair this WAL, and write 2 more records to it.
+		// Now try and repair this WAL, and write 5 more records to it.
 		{
-			w, err := New(logger, nil, dir)
-			testutil.Ok(t, err)
-
-			sr, err := NewSegmentsRangeReader(SegmentRange{Dir: w.Dir(), First: -1, Last: -1})
+			sr, err := NewSegmentsRangeReader(SegmentRange{Dir: dir, First: -1, Last: -1})
 			testutil.Ok(t, err)
 
 			reader := NewReader(sr)
@@ -644,11 +642,16 @@ func TestCorruptAndCarryOn(t *testing.T) {
 			testutil.Equals(t, records, i, "not enough records")
 			testutil.Assert(t, !reader.Next(), "unexpected record")
 
-			err = reader.Err()
-			testutil.Assert(t, err != nil, "expected error")
-			sr.Close()
+			corruptionErr := reader.Err()
+			testutil.Assert(t, corruptionErr != nil, "expected error")
 
-			err = w.Repair(err)
+			err = sr.Close()
+			testutil.Ok(t, err)
+
+			w, err := New(logger, nil, dir)
+			testutil.Ok(t, err)
+
+			err = w.Repair(corruptionErr)
 			testutil.Ok(t, err)
 
 			for i := 0; i < 5; i++ {
@@ -662,7 +665,9 @@ func TestCorruptAndCarryOn(t *testing.T) {
 
 			records += 5
 			t.Log("records", records)
-			w.Close()
+
+			err = w.Close()
+			testutil.Ok(t, err)
 		}
 
 		// Try and use LiveReader to replay the WAL.  Should get n * 9 records.
