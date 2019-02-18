@@ -553,16 +553,20 @@ func TestCorruptAndCarryOn(t *testing.T) {
 	testutil.Ok(t, err)
 	defer os.RemoveAll(dir)
 
-	logger := testutil.NewLogger(t)
+	var (
+		logger      = testutil.NewLogger(t)
+		segmentSize = pageSize * 3
+		recordSize  = (pageSize / 3) - recordHeaderSize
+	)
 
 	// Produce a WAL with a two segments of 3 pages with 3 records each,
 	// so when we truncate the file we guaranteed to split a record.
 	{
-		w, err := NewSize(logger, nil, dir, pageSize*3)
+		w, err := NewSize(logger, nil, dir, segmentSize)
 		testutil.Ok(t, err)
 
 		for i := 0; i < 18; i++ {
-			buf := make([]byte, (pageSize/3)-recordHeaderSize)
+			buf := make([]byte, recordSize)
 			_, err := rand.Read(buf)
 			testutil.Ok(t, err)
 
@@ -586,23 +590,23 @@ func TestCorruptAndCarryOn(t *testing.T) {
 			testutil.Ok(t, err)
 
 			t.Log("segment", segment.index, "size", fi.Size())
-			testutil.Equals(t, int64(3*pageSize), fi.Size())
+			testutil.Equals(t, int64(segmentSize), fi.Size())
 
 			err = f.Close()
 			testutil.Ok(t, err)
 		}
 	}
 
-	// Truncate the first file, splitting a record.
+	// Truncate the first file, splitting the middle record.
 	{
 		f, err := os.OpenFile(filepath.Join(dir, fmt.Sprintf("%08d", 0)), os.O_RDWR, 0666)
 		testutil.Ok(t, err)
 
 		fi, err := f.Stat()
 		testutil.Ok(t, err)
-		testutil.Equals(t, int64(3*pageSize), fi.Size())
+		testutil.Equals(t, int64(segmentSize), fi.Size())
 
-		err = f.Truncate((3 * pageSize) / 2)
+		err = f.Truncate(int64(segmentSize / 2))
 		testutil.Ok(t, err)
 
 		err = f.Close()
@@ -611,13 +615,13 @@ func TestCorruptAndCarryOn(t *testing.T) {
 
 	// Now try and repair this WAL, and write 5 more records to it.
 	{
-		sr, err := NewSegmentsRangeReader(SegmentRange{Dir: dir, First: -1, Last: -1})
+		sr, err := NewSegmentsReader(dir)
 		testutil.Ok(t, err)
 
 		reader := NewReader(sr)
 		i := 0
 		for ; i < 4 && reader.Next(); i++ {
-			testutil.Equals(t, (pageSize/3)-recordHeaderSize, len(reader.Record()))
+			testutil.Equals(t, recordSize, len(reader.Record()))
 		}
 		testutil.Equals(t, 4, i, "not enough records")
 		testutil.Assert(t, !reader.Next(), "unexpected record")
@@ -628,14 +632,14 @@ func TestCorruptAndCarryOn(t *testing.T) {
 		err = sr.Close()
 		testutil.Ok(t, err)
 
-		w, err := New(logger, nil, dir)
+		w, err := NewSize(logger, nil, dir, segmentSize)
 		testutil.Ok(t, err)
 
 		err = w.Repair(corruptionErr)
 		testutil.Ok(t, err)
 
 		for i := 0; i < 5; i++ {
-			buf := make([]byte, (pageSize/3)-recordHeaderSize)
+			buf := make([]byte, recordSize)
 			_, err := rand.Read(buf)
 			testutil.Ok(t, err)
 
@@ -649,13 +653,13 @@ func TestCorruptAndCarryOn(t *testing.T) {
 
 	// Replay the WAL. Should get 9 records.
 	{
-		sr, err := NewSegmentsRangeReader(SegmentRange{Dir: dir, First: -1, Last: -1})
+		sr, err := NewSegmentsReader(dir)
 		testutil.Ok(t, err)
 
 		reader := NewReader(sr)
 		i := 0
 		for ; i < 9 && reader.Next(); i++ {
-			testutil.Equals(t, (pageSize/3)-recordHeaderSize, len(reader.Record()))
+			testutil.Equals(t, recordSize, len(reader.Record()))
 		}
 		testutil.Equals(t, 9, i, "wrong number of records")
 		testutil.Assert(t, !reader.Next(), "unexpected record")

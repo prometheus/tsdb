@@ -682,7 +682,8 @@ func NewSegmentsRangeReader(sr ...SegmentRange) (io.ReadCloser, error) {
 // segmentBufReader is a buffered reader that reads in multiples of pages.
 // The main purpose is that we are able to track segment and offset for
 // corruption reporting.  We have to be careful not to increment curr too
-// early.
+// early, as it is used by Reader.Err() to tell Repair which segment is corrupt.
+// As such we pad the end of non-page align segments with zeros.
 type segmentBufReader struct {
 	buf  *bufio.Reader
 	segs []*Segment
@@ -712,7 +713,7 @@ func (r *segmentBufReader) Read(b []byte) (n int, err error) {
 	r.off += n
 
 	// If we succeeded, or hit a non-EOF, we can stop.
-	if err != io.EOF {
+	if err == nil || err != io.EOF {
 		return n, err
 	}
 
