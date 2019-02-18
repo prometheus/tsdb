@@ -459,3 +459,28 @@ func TestLiveReaderCorrupt_RecordTooLongAndShort(t *testing.T) {
 	testutil.Assert(t, r.Next() == false, "expected no records")
 	testutil.Assert(t, r.Err().Error() == "record would overflow current page: 65542 > 32768", "expected error, got: %v", r.Err())
 }
+
+func TestReaderData(t *testing.T) {
+	dir := os.Getenv("WALDIR")
+	if dir == "" {
+		return
+	}
+
+	for name, fn := range readerConstructors {
+		t.Run(name, func(t *testing.T) {
+			w, err := New(nil, nil, dir)
+			testutil.Ok(t, err)
+
+			sr, err := allSegments(dir)
+			testutil.Ok(t, err)
+
+			reader := fn(sr)
+			for reader.Next() {
+			}
+			testutil.Ok(t, reader.Err())
+
+			err = w.Repair(reader.Err())
+			testutil.Ok(t, err)
+		})
+	}
+}

@@ -16,15 +16,10 @@ package wal
 
 import (
 	"bytes"
-	"fmt"
-	"io"
 	"io/ioutil"
-	"math/rand"
 	"os"
-	"path/filepath"
 	"testing"
 
-	"github.com/go-kit/kit/log"
 	"github.com/prometheus/tsdb/testutil"
 )
 
