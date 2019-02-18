@@ -48,6 +48,7 @@ var DefaultOptions = &Options{
 	RetentionDuration: 15 * 24 * 60 * 60 * 1000, // 15 days in milliseconds
 	BlockRanges:       ExponentialBlockRanges(int64(2*time.Hour)/1e6, 3, 5),
 	NoLockfile:        false,
+	ReadOnly:          false,
 }
 
 // Options of the DB storage.
@@ -70,6 +71,9 @@ type Options struct {
 
 	// NoLockfile disables creation and consideration of a lock file.
 	NoLockfile bool
+
+	// ReadOnly disables all mutating actions. Currently Experimental.
+	ReadOnly bool
 }
 
 // Appender allows appending a batch of data. It must be completed with a
@@ -238,13 +242,18 @@ func Open(dir string, l log.Logger, r prometheus.Registerer, opts *Options) (db 
 	if opts == nil {
 		opts = DefaultOptions
 	}
-	// Fixup bad format written by Prometheus 2.1.
-	if err := repairBadIndexVersion(l, dir); err != nil {
-		return nil, err
-	}
-	// Migrate old WAL if one exists.
-	if err := MigrateWAL(l, filepath.Join(dir, "wal")); err != nil {
-		return nil, errors.Wrap(err, "migrate WAL")
+	if opts.ReadOnly {
+		// Disable the WAL if ReadOnly
+		opts.WALSegmentSize = -1
+	} else {
+		// Fixup bad format written by Prometheus 2.1.
+		if err := repairBadIndexVersion(l, dir); err != nil {
+			return nil, err
+		}
+		// Migrate old WAL if one exists.
+		if err := MigrateWAL(l, filepath.Join(dir, "wal")); err != nil {
+			return nil, errors.Wrap(err, "migrate WAL")
+		}
 	}
 
 	db = &DB{
@@ -254,7 +263,7 @@ func Open(dir string, l log.Logger, r prometheus.Registerer, opts *Options) (db 
 		compactc:    make(chan struct{}, 1),
 		donec:       make(chan struct{}),
 		stopc:       make(chan struct{}),
-		autoCompact: true,
+		autoCompact: !opts.ReadOnly,
 		chunkPool:   chunkenc.NewPool(),
 	}
 	db.metrics = newDBMetrics(db, r)
