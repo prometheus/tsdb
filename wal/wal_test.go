@@ -24,10 +24,12 @@ import (
 	"math/rand"
 	"os"
 	"path"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/go-kit/kit/log"
 	"github.com/prometheus/tsdb/testutil"
 )
 
@@ -225,7 +227,7 @@ func TestReader_Live(t *testing.T) {
 }
 
 func TestWAL_FuzzWriteRead_Live(t *testing.T) {
-	const count = 5000
+	const count = 500
 	var input [][]byte
 	lock := sync.RWMutex{}
 	var recs [][]byte
@@ -544,6 +546,139 @@ func TestWAL_Repair(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestCorruptAndCarryOn(t *testing.T) {
+	dir, err := ioutil.TempDir("", "wal_repair")
+	testutil.Ok(t, err)
+	defer os.RemoveAll(dir)
+
+	logger := log.NewLogfmtLogger(os.Stderr)
+
+	var records int
+
+	for i := 0; i < 10; i++ {
+		t.Log("Interation", i, "records", records)
+
+		// Produce a WAL with a single segment of 3 pages with 3 records each,
+		// so when we truncate the file we guaranteed to split a record.
+		{
+			w, err := NewSize(logger, nil, dir, pageSize*3)
+			testutil.Ok(t, err)
+
+			for i := 0; i < 9; i++ {
+				buf := make([]byte, (pageSize/3)-recordHeaderSize)
+				_, err := rand.Read(buf)
+				testutil.Ok(t, err)
+
+				err = w.Log(buf)
+				testutil.Ok(t, err)
+			}
+
+			err = w.Close()
+			testutil.Ok(t, err)
+		}
+
+		// Check all the segments are the correct size.
+		{
+			segments, err := listSegments(dir)
+			testutil.Ok(t, err)
+			for _, segment := range segments {
+				f, err := os.OpenFile(filepath.Join(dir, fmt.Sprintf("%08d", segment.index)), os.O_RDONLY, 0666)
+				testutil.Ok(t, err)
+
+				fi, err := f.Stat()
+				testutil.Ok(t, err)
+
+				t.Log("segment", segment.index, "size", fi.Size())
+				testutil.Equals(t, int64(3*pageSize), fi.Size())
+
+				f.Close()
+			}
+		}
+
+		// Truncate the middle file, splitting a record.
+		{
+			w, err := NewSize(logger, nil, dir, pageSize*3)
+			testutil.Ok(t, err)
+
+			first, last, err := w.Segments()
+			testutil.Ok(t, err)
+
+			t.Log("first", first, "last", last, "truncating", (last-first)/2)
+
+			err = w.Close()
+			testutil.Ok(t, err)
+
+			f, err := os.OpenFile(filepath.Join(dir, fmt.Sprintf("%08d", (last-first)/2)), os.O_RDWR, 0666)
+			testutil.Ok(t, err)
+
+			fi, err := f.Stat()
+			testutil.Ok(t, err)
+			testutil.Equals(t, int64(3*pageSize), fi.Size())
+
+			err = f.Truncate((3 * pageSize) / 2)
+			testutil.Ok(t, err)
+
+			err = f.Close()
+			testutil.Ok(t, err)
+
+			records = ((last-first)/2)*3 + 4
+			t.Log("records", records)
+		}
+
+		// Now try and repair this WAL, and write 2 more records to it.
+		{
+			w, err := New(logger, nil, dir)
+			testutil.Ok(t, err)
+
+			sr, err := NewSegmentsRangeReader(SegmentRange{Dir: w.Dir(), First: -1, Last: -1})
+			testutil.Ok(t, err)
+
+			reader := NewReader(sr)
+			i := 0
+			for ; i < records && reader.Next(); i++ {
+				testutil.Equals(t, (pageSize/3)-recordHeaderSize, len(reader.Record()))
+			}
+			testutil.Equals(t, records, i, "not enough records")
+			testutil.Assert(t, !reader.Next(), "unexpected record")
+
+			err = reader.Err()
+			testutil.Assert(t, err != nil, "expected error")
+			sr.Close()
+
+			err = w.Repair(err)
+			testutil.Ok(t, err)
+
+			for i := 0; i < 5; i++ {
+				buf := make([]byte, (pageSize/3)-recordHeaderSize)
+				_, err := rand.Read(buf)
+				testutil.Ok(t, err)
+
+				err = w.Log(buf)
+				testutil.Ok(t, err)
+			}
+
+			records += 5
+			t.Log("records", records)
+			w.Close()
+		}
+
+		// Try and use LiveReader to replay the WAL.  Should get n * 9 records.
+		{
+			sr, err := NewSegmentsRangeReader(SegmentRange{Dir: dir, First: -1, Last: -1})
+			testutil.Ok(t, err)
+
+			reader := NewReader(sr)
+			i := 0
+			for ; i < records && reader.Next(); i++ {
+				testutil.Equals(t, (pageSize/3)-recordHeaderSize, len(reader.Record()))
+			}
+			testutil.Equals(t, records, i, "wrong number of records")
+			testutil.Assert(t, !reader.Next(), "unexpected record")
+			testutil.Equals(t, nil, reader.Err())
+		}
 	}
 }
 
