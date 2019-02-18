@@ -717,7 +717,8 @@ func (r *segmentBufReader) Read(b []byte) (n int, err error) {
 		return n, err
 	}
 
-	// We hit EOF; fake out zero padding at the end of short segments.
+	// We hit EOF; fake out zero padding at the end of short segments, so we
+	// don't increment curr too early and report the wrong segment as corrupt.
 	if r.off%pageSize != 0 {
 		i := 0
 		for ; n+i < len(b) && (r.off+i)%pageSize != 0; i++ {
@@ -729,11 +730,13 @@ func (r *segmentBufReader) Read(b []byte) (n int, err error) {
 		return n + i, nil
 	}
 
-	// Now we actually need to move to next segment.
+	// There is no more deta left in the curr segment and there are no more
+	// segments left.  Return EOF.
 	if r.cur+1 >= len(r.segs) {
 		return n, io.EOF
 	}
 
+	// Move to next segment.
 	r.cur++
 	r.off = 0
 	r.buf.Reset(r.segs[r.cur])

@@ -560,7 +560,7 @@ func TestCorruptAndCarryOn(t *testing.T) {
 	)
 
 	// Produce a WAL with a two segments of 3 pages with 3 records each,
-	// so when we truncate the file we guaranteed to split a record.
+	// so when we truncate the file we're guaranteed to split a record.
 	{
 		w, err := NewSize(logger, nil, dir, segmentSize)
 		testutil.Ok(t, err)
@@ -597,7 +597,8 @@ func TestCorruptAndCarryOn(t *testing.T) {
 		}
 	}
 
-	// Truncate the first file, splitting the middle record.
+	// Truncate the first file, splitting the middle record in the second
+	// page in half, leaving 4 valid records.
 	{
 		f, err := os.OpenFile(filepath.Join(dir, fmt.Sprintf("%08d", 0)), os.O_RDWR, 0666)
 		testutil.Ok(t, err)
