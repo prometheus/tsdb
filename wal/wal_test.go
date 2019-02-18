@@ -29,7 +29,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-kit/kit/log"
 	"github.com/prometheus/tsdb/testutil"
 )
 
@@ -554,136 +553,113 @@ func TestCorruptAndCarryOn(t *testing.T) {
 	testutil.Ok(t, err)
 	defer os.RemoveAll(dir)
 
-	logger := log.NewLogfmtLogger(os.Stderr)
+	logger := testutil.NewLogger(t)
 
-	var records int
+	// Produce a WAL with a two segments of 3 pages with 3 records each,
+	// so when we truncate the file we guaranteed to split a record.
+	{
+		w, err := NewSize(logger, nil, dir, pageSize*3)
+		testutil.Ok(t, err)
 
-	for i := 0; i < 10; i++ {
-		t.Log("Interation", i, "records", records)
-
-		// Produce a WAL with a single segment of 3 pages with 3 records each,
-		// so when we truncate the file we guaranteed to split a record.
-		{
-			w, err := NewSize(logger, nil, dir, pageSize*3)
+		for i := 0; i < 18; i++ {
+			buf := make([]byte, (pageSize/3)-recordHeaderSize)
+			_, err := rand.Read(buf)
 			testutil.Ok(t, err)
 
-			for i := 0; i < 9; i++ {
-				buf := make([]byte, (pageSize/3)-recordHeaderSize)
-				_, err := rand.Read(buf)
-				testutil.Ok(t, err)
-
-				err = w.Log(buf)
-				testutil.Ok(t, err)
-			}
-
-			err = w.Close()
+			err = w.Log(buf)
 			testutil.Ok(t, err)
 		}
 
-		// Check all the segments are the correct size.
-		{
-			segments, err := listSegments(dir)
-			testutil.Ok(t, err)
-			for _, segment := range segments {
-				f, err := os.OpenFile(filepath.Join(dir, fmt.Sprintf("%08d", segment.index)), os.O_RDONLY, 0666)
-				testutil.Ok(t, err)
+		err = w.Close()
+		testutil.Ok(t, err)
+	}
 
-				fi, err := f.Stat()
-				testutil.Ok(t, err)
-
-				t.Log("segment", segment.index, "size", fi.Size())
-				testutil.Equals(t, int64(3*pageSize), fi.Size())
-
-				err = f.Close()
-				testutil.Ok(t, err)
-			}
-		}
-
-		// Truncate the middle file, splitting a record.
-		{
-			w, err := NewSize(logger, nil, dir, pageSize*3)
-			testutil.Ok(t, err)
-
-			first, last, err := w.Segments()
-			testutil.Ok(t, err)
-
-			t.Log("first", first, "last", last, "truncating", (last-first)/2)
-
-			err = w.Close()
-			testutil.Ok(t, err)
-
-			f, err := os.OpenFile(filepath.Join(dir, fmt.Sprintf("%08d", (last-first)/2)), os.O_RDWR, 0666)
+	// Check all the segments are the correct size.
+	{
+		segments, err := listSegments(dir)
+		testutil.Ok(t, err)
+		for _, segment := range segments {
+			f, err := os.OpenFile(filepath.Join(dir, fmt.Sprintf("%08d", segment.index)), os.O_RDONLY, 0666)
 			testutil.Ok(t, err)
 
 			fi, err := f.Stat()
 			testutil.Ok(t, err)
-			testutil.Equals(t, int64(3*pageSize), fi.Size())
 
-			err = f.Truncate((3 * pageSize) / 2)
-			testutil.Ok(t, err)
+			t.Log("segment", segment.index, "size", fi.Size())
+			testutil.Equals(t, int64(3*pageSize), fi.Size())
 
 			err = f.Close()
 			testutil.Ok(t, err)
+		}
+	}
 
-			records = ((last-first)/2)*3 + 4
-			t.Log("records", records)
+	// Truncate the first file, splitting a record.
+	{
+		f, err := os.OpenFile(filepath.Join(dir, fmt.Sprintf("%08d", 0)), os.O_RDWR, 0666)
+		testutil.Ok(t, err)
+
+		fi, err := f.Stat()
+		testutil.Ok(t, err)
+		testutil.Equals(t, int64(3*pageSize), fi.Size())
+
+		err = f.Truncate((3 * pageSize) / 2)
+		testutil.Ok(t, err)
+
+		err = f.Close()
+		testutil.Ok(t, err)
+	}
+
+	// Now try and repair this WAL, and write 5 more records to it.
+	{
+		sr, err := NewSegmentsRangeReader(SegmentRange{Dir: dir, First: -1, Last: -1})
+		testutil.Ok(t, err)
+
+		reader := NewReader(sr)
+		i := 0
+		for ; i < 4 && reader.Next(); i++ {
+			testutil.Equals(t, (pageSize/3)-recordHeaderSize, len(reader.Record()))
+		}
+		testutil.Equals(t, 4, i, "not enough records")
+		testutil.Assert(t, !reader.Next(), "unexpected record")
+
+		corruptionErr := reader.Err()
+		testutil.Assert(t, corruptionErr != nil, "expected error")
+
+		err = sr.Close()
+		testutil.Ok(t, err)
+
+		w, err := New(logger, nil, dir)
+		testutil.Ok(t, err)
+
+		err = w.Repair(corruptionErr)
+		testutil.Ok(t, err)
+
+		for i := 0; i < 5; i++ {
+			buf := make([]byte, (pageSize/3)-recordHeaderSize)
+			_, err := rand.Read(buf)
+			testutil.Ok(t, err)
+
+			err = w.Log(buf)
+			testutil.Ok(t, err)
 		}
 
-		// Now try and repair this WAL, and write 5 more records to it.
-		{
-			sr, err := NewSegmentsRangeReader(SegmentRange{Dir: dir, First: -1, Last: -1})
-			testutil.Ok(t, err)
+		err = w.Close()
+		testutil.Ok(t, err)
+	}
 
-			reader := NewReader(sr)
-			i := 0
-			for ; i < records && reader.Next(); i++ {
-				testutil.Equals(t, (pageSize/3)-recordHeaderSize, len(reader.Record()))
-			}
-			testutil.Equals(t, records, i, "not enough records")
-			testutil.Assert(t, !reader.Next(), "unexpected record")
+	// Replay the WAL. Should get 9 records.
+	{
+		sr, err := NewSegmentsRangeReader(SegmentRange{Dir: dir, First: -1, Last: -1})
+		testutil.Ok(t, err)
 
-			corruptionErr := reader.Err()
-			testutil.Assert(t, corruptionErr != nil, "expected error")
-
-			err = sr.Close()
-			testutil.Ok(t, err)
-
-			w, err := New(logger, nil, dir)
-			testutil.Ok(t, err)
-
-			err = w.Repair(corruptionErr)
-			testutil.Ok(t, err)
-
-			for i := 0; i < 5; i++ {
-				buf := make([]byte, (pageSize/3)-recordHeaderSize)
-				_, err := rand.Read(buf)
-				testutil.Ok(t, err)
-
-				err = w.Log(buf)
-				testutil.Ok(t, err)
-			}
-
-			records += 5
-			t.Log("records", records)
-
-			err = w.Close()
-			testutil.Ok(t, err)
+		reader := NewReader(sr)
+		i := 0
+		for ; i < 9 && reader.Next(); i++ {
+			testutil.Equals(t, (pageSize/3)-recordHeaderSize, len(reader.Record()))
 		}
-
-		// Try and use LiveReader to replay the WAL.  Should get n * 9 records.
-		{
-			sr, err := NewSegmentsRangeReader(SegmentRange{Dir: dir, First: -1, Last: -1})
-			testutil.Ok(t, err)
-
-			reader := NewReader(sr)
-			i := 0
-			for ; i < records && reader.Next(); i++ {
-				testutil.Equals(t, (pageSize/3)-recordHeaderSize, len(reader.Record()))
-			}
-			testutil.Equals(t, records, i, "wrong number of records")
-			testutil.Assert(t, !reader.Next(), "unexpected record")
-			testutil.Equals(t, nil, reader.Err())
-		}
+		testutil.Equals(t, 9, i, "wrong number of records")
+		testutil.Assert(t, !reader.Next(), "unexpected record")
+		testutil.Equals(t, nil, reader.Err())
 	}
 }
 
