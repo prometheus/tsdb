@@ -706,9 +706,7 @@ func (r *segmentBufReader) Close() (err error) {
 	return err
 }
 
-// Read implements io.Reader, expect that we occasionally return err=nil
-// when n != len(b), which violates the inteface.  Only use this with
-// io.ReadFull.
+// Read implements io.Reader.
 func (r *segmentBufReader) Read(b []byte) (n int, err error) {
 	n, err = r.buf.Read(b)
 	r.off += n
