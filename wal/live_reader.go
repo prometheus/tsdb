@@ -6,13 +6,25 @@ import (
 	"hash/crc32"
 	"io"
 
+	"github.com/go-kit/kit/log"
+	"github.com/go-kit/kit/log/level"
 	"github.com/pkg/errors"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+)
+
+var (
+	readerCorruptionErrors = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "prometheus_tsdb_wal_reader_corruption_errors",
+		Help: "Errors encountered when reading the WAL.",
+	}, []string{"error"})
 )
 
 // NewLiveReader returns a new live reader.
-func NewLiveReader(r io.Reader) *LiveReader {
+func NewLiveReader(logger log.Logger, r io.Reader) *LiveReader {
 	return &LiveReader{
-		rdr: r,
+		logger: logger,
+		rdr:    r,
 
 		// Until we understand how they come about, make readers permissive
 		// to records spanning pages.
@@ -24,6 +36,7 @@ func NewLiveReader(r io.Reader) *LiveReader {
 // that are still in the process of being written, and returns records as soon
 // as they can be read.
 type LiveReader struct {
+	logger     log.Logger
 	rdr        io.Reader
 	err        error
 	rec        []byte
@@ -128,7 +141,7 @@ func (r *LiveReader) buildRecord() (bool, error) {
 		}
 
 		// Attempt to read a record, partial or otherwise.
-		temp, n, err := readRecord(r.buf[:], r.readIndex, r.writeIndex, r.hdr[:], r.permissive)
+		temp, n, err := readRecord(r.logger, r.buf[:], r.readIndex, r.writeIndex, r.hdr[:], r.permissive)
 		if err != nil {
 			return false, err
 		}
@@ -195,7 +208,7 @@ func validateRecord(typ recType, i int) error {
 // Returns a byte slice of the record data read, the number of bytes read, and an error
 // if there's a non-zero byte in a page term record or the record checksum fails.
 // This is a non-method function to make it clear it does not mutate the reader.
-func readRecord(buf []byte, start, end int, header []byte, permissive bool) ([]byte, int, error) {
+func readRecord(logger log.Logger, buf []byte, start, end int, header []byte, permissive bool) ([]byte, int, error) {
 	// Special case: for recPageTerm, check that are all zeros to end of page,
 	// consume them but don't return them.
 	if buf[start] == byte(recPageTerm) {
@@ -220,11 +233,15 @@ func readRecord(buf []byte, start, end int, header []byte, permissive bool) ([]b
 	copy(header, buf[start:start+recordHeaderSize])
 	length := int(binary.BigEndian.Uint16(header[1:]))
 	crc := binary.BigEndian.Uint32(header[3:])
-	if !permissive && start+recordHeaderSize+length > pageSize {
-		return nil, 0, fmt.Errorf("record would overflow current page: %d > %d", start+recordHeaderSize+length, pageSize)
+	if start+recordHeaderSize+length > pageSize {
+		if !permissive {
+			return nil, 0, fmt.Errorf("record would overflow current page: %d > %d", start+recordHeaderSize+length, pageSize)
+		}
+		readerCorruptionErrors.WithLabelValues("record_span_page").Inc()
+		level.Warn(logger).Log("msg", "record spans page boundaries", "start", start, "end", recordHeaderSize+length, "pageSize", pageSize)
 	}
 	if recordHeaderSize+length > pageSize {
-		return nil, 0, fmt.Errorf("record would overflow current page: %d > %d", start+recordHeaderSize+length, pageSize)
+		return nil, 0, fmt.Errorf("record length greater than a single page: %d > %d", recordHeaderSize+length, pageSize)
 	}
 	if start+recordHeaderSize+length > end {
 		return nil, 0, io.EOF

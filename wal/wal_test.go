@@ -16,8 +16,11 @@ package wal
 
 import (
 	"bytes"
+	"fmt"
 	"io/ioutil"
+	"math/rand"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/prometheus/tsdb/testutil"

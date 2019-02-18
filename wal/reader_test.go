@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-kit/kit/log"
 	"github.com/prometheus/tsdb/testutil"
 )
 
@@ -35,7 +36,7 @@ var readerConstructors = map[string]func(io.Reader) reader{
 		return NewReader(r)
 	},
 	"LiveReader": func(r io.Reader) reader {
-		lr := NewLiveReader(r)
+		lr := NewLiveReader(log.NewNopLogger(), r)
 		lr.eofNonErr = true
 		return lr
 	},
@@ -179,6 +180,8 @@ func TestReader(t *testing.T) {
 }
 
 func TestReader_Live(t *testing.T) {
+	logger := testutil.NewLogger(t)
+
 	for i := range testReaderCases {
 		t.Run(strconv.Itoa(i), func(t *testing.T) {
 			writeFd, err := ioutil.TempFile("", "TestReader_Live")
@@ -198,7 +201,7 @@ func TestReader_Live(t *testing.T) {
 			// Read from a second FD on the same file.
 			readFd, err := os.Open(writeFd.Name())
 			testutil.Ok(t, err)
-			reader := NewLiveReader(readFd)
+			reader := NewLiveReader(logger, readFd)
 			for _, exp := range testReaderCases[i].exp {
 				for !reader.Next() {
 					testutil.Assert(t, reader.Err() == io.EOF, "expect EOF, got: %v", reader.Err())
@@ -301,6 +304,7 @@ func TestReaderFuzz(t *testing.T) {
 }
 
 func TestReaderFuzz_Live(t *testing.T) {
+	logger := testutil.NewLogger(t)
 	dir, err := ioutil.TempDir("", "wal_fuzz_live")
 	testutil.Ok(t, err)
 	defer os.RemoveAll(dir)
@@ -326,7 +330,7 @@ func TestReaderFuzz_Live(t *testing.T) {
 	seg, err := OpenReadSegment(SegmentName(dir, m))
 	testutil.Ok(t, err)
 
-	r := NewLiveReader(seg)
+	r := NewLiveReader(logger, seg)
 	segmentTicker := time.NewTicker(100 * time.Millisecond)
 	readTicker := time.NewTicker(10 * time.Millisecond)
 
@@ -361,7 +365,7 @@ outer:
 
 			seg, err = OpenReadSegment(SegmentName(dir, seg.i+1))
 			testutil.Ok(t, err)
-			r = NewLiveReader(seg)
+			r = NewLiveReader(logger, seg)
 
 		case <-readTicker.C:
 			readSegment(r)
@@ -378,6 +382,7 @@ outer:
 func TestLiveReaderCorrupt_ShortFile(t *testing.T) {
 	// Write a corrupt WAL segment, there is one record of pageSize in length,
 	// but the segment is only half written.
+	logger := testutil.NewLogger(t)
 	dir, err := ioutil.TempDir("", "wal_live_corrupt")
 	testutil.Ok(t, err)
 	defer os.RemoveAll(dir)
@@ -411,13 +416,14 @@ func TestLiveReaderCorrupt_ShortFile(t *testing.T) {
 	seg, err := OpenReadSegment(SegmentName(dir, m))
 	testutil.Ok(t, err)
 
-	r := NewLiveReader(seg)
+	r := NewLiveReader(logger, seg)
 	testutil.Assert(t, r.Next() == false, "expected no records")
 	testutil.Assert(t, r.Err() == io.EOF, "expected error, got: %v", r.Err())
 }
 
 func TestLiveReaderCorrupt_RecordTooLongAndShort(t *testing.T) {
 	// Write a corrupt WAL segment, when record len > page size.
+	logger := testutil.NewLogger(t)
 	dir, err := ioutil.TempDir("", "wal_live_corrupt")
 	testutil.Ok(t, err)
 	defer os.RemoveAll(dir)
@@ -455,9 +461,9 @@ func TestLiveReaderCorrupt_RecordTooLongAndShort(t *testing.T) {
 	seg, err := OpenReadSegment(SegmentName(dir, m))
 	testutil.Ok(t, err)
 
-	r := NewLiveReader(seg)
+	r := NewLiveReader(logger, seg)
 	testutil.Assert(t, r.Next() == false, "expected no records")
-	testutil.Assert(t, r.Err().Error() == "record would overflow current page: 65542 > 32768", "expected error, got: %v", r.Err())
+	testutil.Assert(t, r.Err().Error() == "record length greater than a single page: 65542 > 32768", "expected error, got: %v", r.Err())
 }
 
 func TestReaderData(t *testing.T) {
