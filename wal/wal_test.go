@@ -548,6 +548,8 @@ func TestWAL_Repair(t *testing.T) {
 	}
 }
 
+// TestCorruptAndCarryOn writes a multi-segment WAL; corrupts the first segment
+// and then write to write more records to the WAL.
 func TestCorruptAndCarryOn(t *testing.T) {
 	dir, err := ioutil.TempDir("", "wal_repair")
 	testutil.Ok(t, err)
