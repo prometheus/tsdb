@@ -102,7 +102,7 @@ func (r *LiveReader) Next() bool {
 		// means records have started to span pages.  Shouldn't happen
 		// but does and until we found out why, we need to deal with this.
 		if r.permissive && r.writeIndex == pageSize && r.readIndex > 0 {
-			copy(r.buf[r.readIndex:], r.buf[:])
+			copy(r.buf[:], r.buf[r.readIndex:])
 			r.writeIndex -= r.readIndex
 			r.readIndex = 0
 			continue
@@ -141,7 +141,7 @@ func (r *LiveReader) buildRecord() (bool, error) {
 		}
 
 		// Attempt to read a record, partial or otherwise.
-		temp, n, err := readRecord(r.logger, r.buf[:], r.readIndex, r.writeIndex, r.hdr[:], r.permissive)
+		temp, n, err := r.readRecord()
 		if err != nil {
 			return false, err
 		}
@@ -208,46 +208,53 @@ func validateRecord(typ recType, i int) error {
 // Returns a byte slice of the record data read, the number of bytes read, and an error
 // if there's a non-zero byte in a page term record or the record checksum fails.
 // This is a non-method function to make it clear it does not mutate the reader.
-func readRecord(logger log.Logger, buf []byte, start, end int, header []byte, permissive bool) ([]byte, int, error) {
+func (r *LiveReader) readRecord() ([]byte, int, error) {
 	// Special case: for recPageTerm, check that are all zeros to end of page,
 	// consume them but don't return them.
-	if buf[start] == byte(recPageTerm) {
-		if end != pageSize {
+	if r.buf[r.readIndex] == byte(recPageTerm) {
+		// End of page won't necessarily be end of buffer, as we may have
+		// got misaligned by records spanning page boundaries.
+		// r.total % pageSize is the offset into the current page
+		// that r.readIndex points to in buf.  Therefore
+		// pageSize - (r.total % pageSize) is the amount left to read of
+		// the current page.
+		remaining := int(pageSize - (r.total % pageSize))
+		if r.readIndex+remaining > r.writeIndex {
 			return nil, 0, io.EOF
 		}
 
-		for i := start; i < end; i++ {
-			if buf[i] != 0 {
+		for i := r.readIndex; i < r.readIndex+remaining; i++ {
+			if r.buf[i] != 0 {
 				return nil, 0, errors.New("unexpected non-zero byte in page term bytes")
 			}
 		}
 
-		return nil, end - start, nil
+		return nil, remaining, nil
 	}
 
 	// Not a recPageTerm; read the record and check the checksum.
-	if end-start < recordHeaderSize {
+	if r.writeIndex-r.readIndex < recordHeaderSize {
 		return nil, 0, io.EOF
 	}
 
-	copy(header, buf[start:start+recordHeaderSize])
-	length := int(binary.BigEndian.Uint16(header[1:]))
-	crc := binary.BigEndian.Uint32(header[3:])
-	if start+recordHeaderSize+length > pageSize {
-		if !permissive {
-			return nil, 0, fmt.Errorf("record would overflow current page: %d > %d", start+recordHeaderSize+length, pageSize)
+	copy(r.hdr[:], r.buf[r.readIndex:r.readIndex+recordHeaderSize])
+	length := int(binary.BigEndian.Uint16(r.hdr[1:]))
+	crc := binary.BigEndian.Uint32(r.hdr[3:])
+	if r.readIndex+recordHeaderSize+length > pageSize {
+		if !r.permissive {
+			return nil, 0, fmt.Errorf("record would overflow current page: %d > %d", r.readIndex+recordHeaderSize+length, pageSize)
 		}
 		readerCorruptionErrors.WithLabelValues("record_span_page").Inc()
-		level.Warn(logger).Log("msg", "record spans page boundaries", "start", start, "end", recordHeaderSize+length, "pageSize", pageSize)
+		level.Warn(r.logger).Log("msg", "record spans page boundaries", "start", r.readIndex, "end", recordHeaderSize+length, "pageSize", pageSize)
 	}
 	if recordHeaderSize+length > pageSize {
 		return nil, 0, fmt.Errorf("record length greater than a single page: %d > %d", recordHeaderSize+length, pageSize)
 	}
-	if start+recordHeaderSize+length > end {
+	if r.readIndex+recordHeaderSize+length > r.writeIndex {
 		return nil, 0, io.EOF
 	}
 
-	rec := buf[start+recordHeaderSize : start+recordHeaderSize+length]
+	rec := r.buf[r.readIndex+recordHeaderSize : r.readIndex+recordHeaderSize+length]
 	if c := crc32.Checksum(rec, castagnoliTable); c != crc {
 		return nil, 0, errors.Errorf("unexpected checksum %x, expected %x", c, crc)
 	}
