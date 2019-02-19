@@ -86,11 +86,11 @@ func (r *LiveReader) fillBuffer() (int, error) {
 func (r *LiveReader) Next() bool {
 	for {
 		// If buildRecord returns a non-EOF error, its game up - the segment is
-		// corrupt. If buildRecord returns an EOF, we try and read more. If
-		// that fails to read anything (n=0 && err=EOF), we return EOF and
-		// the user can try again later.
-		// If we have a full page, buildRecord is guaranteed to return a record
-		// or a non-EOF; it has checks the records fit in pages.
+		// corrupt. If buildRecord returns an EOF, we try and read more in
+		// fillBuffer later on. If that fails to read anything (n=0 && err=EOF),
+		// we return  EOF and the user can try again later. If we have a full
+		// page, buildRecord is guaranteed to return a record or a non-EOF; it
+		// has checks the records fit in pages.
 		if ok, err := r.buildRecord(); ok {
 			return true
 		} else if err != nil && err != io.EOF {
