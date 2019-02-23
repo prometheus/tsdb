@@ -73,6 +73,7 @@ func TestRecord_EncodeDecode(t *testing.T) {
 		{ref: 13, intervals: Intervals{{Mint: 5000, Maxt: 1000}}},
 	}, decTstones)
 }
+
 // TestRecord_Corruputed ensures that corrupted records return the correct error.
 // Bugfix check for pull/521 and pull/523.
 func TestRecord_Corruputed(t *testing.T) {
