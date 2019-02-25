@@ -552,7 +552,7 @@ func dumpSamples(db *tsdb.DB, mint, maxt int64) {
 		exitWithError(err)
 	}
 
-	ss, err := q.Select()
+	ss, err := q.Select(labels.NewMustRegexpMatcher("", ".*"))
 	if err != nil {
 		exitWithError(err)
 	}
