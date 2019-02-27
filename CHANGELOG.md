@@ -4,12 +4,12 @@
    - Added `MergeChunks` function in `chunkenc/xor.go` to merge 2 time-overlapping chunks.
    - Added `MergeOverlappingChunks` function in `chunks/chunks.go` to merge multiple time-overlapping Chunk Metas.
    - Added `MinTime` and `MaxTime` method for `BlockReader`.
- - [ENHANCEMENT] When closing the db any running compaction will be cancelled so it doesn't block.
-   - `NewLeveledCompactor` takes a context.
- - [CHANGE] `prometheus_tsdb_storage_blocks_bytes_total` is now `prometheus_tsdb_storage_blocks_bytes`
  - [FEATURE] New `dump` command to tsdb tool to dump all samples.
  - [FEATURE] New `encoding` package for common binary encoding/decoding helpers. 
     - Added to remove some code duplication.
+ - [ENHANCEMENT] When closing the db any running compaction will be cancelled so it doesn't block.
+   - `NewLeveledCompactor` takes a context.
+ - [CHANGE] `prometheus_tsdb_storage_blocks_bytes_total` is now `prometheus_tsdb_storage_blocks_bytes`
 
 
 ## 0.4.0
