@@ -11,7 +11,9 @@
     - Added to remove some code duplication.
  - [ENHANCEMENT] When closing the db any running compaction will be cancelled so it doesn't block.
    - `NewLeveledCompactor` takes a context.
- - [CHANGE] `prometheus_tsdb_storage_blocks_bytes_total` is now `prometheus_tsdb_storage_blocks_bytes`
+ - [CHANGE] `prometheus_tsdb_storage_blocks_bytes_total` is now `prometheus_tsdb_storage_blocks_bytes`.
+ - [BUGFIX] Improved Merge performance.
+ - [BUGFIX] LiveReader can get into an infinite loop on corrupt WALs.
 
 ## 0.4.0
  - [CHANGE] New `WALSegmentSize` option to override the `DefaultOptions.WALSegmentSize`. Added to allow using smaller wal files. For example using tmpfs on a RPI to minimise the SD card wear out from the constant WAL writes. As part of this change the `DefaultOptions.WALSegmentSize` constant was also exposed.
