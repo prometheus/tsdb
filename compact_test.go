@@ -676,6 +676,52 @@ func TestCompaction_populateBlock(t *testing.T) {
 				},
 			},
 		},
+		{
+			// Introduced by 
+			title: "Populate from three blocks that the last two are overlapping.",
+			inputSeriesSamples: [][]seriesSamples{
+				{
+					{
+						lset:   map[string]string{"before": "fix"},
+						chunks: [][]sample{{{t: 0}, {t: 10}, {t: 11}, {t: 20}}},
+					},
+					{
+						lset:   map[string]string{"after": "fix"},
+						chunks: [][]sample{{{t: 0}, {t: 10}, {t: 11}, {t: 20}}},
+					},
+				},
+				{
+					{
+						lset:   map[string]string{"before": "fix"},
+						chunks: [][]sample{{{t: 19}, {t: 30}}},
+					},
+					{
+						lset:   map[string]string{"after": "fix"},
+						chunks: [][]sample{{{t: 21}, {t: 30}}},
+					},
+				},
+				{
+					{
+						lset:   map[string]string{"before": "fix"},
+						chunks: [][]sample{{{t: 27}, {t: 35}}},
+					},
+					{
+						lset:   map[string]string{"after": "fix"},
+						chunks: [][]sample{{{t: 27}, {t: 35}}},
+					},
+				},
+			},
+			expSeriesSamples: []seriesSamples{
+				{
+					lset:   map[string]string{"after": "fix"},
+					chunks: [][]sample{{{t: 0}, {t: 10}, {t: 11}, {t: 20}}, {{t: 21}, {t: 27}, {t: 30}, {t: 35}}},
+				},
+				{
+					lset:   map[string]string{"before": "fix"},
+					chunks: [][]sample{{{t: 0}, {t: 10}, {t: 11}, {t: 19}, {t: 20}, {t: 27}, {t: 30}, {t: 35}}},
+				},
+			},
+		},
 	}
 
 	for _, tc := range populateBlocksCases {
