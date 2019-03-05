@@ -1,8 +1,8 @@
 ## master / unreleased
+  - [BUGFIX] Update `last` after appending a non-overlapping chunk in `chunks.MergeOverlappingChunks`. [#539](https://github.com/prometheus/tsdb/pull/539)
 
 ## 0.6.0
   - [CHANGE] `AllowOverlappingBlock` is now `AllowOverlappingBlocks`.
-  - [BUGFIX] Update `last` after appending a non-overlapping chunk in `chunks.MergeOverlappingChunks`. [#539](https://github.com/prometheus/tsdb/pull/539)
 
 ## 0.5.0
  - [FEATURE] Time-ovelapping blocks are now allowed. [#370](https://github.com/prometheus/tsdb/pull/370)
