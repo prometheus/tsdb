@@ -653,7 +653,8 @@ func TestCompaction_populateBlock(t *testing.T) {
 			expErr:         errors.New("found chunk with minTime: 10 maxTime: 20 outside of compacted minTime: 0 maxTime: 10"),
 		},
 		{
-			// No special deduplication expected.
+			// Deduplication expected.
+			// Introduced by https://github.com/prometheus/tsdb/pull/539.
 			title: "Populate from two blocks containing duplicated chunk.",
 			inputSeriesSamples: [][]seriesSamples{
 				{
@@ -672,7 +673,7 @@ func TestCompaction_populateBlock(t *testing.T) {
 			expSeriesSamples: []seriesSamples{
 				{
 					lset:   map[string]string{"a": "b"},
-					chunks: [][]sample{{{t: 1}, {t: 2}}, {{t: 10}, {t: 20}}, {{t: 10}, {t: 20}}},
+					chunks: [][]sample{{{t: 1}, {t: 2}}, {{t: 10}, {t: 20}}},
 				},
 			},
 		},
