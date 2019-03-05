@@ -654,7 +654,7 @@ func TestCompaction_populateBlock(t *testing.T) {
 		},
 		{
 			// Deduplication expected.
-			// Introduced by https://github.com/prometheus/tsdb/pull/539.
+			// Introduced by pull/370 and pull/539.
 			title: "Populate from two blocks containing duplicated chunk.",
 			inputSeriesSamples: [][]seriesSamples{
 				{
