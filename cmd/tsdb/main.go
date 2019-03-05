@@ -33,11 +33,22 @@ import (
 
 	"github.com/go-kit/kit/log"
 	"github.com/pkg/errors"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/tsdb"
 	"github.com/prometheus/tsdb/chunks"
 	"github.com/prometheus/tsdb/labels"
 	"gopkg.in/alecthomas/kingpin.v2"
 )
+
+func openReadOnlyTSDB(dir string, l log.Logger, r prometheus.Registerer, opts *tsdb.Options) (db *tsdb.DB, err error) {
+	if opts == nil {
+		opts = tsdb.DefaultOptions
+	}
+	opts.NoLockfile = true
+	opts.ReadOnly = true
+	db, err = tsdb.Open(dir, l, r, opts)
+	return db, err
+}
 
 func main() {
 	var (
@@ -62,9 +73,6 @@ func main() {
 		dumpMaxTime          = dumpCmd.Flag("max-time", "maximum timestamp to dump").Default(strconv.FormatInt(math.MaxInt64, 10)).Int64()
 	)
 
-	safeDBOptions := *tsdb.DefaultOptions
-	safeDBOptions.RetentionDuration = 0
-
 	switch kingpin.MustParse(cli.Parse(os.Args[1:])) {
 	case benchWriteCmd.FullCommand():
 		wb := &writeBenchmark{
@@ -74,13 +82,13 @@ func main() {
 		}
 		wb.run()
 	case listCmd.FullCommand():
-		db, err := tsdb.Open(*listPath, nil, nil, &safeDBOptions)
+		db, err := openReadOnlyTSDB(*listPath, nil, nil, nil)
 		if err != nil {
 			exitWithError(err)
 		}
 		printBlocks(db.Blocks(), listCmdHumanReadable)
 	case analyzeCmd.FullCommand():
-		db, err := tsdb.Open(*analyzePath, nil, nil, &safeDBOptions)
+		db, err := openReadOnlyTSDB(*analyzePath, nil, nil, nil)
 		if err != nil {
 			exitWithError(err)
 		}
@@ -101,7 +109,7 @@ func main() {
 		}
 		analyzeBlock(block, *analyzeLimit)
 	case dumpCmd.FullCommand():
-		db, err := tsdb.Open(*dumpPath, nil, nil, &safeDBOptions)
+		db, err := openReadOnlyTSDB(*dumpPath, nil, nil, nil)
 		if err != nil {
 			exitWithError(err)
 		}

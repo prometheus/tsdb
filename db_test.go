@@ -2067,3 +2067,7 @@ func TestBlockRanges(t *testing.T) {
 		t.Fatalf("new block overlaps  old:%v,new:%v", db.Blocks()[2].Meta(), db.Blocks()[3].Meta())
 	}
 }
+
+func TestReadOnlyDB(t *testing.T) {
+
+}

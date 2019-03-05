@@ -50,6 +50,7 @@ var DefaultOptions = &Options{
 	BlockRanges:            ExponentialBlockRanges(int64(2*time.Hour)/1e6, 3, 5),
 	NoLockfile:             false,
 	AllowOverlappingBlocks: false,
+	ReadOnly:               false,
 }
 
 // Options of the DB storage.
@@ -76,6 +77,9 @@ type Options struct {
 	// Overlapping blocks are allowed if AllowOverlappingBlocks is true.
 	// This in-turn enables vertical compaction and vertical query merge.
 	AllowOverlappingBlocks bool
+
+	// ReadOnly disables all mutating actions.
+	ReadOnly bool
 }
 
 // Appender allows appending a batch of data. It must be completed with a
@@ -247,13 +251,21 @@ func Open(dir string, l log.Logger, r prometheus.Registerer, opts *Options) (db 
 	if opts == nil {
 		opts = DefaultOptions
 	}
-	// Fixup bad format written by Prometheus 2.1.
-	if err := repairBadIndexVersion(l, dir); err != nil {
-		return nil, err
-	}
-	// Migrate old WAL if one exists.
-	if err := MigrateWAL(l, filepath.Join(dir, "wal")); err != nil {
-		return nil, errors.Wrap(err, "migrate WAL")
+	if opts.ReadOnly {
+		// Disable the WAL.
+		opts.WALSegmentSize = -1
+		// Disable the retentions.
+		opts.RetentionDuration = 0
+		opts.MaxBytes = 0
+	} else {
+		// Fixup bad format written by Prometheus 2.1.
+		if err := repairBadIndexVersion(l, dir); err != nil {
+			return nil, err
+		}
+		// Migrate old WAL if one exists.
+		if err := MigrateWAL(l, filepath.Join(dir, "wal")); err != nil {
+			return nil, errors.Wrap(err, "migrate WAL")
+		}
 	}
 
 	db = &DB{
@@ -263,7 +275,7 @@ func Open(dir string, l log.Logger, r prometheus.Registerer, opts *Options) (db 
 		compactc:    make(chan struct{}, 1),
 		donec:       make(chan struct{}),
 		stopc:       make(chan struct{}),
-		autoCompact: true,
+		autoCompact: !opts.ReadOnly,
 		chunkPool:   chunkenc.NewPool(),
 	}
 	db.metrics = newDBMetrics(db, r)
