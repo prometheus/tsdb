@@ -40,13 +40,13 @@ import (
 	"gopkg.in/alecthomas/kingpin.v2"
 )
 
-func openReadOnlyTSDB(dir string, l log.Logger, r prometheus.Registerer, opts *tsdb.Options) (db *tsdb.DB, err error) {
-	if opts == nil {
-		opts = tsdb.DefaultOptions
-	}
+func openReadOnlyTSDB(dir string, l log.Logger, r prometheus.Registerer) (db *tsdb.DB, err error) {
+	// Dereference the DefaultOptions so that it makes a copy and
+	// applies changes to the copy and not globally.
+	opts := *tsdb.DefaultOptions
 	opts.NoLockfile = true
 	opts.ReadOnly = true
-	db, err = tsdb.Open(dir, l, r, opts)
+	db, err = tsdb.Open(dir, l, r, &opts)
 	return db, err
 }
 
@@ -82,13 +82,13 @@ func main() {
 		}
 		wb.run()
 	case listCmd.FullCommand():
-		db, err := openReadOnlyTSDB(*listPath, nil, nil, nil)
+		db, err := openReadOnlyTSDB(*listPath, nil, nil)
 		if err != nil {
 			exitWithError(err)
 		}
 		printBlocks(db.Blocks(), listCmdHumanReadable)
 	case analyzeCmd.FullCommand():
-		db, err := openReadOnlyTSDB(*analyzePath, nil, nil, nil)
+		db, err := openReadOnlyTSDB(*analyzePath, nil, nil)
 		if err != nil {
 			exitWithError(err)
 		}
@@ -109,7 +109,7 @@ func main() {
 		}
 		analyzeBlock(block, *analyzeLimit)
 	case dumpCmd.FullCommand():
-		db, err := openReadOnlyTSDB(*dumpPath, nil, nil, nil)
+		db, err := openReadOnlyTSDB(*dumpPath, nil, nil)
 		if err != nil {
 			exitWithError(err)
 		}
