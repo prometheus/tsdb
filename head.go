@@ -1021,8 +1021,8 @@ func (h *Head) MaxTime() int64 {
 }
 
 // compactable returns whether the head has a compactable range.
-// The head has a compactable range if 1.5 level 0 ranges are between the oldest
-// and newest timestamp.
+// The head has a compactable range when the head time range is 1.5 times the chunk range.
+// The 0.5 acts as a buffer of the appendable window.
 func (h *Head) compactable() bool {
 	return h.MaxTime()-h.MinTime() > h.chunkRange/2*3
 }
