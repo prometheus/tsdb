@@ -61,18 +61,22 @@ func TestRepairBadIndexVersion(t *testing.T) {
 	// }
 	dbDir := filepath.Join("testdata", "repair_index_version", "01BZJ9WJQPWHGNC2W4J9TA62KC")
 	tmpDir := filepath.Join("testdata", "repair_index_version", "copy")
-	tmpDbDir := filepath.Join(tmpDir, "3MCNSQ8S31EHGJYWK5E1GPJWJZ")
+	tmpBlockDir := filepath.Join(tmpDir, "3MCNSQ8S31EHGJYWK5E1GPJWJZ")
+
+	// Create a copy DB to run test against.
+	if err := fileutil.CopyDirs(dbDir, tmpBlockDir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		testutil.Ok(t, os.RemoveAll(tmpDir))
+	}()
 
 	// Check the current db.
 	// In its current state, lookups should fail with the fixed code.
-	_, err := readMetaFile(dbDir)
+	_, err := readMetaFile(tmpBlockDir)
 	testutil.NotOk(t, err)
 
-	// Touch chunks dir in block.
-	os.MkdirAll(filepath.Join(dbDir, "chunks"), 0777)
-	defer os.RemoveAll(filepath.Join(dbDir, "chunks"))
-
-	r, err := index.NewFileReader(filepath.Join(dbDir, indexFilename))
+	r, err := index.NewFileReader(filepath.Join(tmpBlockDir, indexFilename))
 	testutil.Ok(t, err)
 	p, err := r.Postings("b", "1")
 	testutil.Ok(t, err)
@@ -85,17 +89,12 @@ func TestRepairBadIndexVersion(t *testing.T) {
 	testutil.Ok(t, p.Err())
 	testutil.Ok(t, r.Close())
 
-	// Create a copy DB to run test against.
-	if err = fileutil.CopyDirs(dbDir, tmpDbDir); err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(tmpDir)
 	// On DB opening all blocks in the base dir should be repaired.
-	db, err := Open(tmpDir, nil, nil, nil)
+	db, err := Open(tmpDir, testutil.NewLogger(t), nil, nil)
 	testutil.Ok(t, err)
-	db.Close()
+	testutil.Ok(t, db.Close())
 
-	r, err = index.NewFileReader(filepath.Join(tmpDbDir, indexFilename))
+	r, err = index.NewFileReader(filepath.Join(tmpBlockDir, indexFilename))
 	testutil.Ok(t, err)
 	p, err = r.Postings("b", "1")
 	testutil.Ok(t, err)
@@ -116,7 +115,7 @@ func TestRepairBadIndexVersion(t *testing.T) {
 		{{"a", "2"}, {"b", "1"}},
 	}, res)
 
-	meta, err := readMetaFile(tmpDbDir)
+	meta, err := readMetaFile(tmpBlockDir)
 	testutil.Ok(t, err)
 	testutil.Assert(t, meta.Version == 1, "unexpected meta version %d", meta.Version)
 }

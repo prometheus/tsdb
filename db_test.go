@@ -31,6 +31,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	prom_testutil "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/prometheus/tsdb/chunks"
+	"github.com/prometheus/tsdb/fileutil"
 	"github.com/prometheus/tsdb/index"
 	"github.com/prometheus/tsdb/labels"
 	"github.com/prometheus/tsdb/testutil"
@@ -38,7 +39,7 @@ import (
 	"github.com/prometheus/tsdb/wal"
 )
 
-func openTestDB(t testing.TB, opts *Options) (db *DB, close func()) {
+func openTestDB(t testing.TB, opts *Options) (db *DB, delete func()) {
 	tmpdir, err := ioutil.TempDir("", "test")
 	testutil.Ok(t, err)
 
@@ -49,6 +50,60 @@ func openTestDB(t testing.TB, opts *Options) (db *DB, close func()) {
 	return db, func() {
 		testutil.Ok(t, os.RemoveAll(tmpdir))
 	}
+}
+
+func openTestDBTimeRetentionable(t testing.TB) *DB {
+	tmpdir, err := ioutil.TempDir("", "test")
+	testutil.Ok(t, err)
+
+	blocks := []*BlockMeta{
+		{MinTime: 500, MaxTime: 900}, // Oldest block
+		{MinTime: 1000, MaxTime: 1500},
+		{MinTime: 1500, MaxTime: 2000}, // Newest Block
+	}
+
+	for _, m := range blocks {
+		createBlock(t, tmpdir, genSeries(10, 10, m.MinTime, m.MaxTime))
+	}
+
+	db, err := Open(tmpdir, nil, nil, &Options{BlockRanges: []int64{1000}})
+	testutil.Ok(t, err)
+	testutil.Equals(t, len(blocks), len(db.Blocks())) // Ensure all blocks are registered.
+	testutil.Equals(t, 0, int(prom_testutil.ToFloat64(db.metrics.timeRetentionCount)), "initial metric retention count mismatch")
+
+	db.opts.RetentionDuration = uint64(blocks[2].MaxTime - blocks[1].MinTime)
+	return db
+}
+
+func openTestDBSizeRetentionable(t testing.TB) *DB {
+	tmpdir, err := ioutil.TempDir("", "test")
+	testutil.Ok(t, err)
+
+	blocks := []*BlockMeta{
+		{MinTime: 100, MaxTime: 200}, // Oldest block
+		{MinTime: 200, MaxTime: 300},
+		{MinTime: 300, MaxTime: 400},
+		{MinTime: 400, MaxTime: 500},
+		{MinTime: 500, MaxTime: 600}, // Newest Block
+	}
+
+	for _, m := range blocks {
+		createBlock(t, tmpdir, genSeries(100, 10, m.MinTime, m.MaxTime))
+	}
+	db, err := Open(tmpdir, nil, nil, &Options{BlockRanges: []int64{100}})
+	testutil.Ok(t, err)
+
+	// Test that registered size matches the actual disk size.
+	testutil.Equals(t, len(blocks), len(db.Blocks()))                 // Ensure all blocks are registered.
+	expSize := int64(prom_testutil.ToFloat64(db.metrics.blocksBytes)) // Use the the actual internal metrics.
+	actSize := dbDiskSize(db.Dir())
+	testutil.Equals(t, expSize, actSize, "registered size doesn't match actual disk size")
+
+	// Decrease the max bytes limit so that a delete is triggered.
+	// Check total size, total count and check that the oldest block was deleted.
+	db.opts.MaxBytes = actSize - db.Blocks()[0].Size() // Set the new db size limit one block smaller that the actual size.
+
+	return db
 }
 
 // query runs a matcher query against the querier and fully expands its data.
@@ -743,6 +798,8 @@ func TestWALFlushedOnDBClose(t *testing.T) {
 }
 
 func TestWALSegmentSizeOption(t *testing.T) {
+	// Dereference the DefaultOptions so that it makes a copy and
+	// applies changes to the copy and not globally to interfere with the other tests.
 	options := *DefaultOptions
 	options.WALSegmentSize = 2 * 32 * 1024
 	db, delete := openTestDB(t, &options)
@@ -949,86 +1006,45 @@ func (*mockCompactorFailing) Compact(dest string, dirs []string, open []*Block) 
 }
 
 func TestTimeRetention(t *testing.T) {
-	db, delete := openTestDB(t, &Options{
-		BlockRanges: []int64{1000},
-	})
+	db := openTestDBTimeRetentionable(t)
 	defer func() {
 		testutil.Ok(t, db.Close())
-		delete()
+		testutil.Ok(t, os.RemoveAll(db.Dir()))
 	}()
 
-	blocks := []*BlockMeta{
-		{MinTime: 500, MaxTime: 900}, // Oldest block
-		{MinTime: 1000, MaxTime: 1500},
-		{MinTime: 1500, MaxTime: 2000}, // Newest Block
-	}
-
-	for _, m := range blocks {
-		createBlock(t, db.Dir(), genSeries(10, 10, m.MinTime, m.MaxTime))
-	}
-
-	testutil.Ok(t, db.reload())                       // Reload the db to register the new blocks.
-	testutil.Equals(t, len(blocks), len(db.Blocks())) // Ensure all blocks are registered.
-
-	db.opts.RetentionDuration = uint64(blocks[2].MaxTime - blocks[1].MinTime)
-	testutil.Ok(t, db.reload())
-
-	expBlocks := blocks[1:]
+	expBlocks := db.Blocks()[1:]
+	testutil.Ok(t, db.reload()) // Reload to trigger the retention.
 	actBlocks := db.Blocks()
 
 	testutil.Equals(t, 1, int(prom_testutil.ToFloat64(db.metrics.timeRetentionCount)), "metric retention count mismatch")
 	testutil.Equals(t, len(expBlocks), len(actBlocks))
-	testutil.Equals(t, expBlocks[0].MaxTime, actBlocks[0].meta.MaxTime)
-	testutil.Equals(t, expBlocks[len(expBlocks)-1].MaxTime, actBlocks[len(actBlocks)-1].meta.MaxTime)
+	testutil.Equals(t, expBlocks[0].Meta().MaxTime, actBlocks[0].Meta().MaxTime)
+	testutil.Equals(t, expBlocks[len(expBlocks)-1].Meta().MaxTime, actBlocks[len(actBlocks)-1].Meta().MaxTime)
 }
 
 func TestSizeRetention(t *testing.T) {
-	db, delete := openTestDB(t, &Options{
-		BlockRanges: []int64{100},
-	})
+	db := openTestDBSizeRetentionable(t)
 	defer func() {
 		testutil.Ok(t, db.Close())
-		delete()
+		testutil.Ok(t, os.RemoveAll(db.Dir()))
 	}()
 
-	blocks := []*BlockMeta{
-		{MinTime: 100, MaxTime: 200}, // Oldest block
-		{MinTime: 200, MaxTime: 300},
-		{MinTime: 300, MaxTime: 400},
-		{MinTime: 400, MaxTime: 500},
-		{MinTime: 500, MaxTime: 600}, // Newest Block
-	}
+	expBlocks := db.Blocks()[1:]
 
-	for _, m := range blocks {
-		createBlock(t, db.Dir(), genSeries(100, 10, m.MinTime, m.MaxTime))
-	}
+	testutil.Ok(t, db.reload()) // Reload the db to register the new db size.
 
-	// Test that registered size matches the actual disk size.
-	testutil.Ok(t, db.reload())                                       // Reload the db to register the new db size.
-	testutil.Equals(t, len(blocks), len(db.Blocks()))                 // Ensure all blocks are registered.
-	expSize := int64(prom_testutil.ToFloat64(db.metrics.blocksBytes)) // Use the the actual internal metrics.
-	actSize := dbDiskSize(db.Dir())
-	testutil.Equals(t, expSize, actSize, "registered size doesn't match actual disk size")
-
-	// Decrease the max bytes limit so that a delete is triggered.
-	// Check total size, total count and check that the oldest block was deleted.
-	firstBlockSize := db.Blocks()[0].Size()
-	sizeLimit := actSize - firstBlockSize
-	db.opts.MaxBytes = sizeLimit // Set the new db size limit one block smaller that the actual size.
-	testutil.Ok(t, db.reload())  // Reload the db to register the new db size.
-
-	expBlocks := blocks[1:]
 	actBlocks := db.Blocks()
-	expSize = int64(prom_testutil.ToFloat64(db.metrics.blocksBytes))
+	expSize := int64(prom_testutil.ToFloat64(db.metrics.blocksBytes))
 	actRetentCount := int(prom_testutil.ToFloat64(db.metrics.sizeRetentionCount))
-	actSize = dbDiskSize(db.Dir())
+	actSize := dbDiskSize(db.Dir())
+	sizeLimit := db.opts.MaxBytes
 
 	testutil.Equals(t, 1, actRetentCount, "metric retention count mismatch")
 	testutil.Equals(t, actSize, expSize, "metric db size doesn't match actual disk size")
 	testutil.Assert(t, expSize <= sizeLimit, "actual size (%v) is expected to be less than or equal to limit (%v)", expSize, sizeLimit)
-	testutil.Equals(t, len(blocks)-1, len(actBlocks), "new block count should be decreased from:%v to:%v", len(blocks), len(blocks)-1)
-	testutil.Equals(t, expBlocks[0].MaxTime, actBlocks[0].meta.MaxTime, "maxT mismatch of the first block")
-	testutil.Equals(t, expBlocks[len(expBlocks)-1].MaxTime, actBlocks[len(actBlocks)-1].meta.MaxTime, "maxT mismatch of the last block")
+	testutil.Equals(t, len(expBlocks), len(actBlocks), "new block count should have decreased by 1")
+	testutil.Equals(t, expBlocks[0].Meta().MaxTime, actBlocks[0].Meta().MaxTime, "maxT mismatch of the first block")
+	testutil.Equals(t, expBlocks[len(expBlocks)-1].Meta().MaxTime, actBlocks[len(actBlocks)-1].Meta().MaxTime, "maxT mismatch of the last block")
 
 }
 
@@ -1932,6 +1948,8 @@ func TestVerticalCompaction(t *testing.T) {
 			for _, series := range c.blockSeries {
 				createBlock(t, tmpdir, series)
 			}
+			// Dereference the DefaultOptions so that it makes a copy and
+			// applies changes to the copy and not globally to interfere with the other tests.
 			opts := *DefaultOptions
 			opts.AllowOverlappingBlocks = true
 			db, err := Open(tmpdir, nil, nil, &opts)
@@ -1991,7 +2009,7 @@ func TestBlockRanges(t *testing.T) {
 	// when a non standard block already exists.
 	firstBlockMaxT := int64(3)
 	createBlock(t, dir, genSeries(1, 1, 0, firstBlockMaxT))
-	db, err := Open(dir, logger, nil, DefaultOptions)
+	db, err := Open(dir, logger, nil, nil)
 	if err != nil {
 		t.Fatalf("Opening test storage failed: %s", err)
 	}
@@ -2042,7 +2060,7 @@ func TestBlockRanges(t *testing.T) {
 	thirdBlockMaxt := secondBlockMaxt + 2
 	createBlock(t, dir, genSeries(1, 1, secondBlockMaxt+1, thirdBlockMaxt))
 
-	db, err = Open(dir, logger, nil, DefaultOptions)
+	db, err = Open(dir, logger, nil, nil)
 	if err != nil {
 		t.Fatalf("Opening test storage failed: %s", err)
 	}
@@ -2069,5 +2087,153 @@ func TestBlockRanges(t *testing.T) {
 }
 
 func TestReadOnlyDB(t *testing.T) {
+	if ok := t.Run("Ensure bad index is not repaired.", func(t *testing.T) {
+		dbDir := filepath.Join("testdata", "repair_index_version", "01BZJ9WJQPWHGNC2W4J9TA62KC")
+		tmpDir := filepath.Join("testdata", "repair_index_version", "copy")
+		tmpDbDir := filepath.Join(tmpDir, "3MCNSQ8S31EHGJYWK5E1GPJWJZ")
+		// Create a copy DB to run test against.
+		if err := fileutil.CopyDirs(dbDir, tmpDbDir); err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			testutil.Ok(t, os.RemoveAll(tmpDir))
+		}()
+
+		indexTest := func(shouldFail bool) error {
+			t.Helper()
+			_, err := readMetaFile(tmpDbDir)
+			if shouldFail && err == nil {
+				return errors.New("reading the meate file didn't return an error")
+			}
+
+			r, err := index.NewFileReader(filepath.Join(tmpDbDir, indexFilename))
+			testutil.Ok(t, err)
+			defer func() {
+				testutil.Ok(t, r.Close())
+			}()
+			p, err := r.Postings("b", "1")
+			testutil.Ok(t, err)
+			defer func() {
+				testutil.Ok(t, p.Err())
+			}()
+			for p.Next() {
+				var lset labels.Labels
+				var chks []chunks.Meta
+				if err := r.Series(p.At(), &lset, &chks); shouldFail && err == nil {
+					return errors.New("reading the index didn't return an error")
+				}
+			}
+			return nil
+		}
+
+		t.Log("Check the current index file. In its current state, lookups should fail.")
+		shouldFail := true
+		testutil.Ok(t, indexTest(shouldFail))
+
+		logger := testutil.NewLogger(t)
+		// Dereference the DefaultOptions so that it makes a copy and
+		// applies changes to the copy and not globally to interfere with the other tests.
+		opts := *DefaultOptions
+
+		t.Log("The ReadOnly option should prevent the index repair so should fail again.")
+		opts.ReadOnly = true
+		shouldFail = true
+
+		db, err := Open(tmpDir, logger, nil, &opts)
+		testutil.Ok(t, err)
+		testutil.Ok(t, db.Close())
+		testutil.Ok(t, indexTest(shouldFail))
+
+		t.Log("Without ReadOnly option the index should have been repaired.")
+		opts.ReadOnly = false
+		shouldFail = false
+
+		db, err = Open(tmpDir, logger, nil, &opts)
+		testutil.Ok(t, err)
+		testutil.Ok(t, db.Close())
+		testutil.Ok(t, indexTest(shouldFail))
+	}); !ok {
+		return
+	}
+
+	if ok := t.Run("Ensure that the compaction is disabled.", func(t *testing.T) {
+		// Dereference the DefaultOptions so that it makes a copy and
+		// applies changes to the copy and not globally to interfere with the other tests.
+		opts := *DefaultOptions
+		opts.ReadOnly = true
+		db, delete := openTestDB(t, &opts)
+		defer func() {
+			testutil.Ok(t, db.Close())
+			delete()
+		}()
+
+		testutil.Equals(t, 0.0, prom_testutil.ToFloat64(db.metrics.compactionsTriggered), "initial compactionsTriggered counter should be zero")
+		testutil.Equals(t, 0.0, prom_testutil.ToFloat64(db.metrics.compactionsSkipped), "initial compactionsSkipped counter should be zero")
+
+		db.compactc <- struct{}{}
+
+		for x := 0; x < 10; x++ {
+			if prom_testutil.ToFloat64(db.metrics.compactionsTriggered) == 1.0 && prom_testutil.ToFloat64(db.metrics.compactionsSkipped) == 1.0 {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		t.Fatal("ReadOnly option didn't disable the compaction")
+
+	}); !ok {
+		return
+	}
+
+	// if ok := t.Run("Ensure that the wal is disabled.", func(t *testing.T) {
+	// // Dereference the DefaultOptions so that it makes a copy and
+	// // applies changes to the copy and not globally to interfere with the other tests.
+	// 	opts := *DefaultOptions
+	// 	opts.ReadOnly = true
+	// 	db, delete := openTestDB(t, &opts)
+	// 	defer func() {
+	// 		testutil.Ok(t, db.Close())
+	// 		delete()
+	// 	}()
+
+	// 	app := db.Appender()
+	// 	_, err := app.Add(labels.Labels{labels.Label{Name: "name", Value: "value"}}, 1, rand.Float64())
+	// 	testutil.Ok(t, err)
+	// 	testutil.Ok(t, app.Commit())
+	// 	_, err = os.Stat(filepath.Join(db.Dir(), "wal"))
+	// 	testutil.Assert(t, os.IsNotExist(err), "ReadOnly didn't prevent creating a wal folder")
+
+	// }); !ok {
+	// 	return
+	// }
+
+	if ok := t.Run("Ensure time retention is disabled.", func(t *testing.T) {
+		db := openTestDBTimeRetentionable(t)
+		defer func() {
+			testutil.Ok(t, db.Close())
+			testutil.Ok(t, os.RemoveAll(db.Dir()))
+		}()
+		db.opts.ReadOnly = true
+		db.reload()
+		testutil.Equals(t, 0, int(prom_testutil.ToFloat64(db.metrics.timeRetentionCount)), "ReadOnly didn't disable the time retention")
+
+	}); !ok {
+		return
+	}
+
+	if ok := t.Run("Ensure size retention is disabled.", func(t *testing.T) {
+		db := openTestDBSizeRetentionable(t)
+		defer func() {
+			testutil.Ok(t, db.Close())
+			testutil.Ok(t, os.RemoveAll(db.Dir()))
+		}()
+		db.opts.ReadOnly = true
+
+		expBlocks := db.Blocks()
+		testutil.Ok(t, db.reload()) // Reload the db to make sure no block is deleted.
+		actBlocks := db.Blocks()
+		testutil.Equals(t, expBlocks, actBlocks)
+	}); !ok {
+		return
+	}
 
 }

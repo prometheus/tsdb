@@ -79,6 +79,7 @@ type Options struct {
 	AllowOverlappingBlocks bool
 
 	// ReadOnly disables all mutating actions.
+	// Usefull for opening the same db more than once.
 	ReadOnly bool
 }
 
@@ -251,13 +252,8 @@ func Open(dir string, l log.Logger, r prometheus.Registerer, opts *Options) (db 
 	if opts == nil {
 		opts = DefaultOptions
 	}
-	if opts.ReadOnly {
-		// Disable the WAL.
-		opts.WALSegmentSize = -1
-		// Disable the retentions.
-		opts.RetentionDuration = 0
-		opts.MaxBytes = 0
-	} else {
+
+	if !opts.ReadOnly {
 		// Fixup bad format written by Prometheus 2.1.
 		if err := repairBadIndexVersion(l, dir); err != nil {
 			return nil, err
@@ -275,7 +271,7 @@ func Open(dir string, l log.Logger, r prometheus.Registerer, opts *Options) (db 
 		compactc:    make(chan struct{}, 1),
 		donec:       make(chan struct{}),
 		stopc:       make(chan struct{}),
-		autoCompact: !opts.ReadOnly,
+		autoCompact: true,
 		chunkPool:   chunkenc.NewPool(),
 	}
 	db.metrics = newDBMetrics(db, r)
@@ -360,7 +356,7 @@ func (db *DB) run() {
 			db.metrics.compactionsTriggered.Inc()
 
 			db.autoCompactMtx.Lock()
-			if db.autoCompact {
+			if db.autoCompact && !db.opts.ReadOnly {
 				if err := db.compact(); err != nil {
 					level.Error(db.logger).Log("msg", "compaction failed", "err", err)
 					backoff = exponential(backoff, 1*time.Second, 1*time.Minute)
@@ -522,8 +518,10 @@ func (db *DB) reload() (err error) {
 	if err != nil {
 		return err
 	}
-
-	deletable := db.deletableBlocks(loadable)
+	deletable := make(map[ulid.ULID]*Block)
+	if !db.opts.ReadOnly {
+		deletable = db.deletableBlocks(loadable)
+	}
 
 	// Corrupted blocks that have been replaced by parents can be safely ignored and deleted.
 	// This makes it resilient against the process crashing towards the end of a compaction.
@@ -591,8 +589,10 @@ func (db *DB) reload() (err error) {
 		}
 	}
 
-	if err := db.deleteBlocks(deletable); err != nil {
-		return err
+	if !db.opts.ReadOnly {
+		if err := db.deleteBlocks(deletable); err != nil {
+			return err
+		}
 	}
 
 	// Garbage collect data in the head if the most recent persisted block
