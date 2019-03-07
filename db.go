@@ -79,7 +79,7 @@ type Options struct {
 	AllowOverlappingBlocks bool
 
 	// ReadOnly disables all mutating actions.
-	// Usefull for opening the same db more than once.
+	// Useful for opening the same db more than once.
 	ReadOnly bool
 }
 
