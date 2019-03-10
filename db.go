@@ -42,6 +42,8 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+const metricsPrefix = "tsdb_"
+
 // DefaultOptions used for the DB. They are sane for setups using
 // millisecond precision timestamps.
 var DefaultOptions = &Options{
@@ -155,7 +157,7 @@ func newDBMetrics(db *DB, r prometheus.Registerer) *dbMetrics {
 	m := &dbMetrics{}
 
 	m.loadedBlocks = prometheus.NewGaugeFunc(prometheus.GaugeOpts{
-		Name: "prometheus_tsdb_blocks_loaded",
+		Name: "blocks_loaded",
 		Help: "Number of currently loaded data blocks",
 	}, func() float64 {
 		db.mtx.RLock()
@@ -163,7 +165,7 @@ func newDBMetrics(db *DB, r prometheus.Registerer) *dbMetrics {
 		return float64(len(db.blocks))
 	})
 	m.symbolTableSize = prometheus.NewGaugeFunc(prometheus.GaugeOpts{
-		Name: "prometheus_tsdb_symbol_table_size_bytes",
+		Name: "symbol_table_size_bytes",
 		Help: "Size of symbol table on disk (in bytes)",
 	}, func() float64 {
 		db.mtx.RLock()
@@ -176,27 +178,27 @@ func newDBMetrics(db *DB, r prometheus.Registerer) *dbMetrics {
 		return float64(symTblSize)
 	})
 	m.reloads = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "prometheus_tsdb_reloads_total",
+		Name: "reloads_total",
 		Help: "Number of times the database reloaded block data from disk.",
 	})
 	m.reloadsFailed = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "prometheus_tsdb_reloads_failures_total",
+		Name: "reloads_failures_total",
 		Help: "Number of times the database failed to reload block data from disk.",
 	})
 	m.compactionsTriggered = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "prometheus_tsdb_compactions_triggered_total",
+		Name: "compactions_triggered_total",
 		Help: "Total number of triggered compactions for the partition.",
 	})
 	m.timeRetentionCount = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "prometheus_tsdb_time_retentions_total",
+		Name: "time_retentions_total",
 		Help: "The number of times that blocks were deleted because the maximum time limit was exceeded.",
 	})
 	m.compactionsSkipped = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "prometheus_tsdb_compactions_skipped_total",
+		Name: "compactions_skipped_total",
 		Help: "Total number of skipped compactions due to disabled auto compaction.",
 	})
 	m.startTime = prometheus.NewGaugeFunc(prometheus.GaugeOpts{
-		Name: "prometheus_tsdb_lowest_timestamp",
+		Name: "lowest_timestamp",
 		Help: "Lowest timestamp value stored in the database. The unit is decided by the library consumer.",
 	}, func() float64 {
 		db.mtx.RLock()
@@ -207,20 +209,20 @@ func newDBMetrics(db *DB, r prometheus.Registerer) *dbMetrics {
 		return float64(db.blocks[0].meta.MinTime)
 	})
 	m.tombCleanTimer = prometheus.NewHistogram(prometheus.HistogramOpts{
-		Name: "prometheus_tsdb_tombstone_cleanup_seconds",
+		Name: "tombstone_cleanup_seconds",
 		Help: "The time taken to recompact blocks to remove tombstones.",
 	})
 	m.blocksBytes = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "prometheus_tsdb_storage_blocks_bytes",
+		Name: "storage_blocks_bytes",
 		Help: "The number of bytes that are currently used for local storage by all blocks.",
 	})
 	m.sizeRetentionCount = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "prometheus_tsdb_size_retentions_total",
+		Name: "size_retentions_total",
 		Help: "The number of times that blocks were deleted because the maximum number of bytes was exceeded.",
 	})
 
 	if r != nil {
-		r.MustRegister(
+		prometheus.WrapRegistererWithPrefix(metricsPrefix, r).MustRegister(
 			m.loadedBlocks,
 			m.symbolTableSize,
 			m.reloads,

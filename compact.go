@@ -95,44 +95,44 @@ func newCompactorMetrics(r prometheus.Registerer) *compactorMetrics {
 	m := &compactorMetrics{}
 
 	m.ran = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "prometheus_tsdb_compactions_total",
+		Name: "compactions_total",
 		Help: "Total number of compactions that were executed for the partition.",
 	})
 	m.populatingBlocks = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "prometheus_tsdb_compaction_populating_block",
+		Name: "compaction_populating_block",
 		Help: "Set to 1 when a block is currently being written to the disk.",
 	})
 	m.failed = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "prometheus_tsdb_compactions_failed_total",
+		Name: "compactions_failed_total",
 		Help: "Total number of compactions that failed for the partition.",
 	})
 	m.overlappingBlocks = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "prometheus_tsdb_vertical_compactions_total",
+		Name: "vertical_compactions_total",
 		Help: "Total number of compactions done on overlapping blocks.",
 	})
 	m.duration = prometheus.NewHistogram(prometheus.HistogramOpts{
-		Name:    "prometheus_tsdb_compaction_duration_seconds",
+		Name:    "compaction_duration_seconds",
 		Help:    "Duration of compaction runs",
 		Buckets: prometheus.ExponentialBuckets(1, 2, 10),
 	})
 	m.chunkSize = prometheus.NewHistogram(prometheus.HistogramOpts{
-		Name:    "prometheus_tsdb_compaction_chunk_size_bytes",
+		Name:    "compaction_chunk_size_bytes",
 		Help:    "Final size of chunks on their first compaction",
 		Buckets: prometheus.ExponentialBuckets(32, 1.5, 12),
 	})
 	m.chunkSamples = prometheus.NewHistogram(prometheus.HistogramOpts{
-		Name:    "prometheus_tsdb_compaction_chunk_samples",
+		Name:    "compaction_chunk_samples",
 		Help:    "Final number of samples on their first compaction",
 		Buckets: prometheus.ExponentialBuckets(4, 1.5, 12),
 	})
 	m.chunkRange = prometheus.NewHistogram(prometheus.HistogramOpts{
-		Name:    "prometheus_tsdb_compaction_chunk_range_seconds",
+		Name:    "compaction_chunk_range_seconds",
 		Help:    "Final time range of chunks on their first compaction",
 		Buckets: prometheus.ExponentialBuckets(100, 4, 10),
 	})
 
 	if r != nil {
-		r.MustRegister(
+		prometheus.WrapRegistererWithPrefix(metricsPrefix, r).MustRegister(
 			m.ran,
 			m.populatingBlocks,
 			m.failed,
