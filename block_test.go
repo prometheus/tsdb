@@ -15,6 +15,8 @@ package tsdb
 
 import (
 	"context"
+	"encoding/binary"
+	"errors"
 	"io/ioutil"
 	"math/rand"
 	"os"
@@ -75,6 +77,73 @@ func TestCreateBlock(t *testing.T) {
 		testutil.Ok(t, b.Close())
 	}
 	testutil.Ok(t, err)
+}
+
+func TestOpenBlock_ChunkCorrupted(t *testing.T) {
+	for name, test := range map[string]struct {
+		corrFunc func(f *os.File) // Func that applies the corruption.
+		expErr   error
+	}{
+		"invalid header size": {
+			func(f *os.File) {
+				err := f.Truncate(1)
+				testutil.Ok(t, err)
+			},
+			errors.New("invalid chunk header in segment 0: invalid size"),
+		},
+		"invalid magic number": {
+			func(f *os.File) {
+				magicChunksSize := 4
+				magicChunksOffset := int64(0)
+				_, err := f.Seek(magicChunksOffset, 0)
+				testutil.Ok(t, err)
+
+				// Set invalid magic number 0x00000000
+				b := make([]byte, magicChunksSize)
+				binary.BigEndian.PutUint32(b[:magicChunksSize], 0x00000000)
+				n, err := f.Write(b)
+				testutil.Ok(t, err)
+				testutil.Equals(t, magicChunksSize, n)
+			},
+			errors.New("invalid magic number 0"),
+		},
+		"invalid chunk format version": {
+			func(f *os.File) {
+				chunksFormatVersionSize := 1
+				chunksFormatVersionOffset := int64(4)
+				_, err := f.Seek(chunksFormatVersionOffset, 0)
+				testutil.Ok(t, err)
+
+				// Set invalid chunk format version 0
+				b := make([]byte, chunksFormatVersionSize)
+				b[0] = 0
+				n, err := f.Write(b)
+				testutil.Ok(t, err)
+				testutil.Equals(t, chunksFormatVersionSize, n)
+			},
+			errors.New("invalid chunk format version 0"),
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			tmpdir, err := ioutil.TempDir("", "test_open_block_chunk_corrupted")
+			testutil.Ok(t, err)
+			defer os.RemoveAll(tmpdir)
+
+			blockDir := createBlock(t, tmpdir, genSeries(1, 1, 0, 0))
+			files, err := sequenceFiles(chunkDir(blockDir))
+			testutil.Ok(t, err)
+			testutil.Assert(t, len(files) > 0, "No chunk created.")
+
+			f, err := os.OpenFile(files[0], os.O_RDWR, 0666)
+			testutil.Ok(t, err)
+
+			// Apply corruption function.
+			test.corrFunc(f)
+
+			_, err = OpenBlock(nil, blockDir, nil)
+			testutil.Equals(t, test.expErr.Error(), err.Error())
+		})
+	}
 }
 
 // createBlock creates a block with given set of series and returns its dir.
