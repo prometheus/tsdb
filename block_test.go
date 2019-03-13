@@ -24,6 +24,7 @@ import (
 	"testing"
 
 	"github.com/go-kit/kit/log"
+	"github.com/prometheus/tsdb/chunks"
 	"github.com/prometheus/tsdb/testutil"
 	"github.com/prometheus/tsdb/tsdbutil"
 )
@@ -93,33 +94,29 @@ func TestOpenBlock_ChunkCorrupted(t *testing.T) {
 		},
 		"invalid magic number": {
 			func(f *os.File) {
-				magicChunksSize := 4
-				magicChunksOffset := int64(0)
-				_, err := f.Seek(magicChunksOffset, 0)
+				_, err := f.Seek(0, 0)
 				testutil.Ok(t, err)
 
-				// Set invalid magic number 0x00000000
-				b := make([]byte, magicChunksSize)
-				binary.BigEndian.PutUint32(b[:magicChunksSize], 0x00000000)
+				// Set invalid magic number.
+				b := make([]byte, chunks.MagicChunksSize)
+				binary.BigEndian.PutUint32(b[:chunks.MagicChunksSize], 0x00000000)
 				n, err := f.Write(b)
 				testutil.Ok(t, err)
-				testutil.Equals(t, magicChunksSize, n)
+				testutil.Equals(t, chunks.MagicChunksSize, n)
 			},
 			errors.New("invalid magic number 0"),
 		},
 		"invalid chunk format version": {
 			func(f *os.File) {
-				chunksFormatVersionSize := 1
-				chunksFormatVersionOffset := int64(4)
-				_, err := f.Seek(chunksFormatVersionOffset, 0)
+				_, err := f.Seek(4, 0)
 				testutil.Ok(t, err)
 
-				// Set invalid chunk format version 0
-				b := make([]byte, chunksFormatVersionSize)
+				// Set invalid chunk format version.
+				b := make([]byte, chunks.ChunksFormatVersionSize)
 				b[0] = 0
 				n, err := f.Write(b)
 				testutil.Ok(t, err)
-				testutil.Equals(t, chunksFormatVersionSize, n)
+				testutil.Equals(t, chunks.ChunksFormatVersionSize, n)
 			},
 			errors.New("invalid chunk format version 0"),
 		},
@@ -127,7 +124,9 @@ func TestOpenBlock_ChunkCorrupted(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			tmpdir, err := ioutil.TempDir("", "test_open_block_chunk_corrupted")
 			testutil.Ok(t, err)
-			defer os.RemoveAll(tmpdir)
+			defer func() {
+				testutil.Ok(t, os.RemoveAll(tmpdir))
+			}()
 
 			blockDir := createBlock(t, tmpdir, genSeries(1, 1, 0, 0))
 			files, err := sequenceFiles(chunkDir(blockDir))
@@ -139,9 +138,14 @@ func TestOpenBlock_ChunkCorrupted(t *testing.T) {
 
 			// Apply corruption function.
 			test.corrFunc(f)
+			testutil.Ok(t, f.Close())
 
-			_, err = OpenBlock(nil, blockDir, nil)
-			testutil.Equals(t, test.expErr.Error(), err.Error())
+			b, err := OpenBlock(nil, blockDir, nil)
+			if err != nil {
+				testutil.Equals(t, test.expErr.Error(), err.Error())
+			} else {
+				testutil.Ok(t, b.Close())
+			}
 		})
 	}
 }

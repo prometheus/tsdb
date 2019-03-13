@@ -33,12 +33,12 @@ import (
 const (
 	// MagicChunks is 4 bytes at the head of a series file.
 	MagicChunks     = 0x85BD40DD
-	magicChunksSize = 4
+	MagicChunksSize = 4
 
 	chunksFormatV1          = 1
-	chunksFormatVersionSize = 1
+	ChunksFormatVersionSize = 1
 
-	chunkHeaderSize = magicChunksSize + chunksFormatVersionSize
+	chunkHeaderSize = MagicChunksSize + ChunksFormatVersionSize
 )
 
 // Meta holds information about a chunk of data.
@@ -175,7 +175,7 @@ func (w *Writer) cut() error {
 
 	// Write header metadata for new file.
 	metab := make([]byte, 8)
-	binary.BigEndian.PutUint32(metab[:magicChunksSize], MagicChunks)
+	binary.BigEndian.PutUint32(metab[:MagicChunksSize], MagicChunks)
 	metab[4] = chunksFormatV1
 
 	if _, err := f.Write(metab); err != nil {
@@ -380,12 +380,12 @@ func newReader(bs []ByteSlice, cs []io.Closer, pool chunkenc.Pool) (*Reader, err
 			return nil, errors.Wrapf(errInvalidSize, "invalid chunk header in segment %d", i)
 		}
 		// Verify magic number.
-		if m := binary.BigEndian.Uint32(b.Range(0, magicChunksSize)); m != MagicChunks {
+		if m := binary.BigEndian.Uint32(b.Range(0, MagicChunksSize)); m != MagicChunks {
 			return nil, errors.Errorf("invalid magic number %x", m)
 		}
 
 		// Verify chunk format version.
-		if v := int(b.Range(magicChunksSize, magicChunksSize+chunksFormatVersionSize)[0]); v != chunksFormatV1 {
+		if v := int(b.Range(MagicChunksSize, MagicChunksSize+ChunksFormatVersionSize)[0]); v != chunksFormatV1 {
 			return nil, errors.Errorf("invalid chunk format version %d", v)
 		}
 		totalSize += int64(b.Len())
