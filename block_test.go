@@ -60,6 +60,18 @@ func TestSetCompactionFailed(t *testing.T) {
 	testutil.Ok(t, b.Close())
 }
 
+func TestCreateBlock(t *testing.T) {
+	tmpdir, err := ioutil.TempDir("", "test")
+	testutil.Ok(t, err)
+	defer func() {
+		testutil.Ok(t, os.RemoveAll(tmpdir))
+	}()
+	b, err := OpenBlock(nil, createBlock(t, tmpdir, genSeries(1, 1, 0, 10)), nil)
+	if err == nil {
+		testutil.Ok(t, b.Close())
+	}
+	testutil.Ok(t, err)
+}
 // createBlock creates a block with given set of series and returns its dir.
 func createBlock(tb testing.TB, dir string, series []Series) string {
 	head, err := NewHead(nil, nil, nil, 2*60*60*1000)
