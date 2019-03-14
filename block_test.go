@@ -140,12 +140,8 @@ func TestOpenBlock_ChunkCorrupted(t *testing.T) {
 			test.corrFunc(f)
 			testutil.Ok(t, f.Close())
 
-			b, err := OpenBlock(nil, blockDir, nil)
-			if err != nil {
-				testutil.Equals(t, test.expErr.Error(), err.Error())
-			} else {
-				testutil.Ok(t, b.Close())
-			}
+			_, err = OpenBlock(nil, blockDir, nil)
+			testutil.Equals(t, test.expErr.Error(), err.Error())
 		})
 	}
 }

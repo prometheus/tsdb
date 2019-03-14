@@ -417,7 +417,17 @@ func NewDirReader(dir string, pool chunkenc.Pool) (*Reader, error) {
 		cs = append(cs, f)
 		bs = append(bs, realByteSlice(f.Bytes()))
 	}
-	return newReader(bs, cs, pool)
+
+	reader, err := newReader(bs, cs, pool)
+	if err != nil {
+		for i, c := range cs {
+			if err := c.Close(); err != nil {
+				return nil, errors.Wrapf(err, "close chunk segment %d", i)
+			}
+		}
+		return nil, err
+	}
+	return reader, nil
 }
 
 func (s *Reader) Close() error {
