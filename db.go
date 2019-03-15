@@ -896,7 +896,7 @@ func (db *DB) Snapshot(dir string, withHead bool) error {
 	if dir == db.dir {
 		return errors.Errorf("cannot snapshot into base directory")
 	}
-	if _, err := ulid.Parse(dir); err == nil {
+	if _, err := ulid.ParseStrict(dir); err == nil {
 		return errors.Errorf("dir must not be a valid ULID")
 	}
 

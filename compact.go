@@ -217,7 +217,7 @@ func (c *LeveledCompactor) plan(dms []dirMeta) ([]string, error) {
 	for i := len(dms) - 1; i >= 0; i-- {
 		meta := dms[i].meta
 		if meta.MaxTime-meta.MinTime < c.ranges[len(c.ranges)/2] {
-			break
+			continue
 		}
 		if float64(meta.Stats.NumTombstones)/float64(meta.Stats.NumSeries+1) > 0.05 {
 			return []string{dms[i].dir}, nil
@@ -309,7 +309,7 @@ func splitByRange(ds []dirMeta, tr int64) [][]dirMeta {
 		}
 		// Skip blocks that don't fall into the range. This can happen via mis-alignment or
 		// by being the multiple of the intended range.
-		if ds[i].meta.MinTime < t0 || ds[i].meta.MaxTime > t0+tr {
+		if m.MaxTime > t0+tr {
 			i++
 			continue
 		}
@@ -317,7 +317,7 @@ func splitByRange(ds []dirMeta, tr int64) [][]dirMeta {
 		// Add all dirs to the current group that are within [t0, t0+tr].
 		for ; i < len(ds); i++ {
 			// Either the block falls into the next range or doesn't fit at all (checked above).
-			if ds[i].meta.MinTime < t0 || ds[i].meta.MaxTime > t0+tr {
+			if ds[i].meta.MaxTime > t0+tr {
 				break
 			}
 			group = append(group, ds[i])
