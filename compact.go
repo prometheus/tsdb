@@ -217,7 +217,7 @@ func (c *LeveledCompactor) plan(dms []dirMeta) ([]string, error) {
 	for i := len(dms) - 1; i >= 0; i-- {
 		meta := dms[i].meta
 		if meta.MaxTime-meta.MinTime < c.ranges[len(c.ranges)/2] {
-			continue
+			break
 		}
 		if float64(meta.Stats.NumTombstones)/float64(meta.Stats.NumSeries+1) > 0.05 {
 			return []string{dms[i].dir}, nil
