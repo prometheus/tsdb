@@ -1037,7 +1037,7 @@ func isBlockDir(fi os.FileInfo) bool {
 	if !fi.IsDir() {
 		return false
 	}
-	_, err := ulid.Parse(fi.Name())
+	_, err := ulid.ParseStrict(fi.Name())
 	return err == nil
 }
 
