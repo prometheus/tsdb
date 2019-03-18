@@ -1917,6 +1917,49 @@ func TestVerticalCompaction(t *testing.T) {
 				},
 			},
 		},
+		// Case 6
+		// |--------------|
+		//        |----------------|
+		// 								|--------------|
+		//       								 |----------------|
+		{
+			blockSeries: [][]Series{
+				[]Series{
+					newSeries(map[string]string{"a": "b"}, []tsdbutil.Sample{
+						sample{0, 0}, sample{1, 0}, sample{2, 0}, sample{4, 0},
+						sample{5, 0}, sample{7, 0}, sample{8, 0}, sample{9, 0},
+					}),
+				},
+				[]Series{
+					newSeries(map[string]string{"a": "b"}, []tsdbutil.Sample{
+						sample{3, 99}, sample{5, 99}, sample{6, 99}, sample{7, 99},
+						sample{8, 99}, sample{9, 99}, sample{10, 99}, sample{11, 99},
+						sample{12, 99}, sample{13, 99}, sample{14, 99},
+					}),
+				},
+				[]Series{
+					newSeries(map[string]string{"a": "b"}, []tsdbutil.Sample{
+						sample{20, 0}, sample{21, 0}, sample{22, 0}, sample{24, 0},
+						sample{25, 0}, sample{27, 0}, sample{28, 0}, sample{29, 0},
+					}),
+				},
+				[]Series{
+					newSeries(map[string]string{"a": "b"}, []tsdbutil.Sample{
+						sample{23, 99}, sample{25, 99}, sample{26, 99}, sample{27, 99},
+						sample{28, 99}, sample{29, 99}, sample{30, 99}, sample{31, 99},
+					}),
+				},
+			},
+			expSeries: map[string][]tsdbutil.Sample{`{a="b"}`: {
+				sample{0, 0}, sample{1, 0}, sample{2, 0}, sample{3, 99},
+				sample{4, 0}, sample{5, 99}, sample{6, 99}, sample{7, 99},
+				sample{8, 99}, sample{9, 99}, sample{10, 99}, sample{11, 99},
+				sample{12, 99}, sample{13, 99}, sample{14, 99},
+				sample{20, 0}, sample{21, 0}, sample{22, 0}, sample{23, 99},
+				sample{24, 0}, sample{25, 99}, sample{26, 99}, sample{27, 99},
+				sample{28, 99}, sample{29, 99}, sample{30, 99}, sample{31, 99},
+			}},
+		},
 	}
 
 	defaultMatcher := labels.NewMustRegexpMatcher("__name__", ".*")

@@ -266,23 +266,28 @@ func (c *LeveledCompactor) selectDirs(ds []dirMeta) []dirMeta {
 	return nil
 }
 
-// selectOverlappingDirs returns all dirs with overlaping time ranges.
-// It expects sorted input by mint.
+// selectOverlappingDirs returns all dirs with overlapping time ranges.
+// It expects sorted input by mint and returns the overlapping dirs in the same order as received.
 func (c *LeveledCompactor) selectOverlappingDirs(ds []dirMeta) []string {
 	if len(ds) < 2 {
 		return nil
 	}
-	var overlappingDirs []string
-	globalMaxt := ds[0].meta.MaxTime
-	for i, d := range ds[1:] {
-		if d.meta.MinTime < globalMaxt {
-			if len(overlappingDirs) == 0 { // When it is the first overlap, need to add the last one as well.
-				overlappingDirs = append(overlappingDirs, ds[i].dir)
-			}
-			overlappingDirs = append(overlappingDirs, d.dir)
+	globalMaxt := ds[0]
+	overlappingDirsMap := make(map[string]struct{}) // Use a map to avoid adding the same dir more than once.
+	for _, d := range ds[1:] {
+		if d.meta.MinTime < globalMaxt.meta.MaxTime {
+			overlappingDirsMap[d.dir] = struct{}{}
+			overlappingDirsMap[globalMaxt.dir] = struct{}{}
 		}
-		if d.meta.MaxTime > globalMaxt {
-			globalMaxt = d.meta.MaxTime
+		if d.meta.MaxTime > globalMaxt.meta.MaxTime {
+			globalMaxt = d
+		}
+	}
+
+	var overlappingDirs []string
+	for _, dm := range ds {
+		if _, ok := overlappingDirsMap[dm.dir]; ok {
+			overlappingDirs = append(overlappingDirs, dm.dir)
 		}
 	}
 	return overlappingDirs
