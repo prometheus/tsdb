@@ -282,7 +282,7 @@ func (c *LeveledCompactor) selectOverlappingDirs(ds []dirMeta) []string {
 				chained = true
 			}
 			overlappingDirs = append(overlappingDirs, d.dir)
-		}else{
+		} else {
 			chained = false
 		}
 		if d.meta.MaxTime > globalMaxt {
