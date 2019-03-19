@@ -266,20 +266,24 @@ func (c *LeveledCompactor) selectDirs(ds []dirMeta) []dirMeta {
 	return nil
 }
 
-// selectOverlappingDirs returns all dirs with overlaping time ranges.
-// It expects sorted input by mint.
+// selectOverlappingDirs returns all dirs with overlapping time ranges.
+// It expects sorted input by mint and returns the overlapping dirs in the same order as received.
 func (c *LeveledCompactor) selectOverlappingDirs(ds []dirMeta) []string {
 	if len(ds) < 2 {
 		return nil
 	}
 	var overlappingDirs []string
 	globalMaxt := ds[0].meta.MaxTime
+	chained := false
 	for i, d := range ds[1:] {
 		if d.meta.MinTime < globalMaxt {
-			if len(overlappingDirs) == 0 { // When it is the first overlap, need to add the last one as well.
+			if !chained{
 				overlappingDirs = append(overlappingDirs, ds[i].dir)
+				chained = true
 			}
 			overlappingDirs = append(overlappingDirs, d.dir)
+		}else{
+			chained = false
 		}
 		if d.meta.MaxTime > globalMaxt {
 			globalMaxt = d.meta.MaxTime
@@ -309,7 +313,7 @@ func splitByRange(ds []dirMeta, tr int64) [][]dirMeta {
 		}
 		// Skip blocks that don't fall into the range. This can happen via mis-alignment or
 		// by being the multiple of the intended range.
-		if m.MaxTime > t0+tr {
+		if ds[i].meta.MinTime < t0 || ds[i].meta.MaxTime > t0+tr {
 			i++
 			continue
 		}
@@ -317,7 +321,7 @@ func splitByRange(ds []dirMeta, tr int64) [][]dirMeta {
 		// Add all dirs to the current group that are within [t0, t0+tr].
 		for ; i < len(ds); i++ {
 			// Either the block falls into the next range or doesn't fit at all (checked above).
-			if ds[i].meta.MaxTime > t0+tr {
+			if ds[i].meta.MinTime < t0 || ds[i].meta.MaxTime > t0+tr {
 				break
 			}
 			group = append(group, ds[i])
