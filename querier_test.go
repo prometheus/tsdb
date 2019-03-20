@@ -1699,19 +1699,21 @@ func TestPostingsForMatchers(t *testing.T) {
 		testutil.Ok(t, h.Close())
 	}()
 
-	h.getOrCreate(0, labels.FromStrings("n", "1"))
-	h.getOrCreate(0, labels.FromStrings("n", "1", "i", "a"))
-	h.getOrCreate(0, labels.FromStrings("n", "1", "i", "b"))
-	h.getOrCreate(0, labels.FromStrings("n", "2"))
+	app := h.Appender()
+	app.Add(labels.FromStrings("n", "1"), 0, 0)
+	app.Add(labels.FromStrings("n", "1", "i", "a"), 0, 0)
+	app.Add(labels.FromStrings("n", "1", "i", "b"), 0, 0)
+	app.Add(labels.FromStrings("n", "2"), 0, 0)
+	testutil.Ok(t, app.Commit())
 
 	cases := []struct {
 		matchers []labels.Matcher
-		series   []labels.Labels
+		exp      []labels.Labels
 	}{
 		// Simple equals.
 		{
 			matchers: []labels.Matcher{labels.NewEqualMatcher("n", "1")},
-			series: []labels.Labels{
+			exp: []labels.Labels{
 				labels.FromStrings("n", "1"),
 				labels.FromStrings("n", "1", "i", "a"),
 				labels.FromStrings("n", "1", "i", "b"),
@@ -1719,17 +1721,17 @@ func TestPostingsForMatchers(t *testing.T) {
 		},
 		{
 			matchers: []labels.Matcher{labels.NewEqualMatcher("n", "1"), labels.NewEqualMatcher("i", "a")},
-			series: []labels.Labels{
+			exp: []labels.Labels{
 				labels.FromStrings("n", "1", "i", "a"),
 			},
 		},
 		{
 			matchers: []labels.Matcher{labels.NewEqualMatcher("n", "1"), labels.NewEqualMatcher("i", "missing")},
-			series:   []labels.Labels{},
+			exp:      []labels.Labels{},
 		},
 		{
 			matchers: []labels.Matcher{labels.NewEqualMatcher("missing", "")},
-			series: []labels.Labels{
+			exp: []labels.Labels{
 				labels.FromStrings("n", "1"),
 				labels.FromStrings("n", "1", "i", "a"),
 				labels.FromStrings("n", "1", "i", "b"),
@@ -1739,31 +1741,31 @@ func TestPostingsForMatchers(t *testing.T) {
 		// Not equals.
 		{
 			matchers: []labels.Matcher{labels.Not(labels.NewEqualMatcher("n", "1"))},
-			series: []labels.Labels{
+			exp: []labels.Labels{
 				labels.FromStrings("n", "2"),
 			},
 		},
 		{
 			matchers: []labels.Matcher{labels.Not(labels.NewEqualMatcher("i", ""))},
-			series: []labels.Labels{
+			exp: []labels.Labels{
 				labels.FromStrings("n", "1", "i", "a"),
 				labels.FromStrings("n", "1", "i", "b"),
 			},
 		},
 		{
 			matchers: []labels.Matcher{labels.Not(labels.NewEqualMatcher("missing", ""))},
-			series:   []labels.Labels{},
+			exp:      []labels.Labels{},
 		},
 		{
 			matchers: []labels.Matcher{labels.NewEqualMatcher("n", "1"), labels.Not(labels.NewEqualMatcher("i", "a"))},
-			series: []labels.Labels{
+			exp: []labels.Labels{
 				labels.FromStrings("n", "1"),
 				labels.FromStrings("n", "1", "i", "b"),
 			},
 		},
 		{
 			matchers: []labels.Matcher{labels.NewEqualMatcher("n", "1"), labels.Not(labels.NewEqualMatcher("i", ""))},
-			series: []labels.Labels{
+			exp: []labels.Labels{
 				labels.FromStrings("n", "1", "i", "a"),
 				labels.FromStrings("n", "1", "i", "b"),
 			},
@@ -1771,7 +1773,7 @@ func TestPostingsForMatchers(t *testing.T) {
 		// Regex.
 		{
 			matchers: []labels.Matcher{labels.NewMustRegexpMatcher("n", "^1$")},
-			series: []labels.Labels{
+			exp: []labels.Labels{
 				labels.FromStrings("n", "1"),
 				labels.FromStrings("n", "1", "i", "a"),
 				labels.FromStrings("n", "1", "i", "b"),
@@ -1779,33 +1781,33 @@ func TestPostingsForMatchers(t *testing.T) {
 		},
 		{
 			matchers: []labels.Matcher{labels.NewEqualMatcher("n", "1"), labels.NewMustRegexpMatcher("i", "^a$")},
-			series: []labels.Labels{
+			exp: []labels.Labels{
 				labels.FromStrings("n", "1", "i", "a"),
 			},
 		},
 		{
 			matchers: []labels.Matcher{labels.NewEqualMatcher("n", "1"), labels.NewMustRegexpMatcher("i", "^a?$")},
-			series: []labels.Labels{
+			exp: []labels.Labels{
 				labels.FromStrings("n", "1"),
 				labels.FromStrings("n", "1", "i", "a"),
 			},
 		},
 		{
 			matchers: []labels.Matcher{labels.NewMustRegexpMatcher("i", "^$")},
-			series: []labels.Labels{
+			exp: []labels.Labels{
 				labels.FromStrings("n", "1"),
 				labels.FromStrings("n", "2"),
 			},
 		},
 		{
 			matchers: []labels.Matcher{labels.NewEqualMatcher("n", "1"), labels.NewMustRegexpMatcher("i", "^$")},
-			series: []labels.Labels{
+			exp: []labels.Labels{
 				labels.FromStrings("n", "1"),
 			},
 		},
 		{
 			matchers: []labels.Matcher{labels.NewEqualMatcher("n", "1"), labels.NewMustRegexpMatcher("i", "^.*$")},
-			series: []labels.Labels{
+			exp: []labels.Labels{
 				labels.FromStrings("n", "1"),
 				labels.FromStrings("n", "1", "i", "a"),
 				labels.FromStrings("n", "1", "i", "b"),
@@ -1813,7 +1815,7 @@ func TestPostingsForMatchers(t *testing.T) {
 		},
 		{
 			matchers: []labels.Matcher{labels.NewEqualMatcher("n", "1"), labels.NewMustRegexpMatcher("i", "^.+$")},
-			series: []labels.Labels{
+			exp: []labels.Labels{
 				labels.FromStrings("n", "1", "i", "a"),
 				labels.FromStrings("n", "1", "i", "b"),
 			},
@@ -1821,50 +1823,50 @@ func TestPostingsForMatchers(t *testing.T) {
 		// Not regex.
 		{
 			matchers: []labels.Matcher{labels.Not(labels.NewMustRegexpMatcher("n", "^1$"))},
-			series: []labels.Labels{
+			exp: []labels.Labels{
 				labels.FromStrings("n", "2"),
 			},
 		},
 		{
 			matchers: []labels.Matcher{labels.NewEqualMatcher("n", "1"), labels.Not(labels.NewMustRegexpMatcher("i", "^a$"))},
-			series: []labels.Labels{
+			exp: []labels.Labels{
 				labels.FromStrings("n", "1"),
 				labels.FromStrings("n", "1", "i", "b"),
 			},
 		},
 		{
 			matchers: []labels.Matcher{labels.NewEqualMatcher("n", "1"), labels.Not(labels.NewMustRegexpMatcher("i", "^a?$"))},
-			series: []labels.Labels{
+			exp: []labels.Labels{
 				labels.FromStrings("n", "1", "i", "b"),
 			},
 		},
 		{
 			matchers: []labels.Matcher{labels.NewEqualMatcher("n", "1"), labels.Not(labels.NewMustRegexpMatcher("i", "^$"))},
-			series: []labels.Labels{
+			exp: []labels.Labels{
 				labels.FromStrings("n", "1", "i", "a"),
 				labels.FromStrings("n", "1", "i", "b"),
 			},
 		},
 		{
 			matchers: []labels.Matcher{labels.NewEqualMatcher("n", "1"), labels.Not(labels.NewMustRegexpMatcher("i", "^.*$"))},
-			series:   []labels.Labels{},
+			exp:      []labels.Labels{},
 		},
 		{
 			matchers: []labels.Matcher{labels.NewEqualMatcher("n", "1"), labels.Not(labels.NewMustRegexpMatcher("i", "^.+$"))},
-			series: []labels.Labels{
+			exp: []labels.Labels{
 				labels.FromStrings("n", "1"),
 			},
 		},
 		// Combinations.
 		{
 			matchers: []labels.Matcher{labels.NewEqualMatcher("n", "1"), labels.Not(labels.NewEqualMatcher("i", "")), labels.NewEqualMatcher("i", "a")},
-			series: []labels.Labels{
+			exp: []labels.Labels{
 				labels.FromStrings("n", "1", "i", "a"),
 			},
 		},
 		{
 			matchers: []labels.Matcher{labels.NewEqualMatcher("n", "1"), labels.Not(labels.NewEqualMatcher("i", "b")), labels.NewMustRegexpMatcher("i", "^(b|a).*$")},
-			series: []labels.Labels{
+			exp: []labels.Labels{
 				labels.FromStrings("n", "1", "i", "a"),
 			},
 		},
@@ -1874,9 +1876,9 @@ func TestPostingsForMatchers(t *testing.T) {
 	testutil.Ok(t, err)
 
 	for _, c := range cases {
-		wanted := map[string]struct{}{}
-		for _, l := range c.series {
-			wanted[l.String()] = struct{}{}
+		exp := map[string]struct{}{}
+		for _, l := range c.exp {
+			exp[l.String()] = struct{}{}
 		}
 		p, err := PostingsForMatchers(ir, c.matchers...)
 		testutil.Ok(t, err)
@@ -1884,15 +1886,15 @@ func TestPostingsForMatchers(t *testing.T) {
 		for p.Next() {
 			lbls := labels.Labels{}
 			ir.Series(p.At(), &lbls, &[]chunks.Meta{})
-			if _, ok := wanted[lbls.String()]; !ok {
+			if _, ok := exp[lbls.String()]; !ok {
 				t.Errorf("Evaluating %v, unexpected result %s", c.matchers, lbls.String())
 			} else {
-				delete(wanted, lbls.String())
+				delete(exp, lbls.String())
 			}
 		}
 		testutil.Ok(t, p.Err())
-		if len(wanted) != 0 {
-			t.Errorf("Evaluating %v, missing results %+v", c.matchers, wanted)
+		if len(exp) != 0 {
+			t.Errorf("Evaluating %v, missing results %+v", c.matchers, exp)
 		}
 	}
 
