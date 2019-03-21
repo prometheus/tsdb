@@ -80,7 +80,7 @@ func TestCreateBlock(t *testing.T) {
 	testutil.Ok(t, err)
 }
 
-func TestOpenBlock_ChunkCorrupted(t *testing.T) {
+func TestCorruptedChunk(t *testing.T) {
 	for name, test := range map[string]struct {
 		corrFunc func(f *os.File) // Func that applies the corruption.
 		expErr   error
@@ -94,7 +94,8 @@ func TestOpenBlock_ChunkCorrupted(t *testing.T) {
 		},
 		"invalid magic number": {
 			func(f *os.File) {
-				_, err := f.Seek(0, 0)
+				magicChunksOffset := int64(0)
+				_, err := f.Seek(magicChunksOffset, 0)
 				testutil.Ok(t, err)
 
 				// Set invalid magic number.
@@ -108,7 +109,8 @@ func TestOpenBlock_ChunkCorrupted(t *testing.T) {
 		},
 		"invalid chunk format version": {
 			func(f *os.File) {
-				_, err := f.Seek(4, 0)
+				chunksFormatVersionOffset := int64(4)
+				_, err := f.Seek(chunksFormatVersionOffset, 0)
 				testutil.Ok(t, err)
 
 				// Set invalid chunk format version.

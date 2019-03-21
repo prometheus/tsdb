@@ -27,12 +27,14 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/prometheus/tsdb/chunkenc"
+	tsdb_errors "github.com/prometheus/tsdb/errors"
 	"github.com/prometheus/tsdb/fileutil"
 )
 
 const (
 	// MagicChunks is 4 bytes at the head of a series file.
-	MagicChunks     = 0x85BD40DD
+	MagicChunks = 0x85BD40DD
+	// MagicChunksSize is the size in bytes of MagicChunks.
 	MagicChunksSize = 4
 
 	chunksFormatV1          = 1
@@ -420,12 +422,10 @@ func NewDirReader(dir string, pool chunkenc.Pool) (*Reader, error) {
 
 	reader, err := newReader(bs, cs, pool)
 	if err != nil {
-		for i, c := range cs {
-			if err := c.Close(); err != nil {
-				return nil, errors.Wrapf(err, "close chunk segment %d", i)
-			}
-		}
-		return nil, err
+		var merr tsdb_errors.MultiError
+		merr.Add(err)
+		merr.Add(closeAll(cs))
+		return nil, merr
 	}
 	return reader, nil
 }
