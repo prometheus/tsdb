@@ -142,6 +142,14 @@ func TestCheckpoint(t *testing.T) {
 		}, nil)
 		testutil.Ok(t, w.Log(b))
 
+		b = enc.Tombstones([]Stone{
+			{ref: 0, intervals: Intervals{{last, last}}},
+			{ref: 1, intervals: Intervals{{last, last + 10000}}},
+			{ref: 2, intervals: Intervals{{last, last + 20000}}},
+			{ref: 3, intervals: Intervals{{last, last + 30000}}},
+		}, nil)
+		testutil.Ok(t, w.Log(b))
+		
 		last += 100
 	}
 	testutil.Ok(t, w.Close())
@@ -178,7 +186,17 @@ func TestCheckpoint(t *testing.T) {
 			samples, err := dec.Samples(rec, nil)
 			testutil.Ok(t, err)
 			for _, s := range samples {
+				testutil.Assert(t, s.Ref % 2 == 0, "sample with wrong Ref")
 				testutil.Assert(t, s.T >= last/2, "sample with wrong timestamp")
+			}
+		case RecordTombstones:
+			stones, err := dec.Tombstones(rec, nil)
+			testutil.Ok(t, err)
+			for _, s := range stones {
+				testutil.Assert(t, s.ref % 2 == 0, "tombstone with wrong ref")
+				for _, iv := range s.intervals {
+					testutil.Assert(t, iv.Maxt >= last/2, "tombstone with wrong interval")
+				}
 			}
 		}
 	}

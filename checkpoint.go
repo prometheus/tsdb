@@ -193,7 +193,7 @@ func Checkpoint(w *wal.WAL, from, to int, keep func(id uint64) bool, mint int64)
 			// Drop irrelevant samples in place.
 			repl := samples[:0]
 			for _, s := range samples {
-				if s.T >= mint {
+				if keep(s.Ref) && s.T >= mint {
 					repl = append(repl, s)
 				}
 			}
@@ -212,7 +212,7 @@ func Checkpoint(w *wal.WAL, from, to int, keep func(id uint64) bool, mint int64)
 			repl := tstones[:0]
 			for _, s := range tstones {
 				for _, iv := range s.intervals {
-					if iv.Maxt >= mint {
+					if keep(s.ref) && iv.Maxt >= mint {
 						repl = append(repl, s)
 						break
 					}

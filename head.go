@@ -906,7 +906,7 @@ func (h *Head) Delete(mint, maxt int64, ms ...labels.Matcher) error {
 
 // chunkRewrite re-writes the chunks which overlaps with deleted ranges
 // and removes the samples in the deleted ranges.
-// Chunks is deleted if no samples are left at the end.
+// Chunks are deleted if no samples are left at the end.
 func (h *Head) chunkRewrite(ref uint64, dranges Intervals) (err error) {
 	if len(dranges) == 0 {
 		return nil
@@ -1038,7 +1038,7 @@ func (h *headChunkReader) Close() error {
 }
 
 // packChunkID packs a seriesID and a chunkID within it into a global 8 byte ID.
-// It panicks if the seriesID exceeds 5 bytes or the chunk ID 3 bytes.
+// It panics if the seriesID exceeds 5 bytes or the chunk ID 3 bytes.
 func packChunkID(seriesID, chunkID uint64) uint64 {
 	if seriesID > (1<<40)-1 {
 		panic("series ID exceeds 5 bytes")
