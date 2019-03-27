@@ -302,7 +302,7 @@ func Open(dir string, l log.Logger, r prometheus.Registerer, opts *Options) (db 
 	var wlog *wal.WAL
 	segmentSize := wal.DefaultSegmentSize
 	// Wal is enabled.
-	if opts.WALSegmentSize >= 0 {
+	if opts.WALSegmentSize >= 0 && !db.opts.ReadOnly {
 		// Wal is set to a custom size.
 		if opts.WALSegmentSize > 0 {
 			segmentSize = opts.WALSegmentSize

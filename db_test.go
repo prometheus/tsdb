@@ -2226,27 +2226,27 @@ func TestReadOnlyDB(t *testing.T) {
 		return
 	}
 
-	// if ok := t.Run("Ensure that the wal is disabled.", func(t *testing.T) {
-	// // Dereference the DefaultOptions so that it makes a copy and
-	// // applies changes to the copy and not globally to interfere with the other tests.
-	// 	opts := *DefaultOptions
-	// 	opts.ReadOnly = true
-	// 	db, delete := openTestDB(t, &opts)
-	// 	defer func() {
-	// 		testutil.Ok(t, db.Close())
-	// 		delete()
-	// 	}()
+	if ok := t.Run("Ensure that the wal is disabled.", func(t *testing.T) {
+		// Dereference the DefaultOptions so that it makes a copy and
+		// applies changes to the copy and not globally to interfere with the other tests.
+		opts := *DefaultOptions
+		opts.ReadOnly = true
+		db, delete := openTestDB(t, &opts)
+		defer func() {
+			testutil.Ok(t, db.Close())
+			delete()
+		}()
 
-	// 	app := db.Appender()
-	// 	_, err := app.Add(labels.Labels{labels.Label{Name: "name", Value: "value"}}, 1, rand.Float64())
-	// 	testutil.Ok(t, err)
-	// 	testutil.Ok(t, app.Commit())
-	// 	_, err = os.Stat(filepath.Join(db.Dir(), "wal"))
-	// 	testutil.Assert(t, os.IsNotExist(err), "ReadOnly didn't prevent creating a wal folder")
+		app := db.Appender()
+		_, err := app.Add(labels.Labels{labels.Label{Name: "name", Value: "value"}}, 1, rand.Float64())
+		testutil.Ok(t, err)
+		testutil.Ok(t, app.Commit())
+		_, err = os.Stat(filepath.Join(db.Dir(), "wal"))
+		testutil.Assert(t, os.IsNotExist(err), "ReadOnly didn't prevent creating a wal folder")
 
-	// }); !ok {
-	// 	return
-	// }
+	}); !ok {
+		return
+	}
 
 	if ok := t.Run("Ensure time retention is disabled.", func(t *testing.T) {
 		db := openTestDBTimeRetentionable(t)
