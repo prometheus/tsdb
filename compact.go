@@ -274,19 +274,14 @@ func (c *LeveledCompactor) selectOverlappingDirs(ds []dirMeta) []string {
 	}
 	var overlappingDirs []string
 	globalMaxt := ds[0].meta.MaxTime
-	chained := false
 	for i, d := range ds[1:] {
 		if d.meta.MinTime < globalMaxt {
-			if !chained {
+			if len(overlappingDirs) == 0 {
 				overlappingDirs = append(overlappingDirs, ds[i].dir)
-				chained = true
 			}
 			overlappingDirs = append(overlappingDirs, d.dir)
-		} else {
-			if chained {
-				break
-			}
-			chained = false
+		}else if len(overlappingDirs) > 0 {
+			break
 		}
 		if d.meta.MaxTime > globalMaxt {
 			globalMaxt = d.meta.MaxTime
