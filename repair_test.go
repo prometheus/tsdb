@@ -59,12 +59,12 @@ func TestRepairBadIndexVersion(t *testing.T) {
 	// 		panic(err)
 	// 	}
 	// }
-	dbDir := filepath.Join("testdata", "repair_index_version", "01BZJ9WJQPWHGNC2W4J9TA62KC")
+	blockDir := filepath.Join("testdata", "repair_index_version", "01BZJ9WJQPWHGNC2W4J9TA62KC")
 	tmpDir := filepath.Join("testdata", "repair_index_version", "copy")
 	tmpBlockDir := filepath.Join(tmpDir, "3MCNSQ8S31EHGJYWK5E1GPJWJZ")
 
 	// Create a copy DB to run test against.
-	if err := fileutil.CopyDirs(dbDir, tmpBlockDir); err != nil {
+	if err := fileutil.CopyDirs(blockDir, tmpBlockDir); err != nil {
 		t.Fatal(err)
 	}
 	defer func() {
