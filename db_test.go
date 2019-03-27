@@ -492,7 +492,9 @@ func TestDB_Snapshot(t *testing.T) {
 	snap, err := ioutil.TempDir("", "snap")
 	testutil.Ok(t, err)
 
-	defer os.RemoveAll(snap)
+	defer func() {
+		testutil.Ok(t, os.RemoveAll(snap))
+	}()
 	testutil.Ok(t, db.Snapshot(snap, true))
 	testutil.Ok(t, db.Close())
 
@@ -559,7 +561,9 @@ Outer:
 		snap, err := ioutil.TempDir("", "snap")
 		testutil.Ok(t, err)
 
-		defer os.RemoveAll(snap)
+		defer func() {
+			testutil.Ok(t, os.RemoveAll(snap))
+		}()
 		testutil.Ok(t, db.Snapshot(snap, true))
 		testutil.Ok(t, db.Close())
 
@@ -797,31 +801,55 @@ func TestWALFlushedOnDBClose(t *testing.T) {
 	testutil.Equals(t, []string{"labelvalue"}, values)
 }
 
-func TestWALSegmentSizeOption(t *testing.T) {
-	// Dereference the DefaultOptions so that it makes a copy and
-	// applies changes to the copy and not globally to interfere with the other tests.
-	options := *DefaultOptions
-	options.WALSegmentSize = 2 * 32 * 1024
-	db, delete := openTestDB(t, &options)
-	defer delete()
-	app := db.Appender()
-	for i := int64(0); i < 155; i++ {
-		_, err := app.Add(labels.Labels{labels.Label{Name: "wal", Value: "size"}}, i, rand.Float64())
-		testutil.Ok(t, err)
-		testutil.Ok(t, app.Commit())
+func TestWALSegmentSizeOptions(t *testing.T) {
+	tests := map[int]func(dbdir string, segmentSize int){
+		// Default Wal Size.
+		0: func(dbDir string, segmentSize int) {
+			files, err := ioutil.ReadDir(filepath.Join(dbDir, "wal"))
+			testutil.Ok(t, err)
+			for _, f := range files[:len(files)-1] {
+				testutil.Equals(t, int64(DefaultOptions.WALSegmentSize), f.Size(), "WAL file size doesn't match WALSegmentSize option, filename: %v", f.Name())
+			}
+			lastFile := files[len(files)-1]
+			testutil.Assert(t, int64(DefaultOptions.WALSegmentSize) > lastFile.Size(), "last WAL file size is not smaller than the WALSegmentSize option, filename: %v", lastFile.Name())
+		},
+		// Custom Wal Size.
+		2 * 32 * 1024: func(dbDir string, segmentSize int) {
+			files, err := ioutil.ReadDir(filepath.Join(dbDir, "wal"))
+			testutil.Assert(t, len(files) > 1, "current WALSegmentSize should result in more than a single WAL file.")
+			testutil.Ok(t, err)
+			for _, f := range files[:len(files)-1] {
+				testutil.Equals(t, int64(segmentSize), f.Size(), "WAL file size doesn't match WALSegmentSize option, filename: %v", f.Name())
+			}
+			lastFile := files[len(files)-1]
+			testutil.Assert(t, int64(segmentSize) > lastFile.Size(), "last WAL file size is not smaller than the WALSegmentSize option, filename: %v", lastFile.Name())
+		},
+		// Wal disabled.
+		-1: func(dbDir string, segmentSize int) {
+			if _, err := os.Stat(filepath.Join(dbDir, "wal")); !os.IsNotExist(err) {
+				t.Fatal("wal directory is present when the wal is disabled")
+			}
+		},
 	}
+	for segmentSize, testFunc := range tests {
+		t.Run(fmt.Sprintf("WALSegmentSize %d test", segmentSize), func(t *testing.T) {
+			// Dereference the DefaultOptions so that it makes a copy and
+			// applies changes to the copy and not globally to interfere with the other tests.
+			options := *DefaultOptions
+			options.WALSegmentSize = segmentSize
+			db, delete := openTestDB(t, &options)
+			defer delete()
+			app := db.Appender()
+			for i := int64(0); i < 155; i++ {
+				_, err := app.Add(labels.Labels{labels.Label{Name: "wal", Value: "size"}}, i, rand.Float64())
+				testutil.Ok(t, err)
+				testutil.Ok(t, app.Commit())
+			}
 
-	dbDir := db.Dir()
-	db.Close()
-	files, err := ioutil.ReadDir(filepath.Join(dbDir, "wal"))
-	testutil.Assert(t, len(files) > 1, "current WALSegmentSize should result in more than a single WAL file.")
-	testutil.Ok(t, err)
-	for i, f := range files {
-		if len(files)-1 != i {
-			testutil.Equals(t, int64(options.WALSegmentSize), f.Size(), "WAL file size doesn't match WALSegmentSize option, filename: %v", f.Name())
-			continue
-		}
-		testutil.Assert(t, int64(options.WALSegmentSize) > f.Size(), "last WAL file size is not smaller than the WALSegmentSize option, filename: %v", f.Name())
+			dbDir := db.Dir()
+			db.Close()
+			testFunc(dbDir, options.WALSegmentSize)
+		})
 	}
 }
 
@@ -857,7 +885,9 @@ func TestTombstoneClean(t *testing.T) {
 		snap, err := ioutil.TempDir("", "snap")
 		testutil.Ok(t, err)
 
-		defer os.RemoveAll(snap)
+		defer func() {
+			testutil.Ok(t, os.RemoveAll(snap))
+		}()
 		testutil.Ok(t, db.Snapshot(snap, true))
 		testutil.Ok(t, db.Close())
 
@@ -1339,10 +1369,13 @@ func TestInitializeHeadTimestamp(t *testing.T) {
 	t.Run("clean", func(t *testing.T) {
 		dir, err := ioutil.TempDir("", "test_head_init")
 		testutil.Ok(t, err)
-		defer os.RemoveAll(dir)
+		defer func() {
+			testutil.Ok(t, os.RemoveAll(dir))
+		}()
 
 		db, err := Open(dir, nil, nil, nil)
 		testutil.Ok(t, err)
+		defer db.Close()
 
 		// Should be set to init values if no WAL or blocks exist so far.
 		testutil.Equals(t, int64(math.MaxInt64), db.head.MinTime())
@@ -1359,7 +1392,9 @@ func TestInitializeHeadTimestamp(t *testing.T) {
 	t.Run("wal-only", func(t *testing.T) {
 		dir, err := ioutil.TempDir("", "test_head_init")
 		testutil.Ok(t, err)
-		defer os.RemoveAll(dir)
+		defer func() {
+			testutil.Ok(t, os.RemoveAll(dir))
+		}()
 
 		testutil.Ok(t, os.MkdirAll(path.Join(dir, "wal"), 0777))
 		w, err := wal.New(nil, nil, path.Join(dir, "wal"))
@@ -1381,6 +1416,7 @@ func TestInitializeHeadTimestamp(t *testing.T) {
 
 		db, err := Open(dir, nil, nil, nil)
 		testutil.Ok(t, err)
+		defer db.Close()
 
 		testutil.Equals(t, int64(5000), db.head.MinTime())
 		testutil.Equals(t, int64(15000), db.head.MaxTime())
@@ -1388,12 +1424,15 @@ func TestInitializeHeadTimestamp(t *testing.T) {
 	t.Run("existing-block", func(t *testing.T) {
 		dir, err := ioutil.TempDir("", "test_head_init")
 		testutil.Ok(t, err)
-		defer os.RemoveAll(dir)
+		defer func() {
+			testutil.Ok(t, os.RemoveAll(dir))
+		}()
 
 		createBlock(t, dir, genSeries(1, 1, 1000, 2000))
 
 		db, err := Open(dir, nil, nil, nil)
 		testutil.Ok(t, err)
+		defer db.Close()
 
 		testutil.Equals(t, int64(2000), db.head.MinTime())
 		testutil.Equals(t, int64(2000), db.head.MaxTime())
@@ -1401,7 +1440,9 @@ func TestInitializeHeadTimestamp(t *testing.T) {
 	t.Run("existing-block-and-wal", func(t *testing.T) {
 		dir, err := ioutil.TempDir("", "test_head_init")
 		testutil.Ok(t, err)
-		defer os.RemoveAll(dir)
+		defer func() {
+			testutil.Ok(t, os.RemoveAll(dir))
+		}()
 
 		createBlock(t, dir, genSeries(1, 1, 1000, 6000))
 
@@ -1427,6 +1468,7 @@ func TestInitializeHeadTimestamp(t *testing.T) {
 
 		db, err := Open(dir, nil, r, nil)
 		testutil.Ok(t, err)
+		defer db.Close()
 
 		testutil.Equals(t, int64(6000), db.head.MinTime())
 		testutil.Equals(t, int64(15000), db.head.MaxTime())
@@ -1498,7 +1540,7 @@ func TestNoEmptyBlocks(t *testing.T) {
 		testutil.Assert(t, len(actBlocks) == 1, "No blocks created when compacting with >0 samples")
 	})
 
-	t.Run(`When no new block is created from head, and there are some blocks on disk 
+	t.Run(`When no new block is created from head, and there are some blocks on disk
 	compaction should not run into infinite loop (was seen during development).`, func(t *testing.T) {
 		oldBlocks := db.Blocks()
 		app := db.Appender()

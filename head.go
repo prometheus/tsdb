@@ -39,7 +39,7 @@ var (
 	ErrNotFound = errors.Errorf("not found")
 
 	// ErrOutOfOrderSample is returned if an appended sample has a
-	// timestamp larger than the most recent sample.
+	// timestamp smaller than the most recent sample.
 	ErrOutOfOrderSample = errors.New("out of order sample")
 
 	// ErrAmendSample is returned if an appended sample has the same timestamp
@@ -891,8 +891,8 @@ func (h *Head) Delete(mint, maxt int64, ms ...labels.Matcher) error {
 	var enc RecordEncoder
 	if h.wal != nil {
 		// Although we don't store the stones in the head
-		// we need to write them  to the WAL to mark these as deleted
-		// after a restart while loeading the WAL.
+		// we need to write them to the WAL to mark these as deleted
+		// after a restart while loading the WAL.
 		if err := h.wal.Log(enc.Tombstones(stones, nil)); err != nil {
 			return err
 		}
@@ -954,7 +954,7 @@ func (h *Head) gc() {
 	h.postings.Delete(deleted)
 
 	// Rebuild symbols and label value indices from what is left in the postings terms.
-	symbols := make(map[string]struct{})
+	symbols := make(map[string]struct{}, len(h.symbols))
 	values := make(map[string]stringset, len(h.values))
 
 	if err := h.postings.Iter(func(t labels.Label, _ index.Postings) error {

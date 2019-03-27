@@ -96,6 +96,7 @@ func TestRepairBadIndexVersion(t *testing.T) {
 
 	r, err = index.NewFileReader(filepath.Join(tmpBlockDir, indexFilename))
 	testutil.Ok(t, err)
+	defer r.Close()
 	p, err = r.Postings("b", "1")
 	testutil.Ok(t, err)
 	res := []labels.Labels{}
