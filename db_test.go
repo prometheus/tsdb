@@ -1706,9 +1706,9 @@ func TestCorrectNumTombstones(t *testing.T) {
 
 func TestVerticalCompaction(t *testing.T) {
 	cases := []struct {
-		blockSeries [][]Series
-		expSeries   map[string][]tsdbutil.Sample
-		expBlockNum int
+		blockSeries 	     [][]Series
+		expSeries   	     map[string][]tsdbutil.Sample
+		expBlockNum 	     int
 		expOverlappingBlocks int
 	}{
 		// Case 0
@@ -1736,7 +1736,7 @@ func TestVerticalCompaction(t *testing.T) {
 				sample{8, 99}, sample{9, 99}, sample{10, 99}, sample{11, 99},
 				sample{12, 99}, sample{13, 99}, sample{14, 99},
 			}},
-			expBlockNum: 1,
+			expBlockNum: 	      1,
 			expOverlappingBlocks: 1,
 		},
 		// Case 1
@@ -1800,7 +1800,7 @@ func TestVerticalCompaction(t *testing.T) {
 				sample{14, 59}, sample{15, 59}, sample{17, 59}, sample{20, 59},
 				sample{21, 59}, sample{22, 59},
 			}},
-			expBlockNum: 1,
+			expBlockNum:          1,
 			expOverlappingBlocks: 1,
 		},
 		// Case 3
@@ -1836,7 +1836,7 @@ func TestVerticalCompaction(t *testing.T) {
 				sample{15, 59}, sample{16, 99}, sample{17, 59}, sample{20, 59},
 				sample{21, 59}, sample{22, 59},
 			}},
-			expBlockNum: 1,
+			expBlockNum:          1,
 			expOverlappingBlocks: 1,
 		},
 		// Case 4
@@ -1874,7 +1874,7 @@ func TestVerticalCompaction(t *testing.T) {
 				sample{13, 99}, sample{15, 99}, sample{16, 99}, sample{17, 99},
 				sample{20, 0}, sample{22, 0},
 			}},
-			expBlockNum: 1,
+			expBlockNum:          1,
 			expOverlappingBlocks: 1,
 		},
 		// Case 5: series are merged properly when there are multiple series.
@@ -1970,7 +1970,7 @@ func TestVerticalCompaction(t *testing.T) {
 					sample{20, 0}, sample{22, 0},
 				},
 			},
-			expBlockNum: 1,
+			expBlockNum:          1,
 			expOverlappingBlocks: 1,
 		},
 		// Case 6
@@ -2015,7 +2015,7 @@ func TestVerticalCompaction(t *testing.T) {
 				sample{24, 0}, sample{25, 99}, sample{26, 99}, sample{27, 99},
 				sample{28, 99}, sample{29, 99}, sample{30, 99}, sample{31, 99},
 			}},
-			expBlockNum: 2,
+			expBlockNum:          2,
 			expOverlappingBlocks: 2,
 		},
 	}
