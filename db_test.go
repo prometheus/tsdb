@@ -1706,9 +1706,9 @@ func TestCorrectNumTombstones(t *testing.T) {
 
 func TestVerticalCompaction(t *testing.T) {
 	cases := []struct {
-		blockSeries 	     [][]Series
-		expSeries   	     map[string][]tsdbutil.Sample
-		expBlockNum 	     int
+		blockSeries          [][]Series
+		expSeries            map[string][]tsdbutil.Sample
+		expBlockNum          int
 		expOverlappingBlocks int
 	}{
 		// Case 0
@@ -1736,7 +1736,7 @@ func TestVerticalCompaction(t *testing.T) {
 				sample{8, 99}, sample{9, 99}, sample{10, 99}, sample{11, 99},
 				sample{12, 99}, sample{13, 99}, sample{14, 99},
 			}},
-			expBlockNum: 	      1,
+			expBlockNum:          1,
 			expOverlappingBlocks: 1,
 		},
 		// Case 1
@@ -1764,7 +1764,7 @@ func TestVerticalCompaction(t *testing.T) {
 				sample{8, 99}, sample{9, 99}, sample{10, 99}, sample{11, 0},
 				sample{13, 0}, sample{17, 0},
 			}},
-			expBlockNum: 1,
+			expBlockNum:          1,
 			expOverlappingBlocks: 1,
 		},
 		// Case 2
