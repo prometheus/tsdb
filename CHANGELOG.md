@@ -1,7 +1,8 @@
 ## master / unreleased
  - [REMOVED] `chunks.NewReader` is removed as it wasn't used anywhere.
  - [REMOVED] `FromData` is considered unused so was removed.
- - [BUGFIX] Bugfix in selectOverlappingDirs. Only return truly overlapping blocks.
+ - [FEATURE] Added option WALSegmentSize -1 to disable the WAL.
+ - [BUGFIX] Bugfix in selectOverlappingDirs. Only return the first overlapping blocks.
 
 ## 0.6.1
   - [BUGFIX] Update `last` after appending a non-overlapping chunk in `chunks.MergeOverlappingChunks`. [#539](https://github.com/prometheus/tsdb/pull/539)
