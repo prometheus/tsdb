@@ -15,7 +15,6 @@
 package tsdb
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -36,6 +35,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/tsdb/chunkenc"
+	tsdb_errors "github.com/prometheus/tsdb/errors"
 	"github.com/prometheus/tsdb/fileutil"
 	"github.com/prometheus/tsdb/labels"
 	"github.com/prometheus/tsdb/wal"
@@ -54,7 +54,10 @@ var DefaultOptions = &Options{
 
 // Options of the DB storage.
 type Options struct {
-	// Segments (wal files) max size
+	// Segments (wal files) max size.
+	// WALSegmentSize = 0, segment size is default size.
+	// WALSegmentSize > 0, segment size is WALSegmentSize.
+	// WALSegmentSize < 0, wal is disabled.
 	WALSegmentSize int
 
 	// Duration of persisted data to keep.
@@ -288,14 +291,20 @@ func Open(dir string, l log.Logger, r prometheus.Registerer, opts *Options) (db 
 	}
 	db.compactCancel = cancel
 
+	var wlog *wal.WAL
 	segmentSize := wal.DefaultSegmentSize
-	if opts.WALSegmentSize > 0 {
-		segmentSize = opts.WALSegmentSize
+	// Wal is enabled.
+	if opts.WALSegmentSize >= 0 {
+		// Wal is set to a custom size.
+		if opts.WALSegmentSize > 0 {
+			segmentSize = opts.WALSegmentSize
+		}
+		wlog, err = wal.NewSize(l, r, filepath.Join(dir, "wal"), segmentSize)
+		if err != nil {
+			return nil, err
+		}
 	}
-	wlog, err := wal.NewSize(l, r, filepath.Join(dir, "wal"), segmentSize)
-	if err != nil {
-		return nil, err
-	}
+
 	db.head, err = NewHead(r, l, wlog, opts.BlockRanges[0])
 	if err != nil {
 		return nil, err
@@ -861,7 +870,7 @@ func (db *DB) Close() error {
 		g.Go(pb.Close)
 	}
 
-	var merr MultiError
+	var merr tsdb_errors.MultiError
 
 	merr.Add(g.Wait())
 
@@ -1089,50 +1098,8 @@ func nextSequenceFile(dir string) (string, int, error) {
 	return filepath.Join(dir, fmt.Sprintf("%0.6d", i+1)), int(i + 1), nil
 }
 
-// The MultiError type implements the error interface, and contains the
-// Errors used to construct it.
-type MultiError []error
-
-// Returns a concatenated string of the contained errors
-func (es MultiError) Error() string {
-	var buf bytes.Buffer
-
-	if len(es) > 1 {
-		fmt.Fprintf(&buf, "%d errors: ", len(es))
-	}
-
-	for i, err := range es {
-		if i != 0 {
-			buf.WriteString("; ")
-		}
-		buf.WriteString(err.Error())
-	}
-
-	return buf.String()
-}
-
-// Add adds the error to the error list if it is not nil.
-func (es *MultiError) Add(err error) {
-	if err == nil {
-		return
-	}
-	if merr, ok := err.(MultiError); ok {
-		*es = append(*es, merr...)
-	} else {
-		*es = append(*es, err)
-	}
-}
-
-// Err returns the error list as an error or nil if it is empty.
-func (es MultiError) Err() error {
-	if len(es) == 0 {
-		return nil
-	}
-	return es
-}
-
 func closeAll(cs []io.Closer) error {
-	var merr MultiError
+	var merr tsdb_errors.MultiError
 
 	for _, c := range cs {
 		merr.Add(c.Close())

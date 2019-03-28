@@ -31,6 +31,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/tsdb/chunkenc"
 	"github.com/prometheus/tsdb/chunks"
+	tsdb_errors "github.com/prometheus/tsdb/errors"
 	"github.com/prometheus/tsdb/fileutil"
 	"github.com/prometheus/tsdb/index"
 	"github.com/prometheus/tsdb/labels"
@@ -453,7 +454,7 @@ func (c *LeveledCompactor) Compact(dest string, dirs []string, open []*Block) (u
 		return uid, nil
 	}
 
-	var merr MultiError
+	var merr tsdb_errors.MultiError
 	merr.Add(err)
 	if err != context.Canceled {
 		for _, b := range bs {
@@ -531,7 +532,7 @@ func (c *LeveledCompactor) write(dest string, meta *BlockMeta, blocks ...BlockRe
 	tmp := dir + ".tmp"
 	var closers []io.Closer
 	defer func(t time.Time) {
-		var merr MultiError
+		var merr tsdb_errors.MultiError
 		merr.Add(err)
 		merr.Add(closeAll(closers))
 		err = merr.Err()
@@ -594,7 +595,7 @@ func (c *LeveledCompactor) write(dest string, meta *BlockMeta, blocks ...BlockRe
 	// though these are covered under defer. This is because in Windows,
 	// you cannot delete these unless they are closed and the defer is to
 	// make sure they are closed if the function exits due to an error above.
-	var merr MultiError
+	var merr tsdb_errors.MultiError
 	for _, w := range closers {
 		merr.Add(w.Close())
 	}
@@ -660,7 +661,7 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 		overlapping bool
 	)
 	defer func() {
-		var merr MultiError
+		var merr tsdb_errors.MultiError
 		merr.Add(err)
 		merr.Add(closeAll(closers))
 		err = merr.Err()
