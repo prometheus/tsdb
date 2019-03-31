@@ -329,7 +329,7 @@ func TestLeveledCompactor_plan(t *testing.T) {
 			metas: []dirMeta{
 				metaRange("1", 0, 20, nil),
 				metaRange("2", 10, 40, nil),
-				metaRange("3", 30, 40, nil),
+				metaRange("3", 30, 50, nil),
 			},
 			expected: []string{"1", "2", "3"},
 		},
