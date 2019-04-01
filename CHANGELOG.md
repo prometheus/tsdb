@@ -3,6 +3,7 @@
  - [REMOVED] `FromData` is considered unused so was removed.
  - [FEATURE] Added option WALSegmentSize -1 to disable the WAL.
  - [BUGFIX] Bugfix in selectOverlappingDirs. Only return the first overlapping blocks.
+ - [BUGFIX] Fsync the meta file to persist it on disk to avoid data loss in case of a host crash.
 
 ## 0.6.1
   - [BUGFIX] Update `last` after appending a non-overlapping chunk in `chunks.MergeOverlappingChunks`. [#539](https://github.com/prometheus/tsdb/pull/539)
