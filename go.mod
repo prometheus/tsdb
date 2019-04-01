@@ -22,6 +22,7 @@ require (
 	github.com/prometheus/common v0.0.0-20181113130724-41aa239b4cce // indirect
 	github.com/prometheus/procfs v0.0.0-20181005140218-185b4288413d // indirect
 	github.com/stretchr/testify v1.2.2 // indirect
+	github.com/theckman/goconstraint v1.11.0
 	golang.org/x/sync v0.0.0-20181108010431-42b317875d0f
 	golang.org/x/sys v0.0.0-20181107165924-66b7b1311ac8
 	gopkg.in/alecthomas/kingpin.v2 v2.2.6
