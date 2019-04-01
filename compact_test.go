@@ -300,9 +300,9 @@ func TestLeveledCompactor_plan(t *testing.T) {
 			},
 			expected: []string{"7", "8"},
 		},
-		//|--------------|
-		//              |----------------|
-		//			           |--------------|
+		// |--------------|
+		//               |----------------|
+		//                                |--------------|
 		"Overlapping blocks 1": {
 			metas: []dirMeta{
 				metaRange("1", 0, 20, nil),
@@ -311,9 +311,9 @@ func TestLeveledCompactor_plan(t *testing.T) {
 			},
 			expected: []string{"1", "2"},
 		},
-		//|--------------|
-		//                 |--------------|
-		//			    |--------------|
+		// |--------------|
+		//                |--------------|
+		//                        |--------------|
 		"Overlapping blocks 2": {
 			metas: []dirMeta{
 				metaRange("1", 0, 20, nil),
@@ -322,9 +322,9 @@ func TestLeveledCompactor_plan(t *testing.T) {
 			},
 			expected: []string{"2", "3"},
 		},
-		//|--------------|
-		//        |--------------|
-		//		     |--------------|
+		// |--------------|
+		//         |---------------------|
+		//                       |--------------|
 		"Overlapping blocks 3": {
 			metas: []dirMeta{
 				metaRange("1", 0, 20, nil),
@@ -333,10 +333,10 @@ func TestLeveledCompactor_plan(t *testing.T) {
 			},
 			expected: []string{"1", "2", "3"},
 		},
-		//|--------------|
-		//              |------------------------------------|
-		//		   |--------------|
-		//			            |--------------|
+		// |--------------|
+		//               |--------------------------------|
+		//                |--------------|
+		//                               |--------------|
 		"Overlapping blocks 4": {
 			metas: []dirMeta{
 				metaRange("5", 0, 360, nil),
@@ -346,10 +346,10 @@ func TestLeveledCompactor_plan(t *testing.T) {
 			},
 			expected: []string{"5", "6", "7", "8"},
 		},
-		//|--------------|
-		//              |--------------|
-		// 				             |--------------|
-		//       				                   |--------------|
+		// |--------------|
+		//               |--------------|
+		//                                            |--------------|
+		//                                                          |--------------|
 		"Overlapping blocks 5": {
 			metas: []dirMeta{
 				metaRange("1", 0, 10, nil),
