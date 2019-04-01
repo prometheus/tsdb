@@ -253,7 +253,8 @@ func writeMetaFile(dir string, meta *BlockMeta) error {
 	}
 	// Force the kernel to persist the file on disk to avoid data loss if the host crashes.
 	if err := f.Sync(); err != nil {
-		return err
+		merr.Add(f.Close())
+		return merr.Err()
 	}
 	if err := f.Close(); err != nil {
 		return err
