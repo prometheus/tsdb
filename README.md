@@ -6,8 +6,6 @@
 
 This repository contains the Prometheus storage layer that is used in its 2.x releases.
 
-It requires golang 1.12 or higher.
-
 A writeup of its design can be found [here](https://fabxc.org/blog/2017-04-10-writing-a-tsdb/).
 
 Based on the Gorilla TSDB [white papers](http://www.vldb.org/pvldb/vol8/p1816-teller.pdf).
