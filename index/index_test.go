@@ -423,6 +423,6 @@ func TestNewFileReaderCorrupted(t *testing.T) {
 	_, err = NewFileReader(idxName)
 	testutil.NotOk(t, err)
 
-	// dir.Close will fail on Win if idxName fd is not closed on error path
+	// dir.Close will fail on Win if idxName fd is not closed on error path.
 	dir.Close()
 }
