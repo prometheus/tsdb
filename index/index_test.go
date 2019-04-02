@@ -412,3 +412,17 @@ func TestReaderWithInvalidBuffer(t *testing.T) {
 	_, err := NewReader(b)
 	testutil.NotOk(t, err)
 }
+
+func TestNewFileReaderCorrupted(t *testing.T) {
+	dir := testutil.NewTemporaryDirectory("block", t)
+
+	idxName := filepath.Join(dir.Path(), "index")
+	err := ioutil.WriteFile(idxName, []byte("corrupted contents"), 0644)
+	testutil.Ok(t, err)
+
+	_, err = NewFileReader(idxName)
+	testutil.NotOk(t, err)
+
+	// dir.Close will fail on Win if idxName fd is not closed on error path
+	dir.Close()
+}
