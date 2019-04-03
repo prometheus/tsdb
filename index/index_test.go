@@ -413,7 +413,8 @@ func TestReaderWithInvalidBuffer(t *testing.T) {
 	testutil.NotOk(t, err)
 }
 
-func TestNewFileReaderCorrupted(t *testing.T) {
+// TestNewFileReaderErrorNoOpenFiles ensures that in case of an error no file remains open.
+func TestNewFileReaderErrorNoOpenFiles(t *testing.T) {
 	dir := testutil.NewTemporaryDirectory("block", t)
 
 	idxName := filepath.Join(dir.Path(), "index")
