@@ -1,4 +1,6 @@
 ## master / unreleased
+
+## 0.7.0
  - [CHANGE] tsdb now requires golang 1.12 or higher.
  - [REMOVED] `chunks.NewReader` is removed as it wasn't used anywhere.
  - [REMOVED] `FromData` is considered unused so was removed.
