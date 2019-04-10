@@ -159,12 +159,12 @@ type WAL struct {
 	logger      log.Logger
 	segmentSize int
 	mtx         sync.RWMutex
-	segment     *Segment // active segment
-	donePages   int      // pages written to the segment
-	page        *page    // active page
+	segment     *Segment // Active segment.
+	donePages   int      // Pages written to the segment.
+	page        *page    // Active page.
 	stopc       chan chan struct{}
 	actorc      chan func()
-	closed      bool // To allow calling Close() more than once without blocking.
+	close       sync.Once
 
 	fsyncDuration   prometheus.Summary
 	pageFlushes     prometheus.Counter
@@ -605,31 +605,30 @@ func (w *WAL) Close() (err error) {
 	w.mtx.Lock()
 	defer w.mtx.Unlock()
 
-	if w.closed {
-		return nil
-	}
-
-	// Flush the last page and zero out all its remaining size.
-	// We must not flush an empty page as it would falsely signal
-	// the segment is done if we start writing to it again after opening.
-	if w.page.alloc > 0 {
-		if err := w.flushPage(true); err != nil {
-			return err
+	// Ensure any sequential call is noop and
+	// calling Close more than once doesn't block.
+	w.close.Do(func() {
+		// Flush the last page and zero out all its remaining size.
+		// We must not flush an empty page as it would falsely signal
+		// the segment is done if we start writing to it again after opening.
+		if w.page.alloc > 0 {
+			if err = w.flushPage(true); err != nil {
+				return
+			}
 		}
-	}
 
-	donec := make(chan struct{})
-	w.stopc <- donec
-	<-donec
+		donec := make(chan struct{})
+		w.stopc <- donec
+		<-donec
 
-	if err = w.fsync(w.segment); err != nil {
-		level.Error(w.logger).Log("msg", "sync previous segment", "err", err)
-	}
-	if err := w.segment.Close(); err != nil {
-		level.Error(w.logger).Log("msg", "close previous segment", "err", err)
-	}
-	w.closed = true
-	return nil
+		if err := w.fsync(w.segment); err != nil {
+			level.Error(w.logger).Log("msg", "sync previous segment", "err", err)
+		}
+		if err := w.segment.Close(); err != nil {
+			level.Error(w.logger).Log("msg", "close previous segment", "err", err)
+		}
+	})
+	return err
 }
 
 type segmentRef struct {
