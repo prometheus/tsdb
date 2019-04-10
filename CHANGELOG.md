@@ -1,4 +1,6 @@
 ## master / unreleased
+ - [BUGFIX] Calling Close more than once on a querier doesn't caue a panic anymore.
+
 
 ## 0.7.0
  - [CHANGE] tsdb now requires golang 1.12 or higher.

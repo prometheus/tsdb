@@ -1917,6 +1917,9 @@ func TestClose(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Opening test storage failed: %s", err)
 	}
+	defer func() {
+		testutil.Ok(t, db.Close())
+	}()
 
 	q, err := db.Querier(0, 20)
 	testutil.Ok(t, err)
