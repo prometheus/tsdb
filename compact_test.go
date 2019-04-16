@@ -1082,6 +1082,7 @@ func TestOpenBlockWithHook(t *testing.T) {
 	//init action
 	original := filepath.Join(string(filepath.Separator), "tmp", fmt.Sprintf("dev-%d", time.Now().Unix()))
 	mountpoint := filepath.Join(string(filepath.Separator), "tmp", fmt.Sprintf("mountpoint-%d", time.Now().Unix()))
+	//create block will be successful because hook server does not start
 	path := createBlock(t, original, genSeries(1, 1, 200, 300))
 	_, file := filepath.Split(path)
 	server := newFuseServer(t, original, mountpoint)
