@@ -1090,7 +1090,7 @@ func TestOpenBlockWithHook(t *testing.T) {
 
 	//normal logic
 	OpenBlock(nil, filepath.Join(mountpoint, file), nil)
-	dir, _  := ioutil.ReadDir(filepath.Join(mountpoint, file))
+	dir, _ := ioutil.ReadDir(filepath.Join(mountpoint, file))
 
 	testutil.Equals(t, true, len(dir) > 0)
 	hasTempFile := false
@@ -1104,17 +1104,17 @@ func TestOpenBlockWithHook(t *testing.T) {
 	testutil.Equals(t, true, hasTempFile)
 }
 
-func newFuseServer(t *testing.T, original, mountpoint string)(*fuse.Server){
+func newFuseServer(t *testing.T, original, mountpoint string) *fuse.Server {
 	createDirIfAbsent(original)
 	createDirIfAbsent(mountpoint)
-	fs, err :=  testutil.NewHookFs(original, mountpoint, &TestRenameHook{})
+	fs, err := testutil.NewHookFs(original, mountpoint, &TestRenameHook{})
 	testutil.Ok(t, err)
 	server, err := fs.NewServe()
 	if err != nil {
 		fmt.Printf("start server failed, err=%v \n", err)
 	}
 	testutil.Ok(t, err)
-	go func(){
+	go func() {
 		fs.Start(server)
 	}()
 
@@ -1137,7 +1137,7 @@ func createDirIfAbsent(name string) {
 	}
 }
 
-type TestRenameHook struct {}
+type TestRenameHook struct{}
 
 func (h *TestRenameHook) PreRename(oldPatgh string, newPath string) (hooked bool, err error) {
 	fmt.Printf("renamed file from %s to %s \n", oldPatgh, newPath)
