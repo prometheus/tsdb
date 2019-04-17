@@ -17,7 +17,6 @@ import (
 	"context"
 	"fmt"
 	"github.com/hanwen/go-fuse/fuse"
-	testutil2 "github.com/qiffang/tsdb/testutil"
 	"io/ioutil"
 	"math"
 	"os"
@@ -1108,7 +1107,7 @@ func TestOpenBlockWithHook(t *testing.T) {
 func newFuseServer(t *testing.T, original, mountpoint string)(*fuse.Server){
 	createDirIfAbsent(original)
 	createDirIfAbsent(mountpoint)
-	fs, err :=  testutil2.NewHookFs(original, mountpoint, &TestRenameHook{})
+	fs, err :=  testutil.NewHookFs(original, mountpoint, &TestRenameHook{})
 	testutil.Ok(t, err)
 	server, err := fs.NewServe()
 	if err != nil {
