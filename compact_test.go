@@ -1112,7 +1112,7 @@ func newFuseServer(t *testing.T, original, mountpoint string)(*fuse.Server){
 	testutil.Ok(t, err)
 	server, err := fs.NewServe()
 	if err != nil {
-		fmt.Printf("start server failed, %v \n", err)
+		fmt.Printf("start server failed, err=%v \n", err)
 	}
 	testutil.Ok(t, err)
 	go func(){
