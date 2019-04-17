@@ -22,7 +22,6 @@ import (
 	"github.com/hanwen/go-fuse/fuse"
 	"github.com/hanwen/go-fuse/fuse/nodefs"
 	"github.com/hanwen/go-fuse/fuse/pathfs"
-	log "github.com/sirupsen/logrus"
 )
 
 type HookFs struct {
@@ -34,11 +33,6 @@ type HookFs struct {
 }
 
 func NewHookFs(original string, mountpoint string, hook Hook) (*HookFs, error) {
-	log.WithFields(log.Fields{
-		"original":   original,
-		"mountpoint": mountpoint,
-	}).Debug("Hooking a fs")
-
 	loopbackfs := pathfs.NewLoopbackFileSystem(original)
 	hookfs := &HookFs{
 		Original:   original,
