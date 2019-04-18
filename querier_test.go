@@ -207,7 +207,6 @@ func createIdxChkReaders(tc []seriesSamples) (IndexReader, ChunkReader, int64, i
 	blockMaxt := int64(math.MinInt64)
 
 	var chunkRef uint64
-	chunkRef = 0
 	for i, s := range tc {
 		i = i + 1 // 0 is not a valid posting.
 		metas := make([]chunks.Meta, 0, len(s.chunks))
