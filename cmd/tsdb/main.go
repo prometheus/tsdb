@@ -547,7 +547,7 @@ func analyzeBlock(b *tsdb.Block, limit int) {
 	printInfo(postingInfos)
 }
 
-func dumpSamples(db *tsdb.DB, mint, maxt int64) {
+func dumpSamples(db *tsdb.DBReadOnly, mint, maxt int64) {
 	q, err := db.Querier(mint, maxt)
 	if err != nil {
 		exitWithError(err)

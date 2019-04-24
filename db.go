@@ -245,8 +245,13 @@ func newDBMetrics(db *DB, r prometheus.Registerer) *dbMetrics {
 	return m
 }
 
-// OpenReadOnly returns a new DB in the given directory only for read operatiuons.
-func OpenReadOnly(dir string, l log.Logger, r prometheus.Registerer) (db *DB, err error) {
+// DBReadOnly provides APIs for read only operations on a database.
+type DBReadOnly struct {
+	db *DB
+}
+
+// OpenReadOnly returns a new DB in the given directory only for read operations.
+func OpenReadOnly(dir string, l log.Logger, r prometheus.Registerer) (db *DBReadOnly, err error) {
 	if l == nil {
 		l = log.NewNopLogger()
 	}
@@ -255,18 +260,21 @@ func OpenReadOnly(dir string, l log.Logger, r prometheus.Registerer) (db *DB, er
 		return nil, err
 	}
 
-	db = &DB{
-		dir:       dir,
-		logger:    l,
-		chunkPool: chunkenc.NewPool(),
-	}
-
-	db.head, err = NewHead(r, l, nil, 1)
+	head, err := NewHead(r, l, nil, 1)
 	if err != nil {
 		return nil, err
 	}
 
-	loadable, corrupted, err := db.openBlocks()
+	db = &DBReadOnly{
+		&DB{
+			dir:    dir,
+			logger: l,
+			head:   head,
+		},
+	}
+	db.db.metrics = newDBMetrics(db.db, r)
+
+	loadable, corrupted, err := db.db.openBlocks()
 	if err != nil {
 		return nil, err
 	}
@@ -289,29 +297,40 @@ func OpenReadOnly(dir string, l log.Logger, r prometheus.Registerer) (db *DB, er
 		return loadable[i].Meta().MinTime < loadable[j].Meta().MinTime
 	})
 
-	db.blocks = loadable
+	db.db.blocks = loadable
 
 	blockMetas := make([]BlockMeta, 0, len(loadable))
 	for _, b := range loadable {
 		blockMetas = append(blockMetas, b.Meta())
 	}
 	if overlaps := OverlappingBlocks(blockMetas); len(overlaps) > 0 {
-		level.Warn(db.logger).Log("msg", "overlapping blocks found during opening", "detail", overlaps.String())
+		level.Warn(db.db.logger).Log("msg", "overlapping blocks found during opening", "detail", overlaps.String())
 	}
+	return db, nil
+}
+
+// Querier loads the wal and returns a new querier over the data partition for the given time range.
+// A goroutine must not handle more than one open Querier.
+func (db *DBReadOnly) Querier(mint, maxt int64) (Querier, error) {
 
 	// Set the min valid time for the ingested wal samples
 	// to be no lower than the maxt of the last block.
-	blocks := db.Blocks()
+	blocks := db.db.Blocks()
 	minValidTime := int64(math.MinInt64)
 	if len(blocks) > 0 {
 		minValidTime = blocks[len(blocks)-1].Meta().MaxTime
 	}
 
-	if err := db.head.Init(minValidTime); err != nil {
+	if err := db.db.head.Init(minValidTime); err != nil {
 		return nil, errors.Wrap(err, "read WAL")
 	}
 
-	return db, nil
+	return db.db.Querier(mint, maxt)
+}
+
+// Blocks returns the databases persisted blocks.
+func (db *DBReadOnly) Blocks() []*Block {
+	return db.db.Blocks()
 }
 
 // Open returns a new DB in the given directory.
