@@ -62,9 +62,6 @@ func main() {
 		dumpMaxTime          = dumpCmd.Flag("max-time", "maximum timestamp to dump").Default(strconv.FormatInt(math.MaxInt64, 10)).Int64()
 	)
 
-	safeDBOptions := *tsdb.DefaultOptions
-	safeDBOptions.RetentionDuration = 0
-
 	switch kingpin.MustParse(cli.Parse(os.Args[1:])) {
 	case benchWriteCmd.FullCommand():
 		wb := &writeBenchmark{
@@ -74,13 +71,14 @@ func main() {
 		}
 		wb.run()
 	case listCmd.FullCommand():
-		db, err := tsdb.Open(*listPath, nil, nil, &safeDBOptions)
+		db, err := tsdb.OpenReadOnly(*listPath, nil, nil)
 		if err != nil {
 			exitWithError(err)
 		}
 		printBlocks(db.Blocks(), listCmdHumanReadable)
 	case analyzeCmd.FullCommand():
-		db, err := tsdb.Open(*analyzePath, nil, nil, &safeDBOptions)
+		db, err := tsdb.OpenReadOnly(*analyzePath, nil, nil)
+
 		if err != nil {
 			exitWithError(err)
 		}
@@ -101,7 +99,8 @@ func main() {
 		}
 		analyzeBlock(block, *analyzeLimit)
 	case dumpCmd.FullCommand():
-		db, err := tsdb.Open(*dumpPath, nil, nil, &safeDBOptions)
+		db, err := tsdb.OpenReadOnly(*dumpPath, nil, nil)
+
 		if err != nil {
 			exitWithError(err)
 		}

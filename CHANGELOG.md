@@ -1,4 +1,5 @@
 ## master / unreleased
+ - [FEATURE] New `OpenReadOnly` API to allow read only mode for a database.
 
 ## 0.7.0
  - [CHANGE] tsdb now requires golang 1.12 or higher.

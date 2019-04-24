@@ -153,6 +153,7 @@ type dbMetrics struct {
 	tombCleanTimer       prometheus.Histogram
 	blocksBytes          prometheus.Gauge
 	sizeRetentionCount   prometheus.Counter
+	walCorruptionsTotal  prometheus.Counter
 }
 
 func newDBMetrics(db *DB, r prometheus.Registerer) *dbMetrics {
@@ -222,6 +223,10 @@ func newDBMetrics(db *DB, r prometheus.Registerer) *dbMetrics {
 		Name: "prometheus_tsdb_size_retentions_total",
 		Help: "The number of times that blocks were deleted because the maximum number of bytes was exceeded.",
 	})
+	m.walCorruptionsTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "prometheus_tsdb_wal_corruptions_total",
+		Help: "Total number of WAL corruptions.",
+	})
 
 	if r != nil {
 		r.MustRegister(
@@ -238,6 +243,75 @@ func newDBMetrics(db *DB, r prometheus.Registerer) *dbMetrics {
 		)
 	}
 	return m
+}
+
+// OpenReadOnly returns a new DB in the given directory only for read operatiuons.
+func OpenReadOnly(dir string, l log.Logger, r prometheus.Registerer) (db *DB, err error) {
+	if l == nil {
+		l = log.NewNopLogger()
+	}
+
+	if _, err := os.Stat(dir); err != nil {
+		return nil, err
+	}
+
+	db = &DB{
+		dir:       dir,
+		logger:    l,
+		chunkPool: chunkenc.NewPool(),
+	}
+
+	db.head, err = NewHead(r, l, nil, 1)
+	if err != nil {
+		return nil, err
+	}
+
+	loadable, corrupted, err := db.openBlocks()
+	if err != nil {
+		return nil, err
+	}
+
+	// Corrupted blocks that have been replaced by parents can be safely ignored.
+	for _, block := range loadable {
+		for _, b := range block.Meta().Compaction.Parents {
+			delete(corrupted, b.ULID)
+		}
+	}
+	if len(corrupted) > 0 {
+		return nil, fmt.Errorf("unexpected corrupted block:%v", corrupted)
+	}
+
+	if len(loadable) == 0 {
+		return nil, errors.New("no blocks found")
+	}
+
+	sort.Slice(loadable, func(i, j int) bool {
+		return loadable[i].Meta().MinTime < loadable[j].Meta().MinTime
+	})
+
+	db.blocks = loadable
+
+	blockMetas := make([]BlockMeta, 0, len(loadable))
+	for _, b := range loadable {
+		blockMetas = append(blockMetas, b.Meta())
+	}
+	if overlaps := OverlappingBlocks(blockMetas); len(overlaps) > 0 {
+		level.Warn(db.logger).Log("msg", "overlapping blocks found during opening", "detail", overlaps.String())
+	}
+
+	// Set the min valid time for the ingested wal samples
+	// to be no lower than the maxt of the last block.
+	blocks := db.Blocks()
+	minValidTime := int64(math.MinInt64)
+	if len(blocks) > 0 {
+		minValidTime = blocks[len(blocks)-1].Meta().MaxTime
+	}
+
+	if err := db.head.Init(minValidTime); err != nil {
+		return nil, errors.Wrap(err, "read WAL")
+	}
+
+	return db, nil
 }
 
 // Open returns a new DB in the given directory.
@@ -322,8 +396,17 @@ func Open(dir string, l log.Logger, r prometheus.Registerer, opts *Options) (db 
 		minValidTime = blocks[len(blocks)-1].Meta().MaxTime
 	}
 
-	if err := db.head.Init(minValidTime); err != nil {
-		return nil, errors.Wrap(err, "read WAL")
+	if initErr := db.head.Init(minValidTime); initErr != nil {
+		err := errors.Cause(initErr) // So that we can pick up errors even when wrapped.
+		if _, ok := err.(*wal.CorruptionErr); ok {
+			level.Warn(db.logger).Log("msg", "encountered WAL corruption error, attempting repair", "err", err)
+			db.metrics.walCorruptionsTotal.Inc()
+			if err := wlog.Repair(err); err != nil {
+				return nil, errors.Wrap(err, "repair corrupted WAL")
+			}
+		} else {
+			return nil, errors.Wrap(initErr, "read WAL")
+		}
 	}
 
 	go db.run()
