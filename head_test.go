@@ -1044,12 +1044,11 @@ func TestWalRepair(t *testing.T) {
 				testutil.Ok(t, os.RemoveAll(dir))
 			}()
 
-			w, err := wal.New(nil, nil, filepath.Join(dir, "wal"))
-			testutil.Ok(t, err)
-			defer w.Close()
-
 			// Fill the wal and corrupt it.
 			{
+				w, err := wal.New(nil, nil, filepath.Join(dir, "wal"))
+				testutil.Ok(t, err)
+
 				for i := 1; i <= test.totalRecs; i++ {
 					// At this point insert a corrupted record.
 					if i-1 == test.expRecs {
@@ -1067,6 +1066,7 @@ func TestWalRepair(t *testing.T) {
 				err = errors.Cause(initErr) // So that we can pick up errors even if wrapped.
 				_, corrErr := err.(*wal.CorruptionErr)
 				testutil.Assert(t, corrErr, "reading the wal didn't return corruption error")
+				testutil.Ok(t, w.Close())
 			}
 
 			// Open the db to trigger a repair.
@@ -1083,7 +1083,7 @@ func TestWalRepair(t *testing.T) {
 
 			// Read the wal content after the repair.
 			{
-				sr, err := wal.NewSegmentsReader(w.Dir())
+				sr, err := wal.NewSegmentsReader(filepath.Join(dir, "wal"))
 				testutil.Ok(t, err)
 				defer sr.Close()
 				r := wal.NewReader(sr)
