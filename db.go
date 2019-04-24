@@ -122,8 +122,7 @@ type DB struct {
 	// Mutex for that must be held when modifying the general block layout.
 	mtx    sync.RWMutex
 	blocks []*Block
-
-	head *Head
+	head   *Head
 
 	compactc chan struct{}
 	donec    chan struct{}
@@ -238,6 +237,138 @@ func newDBMetrics(db *DB, r prometheus.Registerer) *dbMetrics {
 		)
 	}
 	return m
+}
+
+// DBView provides read only methods on the view of database from the moment of DB creation.
+type DBView struct {
+	logger log.Logger
+	blocks []*Block
+	head   *Head
+}
+
+func NewDBView(dir string, l log.Logger, r prometheus.Registerer, walSegmentSize int) (db *DBView, err error) {
+	if l == nil {
+		l = log.NewNopLogger()
+	}
+
+	if _, err := os.Stat(dir); err != nil {
+		return nil, err
+	}
+
+	var wlog *wal.WAL
+	segmentSize := wal.DefaultSegmentSize
+	// Wal is enabled.
+	if walSegmentSize >= 0 {
+		if walSegmentSize > 0 {
+			segmentSize = walSegmentSize
+		}
+		wlog, err = wal.NewSize(l, r, filepath.Join(dir, "wal"), segmentSize)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	head, err := NewHead(r, l, wlog, 1)
+	if err != nil {
+		return nil, err
+	}
+
+	db = &DBView{
+		logger: l,
+		head:   head,
+	}
+
+	// TODO(bwplotka): Hardlink all loadable blocks, log the corrupted ones?
+	loadable, corrupted, err := openBlocks(db.logger, nil, chunkenc.NewPool(), dir)
+	if err != nil {
+		return nil, err
+	}
+
+	// Corrupted blocks that have been replaced by parents can be safely ignored.
+	for _, block := range loadable {
+		for _, b := range block.Meta().Compaction.Parents {
+			delete(corrupted, b.ULID)
+		}
+	}
+	if len(corrupted) > 0 {
+		return nil, errors.Errorf("unexpected corrupted blocks: %v", corrupted)
+	}
+
+	if len(loadable) == 0 {
+		return nil, errors.New("no blocks found")
+	}
+
+	sort.Slice(loadable, func(i, j int) bool {
+		return loadable[i].Meta().MinTime < loadable[j].Meta().MinTime
+	})
+
+	db.blocks = loadable
+
+	blockMetas := make([]BlockMeta, 0, len(loadable))
+	for _, b := range loadable {
+		blockMetas = append(blockMetas, b.Meta())
+	}
+	if overlaps := OverlappingBlocks(blockMetas); len(overlaps) > 0 {
+		level.Warn(db.logger).Log("msg", "overlapping blocks found during opening", "detail", overlaps.String())
+	}
+	return db, nil
+}
+
+// Blocks returns the databases persisted blocks.
+func (db *DBView) Blocks() []*Block {
+	return db.blocks
+}
+
+// Head returns the databases's head.
+func (db *DBView) Head() *Head {
+	return db.head
+}
+
+// Querier loads the wal and returns a new querier over the data partition for the given time range.
+// A goroutine must not handle more than one open Querier.
+func (db *DBView) Querier(mint, maxt int64) (Querier, error) {
+	var blocks []BlockReader
+	var blockMetas []BlockMeta
+
+	for _, b := range db.blocks {
+		if b.OverlapsClosedInterval(mint, maxt) {
+			blocks = append(blocks, b)
+			blockMetas = append(blockMetas, b.Meta())
+		}
+	}
+	if maxt >= db.Head().MinTime() {
+		blocks = append(blocks, &rangeHead{
+			head: db.head,
+			mint: mint,
+			maxt: maxt,
+		})
+	}
+
+	blockQueriers := make([]Querier, 0, len(blocks))
+	for _, b := range blocks {
+		q, err := NewBlockQuerier(b, mint, maxt)
+		if err == nil {
+			blockQueriers = append(blockQueriers, q)
+			continue
+		}
+		// If we fail, all previously opened queriers must be closed.
+		for _, q := range blockQueriers {
+			q.Close() // TODO(bwplotka): what about errors?
+		}
+		return nil, errors.Wrapf(err, "open querier for block %s", b)
+	}
+
+	if len(OverlappingBlocks(blockMetas)) > 0 {
+		return &verticalQuerier{
+			querier: querier{
+				blocks: blockQueriers,
+			},
+		}, nil
+	}
+
+	return &querier{
+		blocks: blockQueriers,
+	}, nil
 }
 
 // Open returns a new DB in the given directory.
@@ -495,8 +626,8 @@ func (db *DB) compact() (err error) {
 	return nil
 }
 
-func (db *DB) getBlock(id ulid.ULID) (*Block, bool) {
-	for _, b := range db.blocks {
+func getBlock(blocks []*Block, id ulid.ULID) (*Block, bool) {
+	for _, b := range blocks {
 		if b.Meta().ULID == id {
 			return b, true
 		}
@@ -514,7 +645,7 @@ func (db *DB) reload() (err error) {
 		db.metrics.reloads.Inc()
 	}()
 
-	loadable, corrupted, err := db.openBlocks()
+	loadable, corrupted, err := openBlocks(db.logger, db.blocks, db.chunkPool, db.dir)
 	if err != nil {
 		return err
 	}
@@ -534,7 +665,7 @@ func (db *DB) reload() (err error) {
 	if len(corrupted) > 0 {
 		// Close all new blocks to release the lock for windows.
 		for _, block := range loadable {
-			if _, loaded := db.getBlock(block.Meta().ULID); !loaded {
+			if _, loaded := getBlock(db.blocks, block.Meta().ULID); !loaded {
 				block.Close()
 			}
 		}
@@ -602,8 +733,8 @@ func (db *DB) reload() (err error) {
 	return errors.Wrap(db.head.Truncate(maxt), "head truncate failed")
 }
 
-func (db *DB) openBlocks() (blocks []*Block, corrupted map[ulid.ULID]error, err error) {
-	dirs, err := blockDirs(db.dir)
+func openBlocks(l log.Logger, oldBlocks []*Block, chunkPool chunkenc.Pool, dir string) (blocks []*Block, corrupted map[ulid.ULID]error, err error) {
+	dirs, err := blockDirs(dir)
 	if err != nil {
 		return nil, nil, errors.Wrap(err, "find blocks")
 	}
@@ -612,14 +743,14 @@ func (db *DB) openBlocks() (blocks []*Block, corrupted map[ulid.ULID]error, err 
 	for _, dir := range dirs {
 		meta, err := readMetaFile(dir)
 		if err != nil {
-			level.Error(db.logger).Log("msg", "not a block dir", "dir", dir)
+			level.Error(l).Log("msg", "not a block dir", "dir", dir)
 			continue
 		}
 
 		// See if we already have the block in memory or open it otherwise.
-		block, ok := db.getBlock(meta.ULID)
+		block, ok := getBlock(oldBlocks, meta.ULID)
 		if !ok {
-			block, err = OpenBlock(db.logger, dir, db.chunkPool)
+			block, err = OpenBlock(l, dir, chunkPool)
 			if err != nil {
 				corrupted[meta.ULID] = err
 				continue
