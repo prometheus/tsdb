@@ -245,15 +245,15 @@ func newDBMetrics(db *DB, r prometheus.Registerer) *dbMetrics {
 	return m
 }
 
-// DBReadOnly provides APIs for read only operations on a database.
-type DBReadOnly struct {
+// DBView provides APIs for read only operations on a database.
+type DBView struct {
 	logger     log.Logger
 	dir        string
 	registerer prometheus.Registerer
 }
 
-// OpenReadOnly returns a new DB in the given directory only for read operations.
-func OpenReadOnly(dir string, l log.Logger, r prometheus.Registerer) (*DBReadOnly, error) {
+// NewDBView returns a new DB in the given directory only for read operations.
+func NewDBView(dir string, l log.Logger, r prometheus.Registerer) (*DBView, error) {
 	if _, err := os.Stat(dir); err != nil {
 		return nil, err
 	}
@@ -262,7 +262,7 @@ func OpenReadOnly(dir string, l log.Logger, r prometheus.Registerer) (*DBReadOnl
 		l = log.NewNopLogger()
 	}
 
-	db := &DBReadOnly{
+	db := &DBView{
 		logger:     l,
 		dir:        dir,
 		registerer: r,
@@ -273,7 +273,7 @@ func OpenReadOnly(dir string, l log.Logger, r prometheus.Registerer) (*DBReadOnl
 
 // Querier loads the wal and returns a new querier over the data partition for the given time range.
 // A goroutine must not handle more than one open Querier.
-func (dbRead *DBReadOnly) Querier(mint, maxt int64) (Querier, error) {
+func (dbRead *DBView) Querier(mint, maxt int64) (Querier, error) {
 	head, err := NewHead(dbRead.registerer, dbRead.logger, nil, 1)
 	if err != nil {
 		return nil, err
@@ -306,7 +306,7 @@ func (dbRead *DBReadOnly) Querier(mint, maxt int64) (Querier, error) {
 }
 
 // Blocks returns the databases persisted blocks.
-func (dbRead *DBReadOnly) Blocks() ([]*Block, error) {
+func (dbRead *DBView) Blocks() ([]*Block, error) {
 	db := &DB{
 		dir:    dbRead.dir,
 		logger: dbRead.logger,
