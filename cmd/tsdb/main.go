@@ -71,7 +71,7 @@ func main() {
 		}
 		wb.run()
 	case listCmd.FullCommand():
-		db, err := tsdb.NewDBView(*listPath, nil, nil)
+		db, err := tsdb.NewDBReadOnly(*listPath, nil, nil)
 		if err != nil {
 			exitWithError(err)
 		}
@@ -81,7 +81,7 @@ func main() {
 		}
 		printBlocks(blocks, listCmdHumanReadable)
 	case analyzeCmd.FullCommand():
-		db, err := tsdb.NewDBView(*analyzePath, nil, nil)
+		db, err := tsdb.NewDBReadOnly(*analyzePath, nil, nil)
 
 		if err != nil {
 			exitWithError(err)
@@ -106,7 +106,7 @@ func main() {
 		}
 		analyzeBlock(block, *analyzeLimit)
 	case dumpCmd.FullCommand():
-		db, err := tsdb.NewDBView(*dumpPath, nil, nil)
+		db, err := tsdb.NewDBReadOnly(*dumpPath, nil, nil)
 
 		if err != nil {
 			exitWithError(err)
@@ -554,7 +554,7 @@ func analyzeBlock(b *tsdb.Block, limit int) {
 	printInfo(postingInfos)
 }
 
-func dumpSamples(db *tsdb.DBView, mint, maxt int64) {
+func dumpSamples(db *tsdb.DBReadOnly, mint, maxt int64) {
 	q, err := db.Querier(mint, maxt)
 	if err != nil {
 		exitWithError(err)
