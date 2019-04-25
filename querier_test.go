@@ -1924,5 +1924,5 @@ func TestClose(t *testing.T) {
 	q, err := db.Querier(0, 20)
 	testutil.Ok(t, err)
 	testutil.Ok(t, q.Close())
-	testutil.Ok(t, q.Close())
+	testutil.NotOk(t, q.Close())
 }

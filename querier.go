@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"sync"
 
 	"github.com/pkg/errors"
 	"github.com/prometheus/tsdb/chunkenc"
@@ -206,7 +205,7 @@ type blockQuerier struct {
 	chunks     ChunkReader
 	tombstones TombstoneReader
 
-	close sync.Once
+	closed bool
 
 	mint, maxt int64
 }
@@ -256,15 +255,14 @@ func (q *blockQuerier) LabelValuesFor(string, labels.Label) ([]string, error) {
 
 func (q *blockQuerier) Close() error {
 	var merr tsdb_errors.MultiError
-	// Ensure any sequential call is noop.
-	// Calling Close more than once causes a panic
-	// as the pending block readers counter is decremented below zero.
-	q.close.Do(func() {
+	if !q.closed {
 		merr.Add(q.index.Close())
 		merr.Add(q.chunks.Close())
 		merr.Add(q.tombstones.Close())
-	})
-	return merr.Err()
+		q.closed = true
+		return merr.Err()
+	}
+	return errors.New("block querier already closed")
 }
 
 // PostingsForMatchers assembles a single postings iterator against the index reader

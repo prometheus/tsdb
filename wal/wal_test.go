@@ -315,7 +315,7 @@ func TestClose(t *testing.T) {
 	w, err := NewSize(nil, nil, dir, pageSize)
 	testutil.Ok(t, err)
 	testutil.Ok(t, w.Close())
-	testutil.Ok(t, w.Close())
+	testutil.NotOk(t, w.Close())
 }
 
 func BenchmarkWAL_LogBatched(b *testing.B) {
