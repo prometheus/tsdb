@@ -247,13 +247,12 @@ func newDBMetrics(db *DB, r prometheus.Registerer) *dbMetrics {
 
 // DBReadOnly provides APIs for read only operations on a database.
 type DBReadOnly struct {
-	logger     log.Logger
-	dir        string
-	registerer prometheus.Registerer
+	logger log.Logger
+	dir    string
 }
 
 // NewDBReadOnly returns a new DB in the given directory for read only operations.
-func NewDBReadOnly(dir string, l log.Logger, r prometheus.Registerer) (*DBReadOnly, error) {
+func NewDBReadOnly(dir string, l log.Logger) (*DBReadOnly, error) {
 	if _, err := os.Stat(dir); err != nil {
 		return nil, err
 	}
@@ -263,9 +262,8 @@ func NewDBReadOnly(dir string, l log.Logger, r prometheus.Registerer) (*DBReadOn
 	}
 
 	db := &DBReadOnly{
-		logger:     l,
-		dir:        dir,
-		registerer: r,
+		logger: l,
+		dir:    dir,
 	}
 
 	return db, nil
@@ -274,7 +272,7 @@ func NewDBReadOnly(dir string, l log.Logger, r prometheus.Registerer) (*DBReadOn
 // Querier loads the wal and returns a new querier over the data partition for the given time range.
 // A goroutine must not handle more than one open Querier.
 func (dbRead *DBReadOnly) Querier(mint, maxt int64) (Querier, error) {
-	head, err := NewHead(dbRead.registerer, dbRead.logger, nil, 1)
+	head, err := NewHead(nil, dbRead.logger, nil, 1)
 	if err != nil {
 		return nil, err
 	}
@@ -311,7 +309,6 @@ func (dbRead *DBReadOnly) Blocks() ([]*Block, error) {
 		dir:    dbRead.dir,
 		logger: dbRead.logger,
 	}
-	db.metrics = newDBMetrics(db, dbRead.registerer)
 
 	loadable, corrupted, err := db.openBlocks()
 	if err != nil {
