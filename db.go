@@ -247,34 +247,73 @@ func newDBMetrics(db *DB, r prometheus.Registerer) *dbMetrics {
 
 // DBReadOnly provides APIs for read only operations on a database.
 type DBReadOnly struct {
-	db *DB
+	logger     log.Logger
+	dir        string
+	registerer prometheus.Registerer
 }
 
 // OpenReadOnly returns a new DB in the given directory only for read operations.
-func OpenReadOnly(dir string, l log.Logger, r prometheus.Registerer) (db *DBReadOnly, err error) {
-	if l == nil {
-		l = log.NewNopLogger()
-	}
-
+func OpenReadOnly(dir string, l log.Logger, r prometheus.Registerer) (*DBReadOnly, error) {
 	if _, err := os.Stat(dir); err != nil {
 		return nil, err
 	}
 
-	head, err := NewHead(r, l, nil, 1)
+	if l == nil {
+		l = log.NewNopLogger()
+	}
+
+	db := &DBReadOnly{
+		logger:     l,
+		dir:        dir,
+		registerer: r,
+	}
+
+	return db, nil
+}
+
+// Querier loads the wal and returns a new querier over the data partition for the given time range.
+// A goroutine must not handle more than one open Querier.
+func (dbRead *DBReadOnly) Querier(mint, maxt int64) (Querier, error) {
+	head, err := NewHead(dbRead.registerer, dbRead.logger, nil, 1)
 	if err != nil {
 		return nil, err
 	}
 
-	db = &DBReadOnly{
-		&DB{
-			dir:    dir,
-			logger: l,
-			head:   head,
-		},
+	blocks, err := dbRead.Blocks()
+	if err != nil {
+		return nil, err
 	}
-	db.db.metrics = newDBMetrics(db.db, r)
 
-	loadable, corrupted, err := db.db.openBlocks()
+	db := &DB{
+		dir:    dbRead.dir,
+		logger: dbRead.logger,
+		head:   head,
+		blocks: blocks,
+	}
+
+	// Set the min valid time for the ingested wal samples
+	// to be no lower than the maxt of the last block.
+	minValidTime := int64(math.MinInt64)
+	if len(blocks) > 0 {
+		minValidTime = blocks[len(blocks)-1].Meta().MaxTime
+	}
+
+	if err := db.head.Init(minValidTime); err != nil {
+		return nil, errors.Wrap(err, "read WAL")
+	}
+
+	return db.Querier(mint, maxt)
+}
+
+// Blocks returns the databases persisted blocks.
+func (dbRead *DBReadOnly) Blocks() ([]*Block, error) {
+	db := &DB{
+		dir:    dbRead.dir,
+		logger: dbRead.logger,
+	}
+	db.metrics = newDBMetrics(db, dbRead.registerer)
+
+	loadable, corrupted, err := db.openBlocks()
 	if err != nil {
 		return nil, err
 	}
@@ -297,40 +336,14 @@ func OpenReadOnly(dir string, l log.Logger, r prometheus.Registerer) (db *DBRead
 		return loadable[i].Meta().MinTime < loadable[j].Meta().MinTime
 	})
 
-	db.db.blocks = loadable
-
 	blockMetas := make([]BlockMeta, 0, len(loadable))
 	for _, b := range loadable {
 		blockMetas = append(blockMetas, b.Meta())
 	}
 	if overlaps := OverlappingBlocks(blockMetas); len(overlaps) > 0 {
-		level.Warn(db.db.logger).Log("msg", "overlapping blocks found during opening", "detail", overlaps.String())
+		level.Warn(dbRead.logger).Log("msg", "overlapping blocks found during opening", "detail", overlaps.String())
 	}
-	return db, nil
-}
-
-// Querier loads the wal and returns a new querier over the data partition for the given time range.
-// A goroutine must not handle more than one open Querier.
-func (db *DBReadOnly) Querier(mint, maxt int64) (Querier, error) {
-
-	// Set the min valid time for the ingested wal samples
-	// to be no lower than the maxt of the last block.
-	blocks := db.db.Blocks()
-	minValidTime := int64(math.MinInt64)
-	if len(blocks) > 0 {
-		minValidTime = blocks[len(blocks)-1].Meta().MaxTime
-	}
-
-	if err := db.db.head.Init(minValidTime); err != nil {
-		return nil, errors.Wrap(err, "read WAL")
-	}
-
-	return db.db.Querier(mint, maxt)
-}
-
-// Blocks returns the databases persisted blocks.
-func (db *DBReadOnly) Blocks() []*Block {
-	return db.db.Blocks()
+	return loadable, nil
 }
 
 // Open returns a new DB in the given directory.

@@ -75,14 +75,21 @@ func main() {
 		if err != nil {
 			exitWithError(err)
 		}
-		printBlocks(db.Blocks(), listCmdHumanReadable)
+		blocks, err := db.Blocks()
+		if err != nil {
+			exitWithError(err)
+		}
+		printBlocks(blocks, listCmdHumanReadable)
 	case analyzeCmd.FullCommand():
 		db, err := tsdb.OpenReadOnly(*analyzePath, nil, nil)
 
 		if err != nil {
 			exitWithError(err)
 		}
-		blocks := db.Blocks()
+		blocks, err := db.Blocks()
+		if err != nil {
+			exitWithError(err)
+		}
 		var block *tsdb.Block
 		if *analyzeBlockID != "" {
 			for _, b := range blocks {
