@@ -254,15 +254,16 @@ func (q *blockQuerier) LabelValuesFor(string, labels.Label) ([]string, error) {
 }
 
 func (q *blockQuerier) Close() error {
-	var merr tsdb_errors.MultiError
-	if !q.closed {
-		merr.Add(q.index.Close())
-		merr.Add(q.chunks.Close())
-		merr.Add(q.tombstones.Close())
-		q.closed = true
-		return merr.Err()
+	if q.closed {
+		return errors.New("block querier already closed")
 	}
-	return errors.New("block querier already closed")
+
+	var merr tsdb_errors.MultiError
+	merr.Add(q.index.Close())
+	merr.Add(q.chunks.Close())
+	merr.Add(q.tombstones.Close())
+	q.closed = true
+	return merr.Err()
 }
 
 // PostingsForMatchers assembles a single postings iterator against the index reader
