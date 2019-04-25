@@ -1,5 +1,5 @@
 ## master / unreleased
- - [BUGFIX] Calling Close more than once on a querier doesn't caue a panic anymore.
+ - [BUGFIX] Calling `Close` more than once on a querier returns an error instead of a panic.
 
 
 ## 0.7.0
