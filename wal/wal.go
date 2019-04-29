@@ -426,7 +426,8 @@ func (w *WAL) flushPage(clear bool) error {
 	p := w.page
 	clear = clear || p.full()
 
-	// No more data will fit into the page. Enqueue and clear it.
+	// No more data will fit into the page or an implicit clear.
+	// Enqueue and clear it.
 	if clear {
 		p.alloc = pageSize // Write till end of page.
 	}
@@ -495,9 +496,10 @@ func (w *WAL) Log(recs ...[]byte) error {
 	return nil
 }
 
-// log writes rec to the log and forces a flush of the current page if its
-// the final record of a batch, the record is bigger than the page size or
-// the current page is full.
+// log writes rec to the log and forces a flush of the current page if:
+// - the final record of a batch
+// - the record is bigger than the page size
+// - the current page is full.
 func (w *WAL) log(rec []byte, final bool) error {
 	// When the last page flush failed the page will remain full.
 	// When the page is full, need to flush it before trying to add more records to it.
