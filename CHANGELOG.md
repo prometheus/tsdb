@@ -1,5 +1,10 @@
 ## master / unreleased
  - [FEATURE] Added `DBReadOnly` to allow opening a database in read only mode.
+ - [BUGFIX] Calling `Close` more than once on a querier returns an error instead of a panic.
+
+
+## 0.7.1
+ - [ENHANCEMENT] Reduce memory usage in mergedPostings.Seek
 
 ## 0.7.0
  - [CHANGE] tsdb now requires golang 1.12 or higher.
