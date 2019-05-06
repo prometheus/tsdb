@@ -305,12 +305,7 @@ func (dbRead *DBReadOnly) Querier(mint, maxt int64) (Querier, error) {
 
 // Blocks returns the databases persisted blocks.
 func (dbRead *DBReadOnly) Blocks() ([]*Block, error) {
-	db := &DB{
-		dir:    dbRead.dir,
-		logger: dbRead.logger,
-	}
-
-	loadable, corrupted, err := db.openBlocks()
+	loadable, corrupted, err := openBlocks(dbRead.logger, dbRead.dir, nil, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -607,13 +602,13 @@ func (db *DB) compact() (err error) {
 	return nil
 }
 
-func (db *DB) getBlock(id ulid.ULID) (*Block, bool) {
-	for _, b := range db.blocks {
+func getBlock(loaded []*Block, id ulid.ULID) *Block {
+	for _, b := range loaded {
 		if b.Meta().ULID == id {
-			return b, true
+			return b
 		}
 	}
-	return nil, false
+	return nil
 }
 
 // reload blocks and trigger head truncation if new blocks appeared.
@@ -626,7 +621,7 @@ func (db *DB) reload() (err error) {
 		db.metrics.reloads.Inc()
 	}()
 
-	loadable, corrupted, err := db.openBlocks()
+	loadable, corrupted, err := openBlocks(db.logger, db.dir, db.blocks, db.chunkPool)
 	if err != nil {
 		return err
 	}
@@ -646,7 +641,7 @@ func (db *DB) reload() (err error) {
 	if len(corrupted) > 0 {
 		// Close all new blocks to release the lock for windows.
 		for _, block := range loadable {
-			if _, loaded := db.getBlock(block.Meta().ULID); !loaded {
+			if b := getBlock(db.blocks, block.Meta().ULID); b == nil {
 				block.Close()
 			}
 		}
@@ -714,24 +709,24 @@ func (db *DB) reload() (err error) {
 	return errors.Wrap(db.head.Truncate(maxt), "head truncate failed")
 }
 
-func (db *DB) openBlocks() (blocks []*Block, corrupted map[ulid.ULID]error, err error) {
-	dirs, err := blockDirs(db.dir)
+func openBlocks(l log.Logger, dir string, loaded []*Block, chunkPool chunkenc.Pool) (blocks []*Block, corrupted map[ulid.ULID]error, err error) {
+	blockDirs, err := blockDirs(dir)
 	if err != nil {
 		return nil, nil, errors.Wrap(err, "find blocks")
 	}
 
 	corrupted = make(map[ulid.ULID]error)
-	for _, dir := range dirs {
-		meta, err := readMetaFile(dir)
+	for _, blockDir := range blockDirs {
+		meta, err := readMetaFile(blockDir)
 		if err != nil {
-			level.Error(db.logger).Log("msg", "not a block dir", "dir", dir)
+			level.Error(l).Log("msg", "not a block dir", "dir", blockDir)
 			continue
 		}
 
 		// See if we already have the block in memory or open it otherwise.
-		block, ok := db.getBlock(meta.ULID)
-		if !ok {
-			block, err = OpenBlock(db.logger, dir, db.chunkPool)
+		block := getBlock(loaded, meta.ULID)
+		if block == nil {
+			block, err = OpenBlock(l, blockDir, chunkPool)
 			if err != nil {
 				corrupted[meta.ULID] = err
 				continue
