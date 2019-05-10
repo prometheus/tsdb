@@ -345,6 +345,7 @@ func TestSegmentMetric(t *testing.T) {
 		testutil.Ok(t, err)
 	}
 	testutil.Assert(t, client_testutil.ToFloat64(w.currentSegment) == initialSegment+1, "segment metric did not increment after segment rotation")
+	testutil.Ok(t, w.Close())
 }
 
 func BenchmarkWAL_LogBatched(b *testing.B) {
