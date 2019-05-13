@@ -266,6 +266,350 @@ func (q *blockQuerier) Close() error {
 	return merr.Err()
 }
 
+func addStrToLevel(level []*strings.Builder, strs []string, idx int) []*strings.Builder {
+	levelSize := len(level) - idx
+	for j := idx + levelSize; j < idx + levelSize * len(strs); j ++ {
+		level = append(level, &strings.Builder{})
+		level[j].WriteString(level[j % levelSize + idx].String())
+	}
+	for i, s := range strs {
+		for j := idx + i * levelSize; j < idx + (i + 1) * levelSize; j ++ {
+			level[j].WriteString(s)
+		}
+	}
+	return level
+}
+
+func combineLevels(left []*strings.Builder, right []*strings.Builder, idx int) []*strings.Builder {
+	levelSize := len(left) - idx
+	for j := idx + levelSize; j < idx + levelSize * len(right); j ++ {
+		left = append(left, &strings.Builder{})
+		left[j].WriteString(left[idx + j % levelSize].String())
+	}
+	for i, s := range right {
+		for j := idx + i * levelSize; j < idx + (i + 1) * levelSize; j ++ {
+			left[j].WriteString(s.String())
+		}
+	}
+	return left
+}
+
+func handleEnd(pattern string, idx int) int {
+	escaped := false
+	for idx < len(pattern) {
+		switch c := pattern[idx]; {
+		case c == '$':
+			break
+		case c == '\\':
+			escaped = true
+			break
+		case c == 'B' && escaped:
+			escaped = false
+			break
+		default:
+
+		}
+		idx += 1
+	}
+	if idx == len(pattern) {
+		return idx
+	} else {
+		return -1
+	}
+}
+
+// Return empty array if not found.
+func findSetMatches(pattern string) []string {
+	// To detect the character '\'.
+	escaped := false
+	insideBrackets := false
+	insideBraces := false
+	combinePending := false
+	matches := []string{}
+	// This is to handle the nested parentheses.
+	levels := [][]*strings.Builder{[]*strings.Builder{&strings.Builder{}}}
+	barIdx := map[int]int{}
+	bracket := []string{}
+	i := 0
+	// Handle the beginning part of the pattern.
+Loop:
+	for i < len(pattern) {
+		switch c := pattern[i]; {
+		case c == '^':
+			break
+		case c == '\\':
+			escaped = true
+			break
+		case c == 'b' && escaped:
+			escaped = false
+			break
+		default:
+			break Loop
+		}
+		i += 1
+	}
+	// Handle the middle part of the pattern.
+	for i < len(pattern) {
+		if escaped {
+			switch c := pattern[i]; {
+			case c == 'B':
+				escaped = false
+				i = handleEnd(pattern, i + 1)
+				if i == -1 {
+					return []string{}
+				}
+				break
+			case c == '(' || c == ')' || c == '[' || c == '{' || c == '$' || c == '*' || c == '+' || c == '.' || c == '?' || c == '\\' || c == '^' || c == '|':
+				escaped = false
+				if idx, ok := barIdx[len(levels) - 1]; ok {
+					levels[len(levels) - 1] = addStrToLevel(levels[len(levels) - 1], []string{string(c)}, idx)
+				} else {
+					levels[len(levels) - 1] = addStrToLevel(levels[len(levels) - 1], []string{string(c)}, 0)
+				}
+			default:
+				return []string{}
+			}
+		} else if insideBrackets {
+			switch c := pattern[i]; {
+			case c == '^':
+				return []string{}
+			case c == ']':
+				if !(i + 1 < len(pattern) && pattern[i + 1] == '{') {
+					if idx, ok := barIdx[len(levels) - 1]; ok {
+						levels[len(levels) - 1] = addStrToLevel(levels[len(levels) - 1], bracket, idx)
+					} else {
+						levels[len(levels) - 1] = addStrToLevel(levels[len(levels) - 1], bracket, 0)
+					}
+					bracket = bracket[:0]
+				}
+				insideBrackets = false
+				break
+			case c == '-':
+				for ch := pattern[i - 1] + 1; ch <= pattern[i + 1]; ch ++ {
+					bracket = append(bracket, string(ch))
+				}
+				i += 1
+				break;
+			default:
+				bracket = append(bracket, string(pattern[i]))
+				break
+			}
+		} else if insideBraces {
+			start := 0
+			end := 0
+			left := false
+			comma := false
+			right := false
+			j := i
+			for pattern[j] != '}' {
+				if '0' <= pattern[j] && pattern[j] <= '9' {
+					if !comma {
+						left = true
+						start = start * 10 + int(pattern[j] - '0')
+					} else {
+						right = true
+						end = end * 10 + int(pattern[j] - '0')
+					}
+				} else if pattern[j] == ',' {
+					comma = true
+				} else {
+					return []string{}
+				}
+				j += 1
+			}
+			if !left {
+				if len(bracket) > 0 {
+					if idx, ok := barIdx[len(levels) - 1]; ok {
+						levels[len(levels) - 1] = addStrToLevel(levels[len(levels) - 1], bracket, idx)
+					} else {
+						levels[len(levels) - 1] = addStrToLevel(levels[len(levels) - 1], bracket, 0)
+					}
+					bracket = bracket[:0]
+				}
+				if idx, ok := barIdx[len(levels) - 1]; ok {
+					levels[len(levels) - 1] = addStrToLevel(levels[len(levels) - 1], []string{pattern[i - 1: j + 1]}, idx)
+				} else {
+					levels[len(levels) - 1] = addStrToLevel(levels[len(levels) - 1], []string{pattern[i - 1: j + 1]}, 0)
+				}
+			} else if comma {
+				if !right {
+					return []string{}
+				} else {
+					// Need further discussion.
+					l := 1
+					if len(bracket) > l {
+						l = len(bracket)
+					}
+					if combinePending && len(levels[len(levels) - 1]) > l {
+						l = len(levels[len(levels) - 1])
+					}
+					addStrs := make([]string, 0, (end - start + 1) * l)
+					if combinePending {
+						idx, ok := barIdx[len(levels) - 1]
+						if !ok {
+							idx = 0
+						}
+						for k := start; k <= end; k ++ {
+							for _, s := range levels[len(levels) - 1] {
+								addStrs = append(addStrs, strings.Repeat(s.String(), k))
+							}
+						}
+						levels[len(levels) - 1] = levels[len(levels) - 1][: idx + 1]
+						levels[len(levels) - 1][idx].Reset()
+						// Delete the bar index on the top level.
+						if _, ok = barIdx[len(levels) - 1]; ok {
+							delete(barIdx, len(levels) - 1)
+						}
+						levels = levels[: len(levels) - 1]
+						combinePending = false
+					} else if len(bracket) > 0 {
+						for k := start; k <= end; k ++ {
+							for _, s := range bracket {
+								addStrs = append(addStrs, strings.Repeat(s, k))
+							}
+						}
+						bracket = bracket[:0]
+					} else {
+						for k := start; k <= end; k ++ {
+							addStrs = append(addStrs, strings.Repeat(string(pattern[i - 2]), k))
+						}
+					}
+					if idx, ok := barIdx[len(levels) - 1]; ok {
+						levels[len(levels) - 1] = addStrToLevel(levels[len(levels) - 1], addStrs, idx)
+					} else {
+						levels[len(levels) - 1] = addStrToLevel(levels[len(levels) - 1], addStrs, 0)
+					}
+				}
+			} else {
+				l := 1
+				if len(bracket) > l {
+					l = len(bracket)
+				}
+				if combinePending && len(levels[len(levels) - 1]) > l {
+					l = len(levels[len(levels) - 1])
+				}
+				addStrs := make([]string, 0, l)
+				if combinePending {
+					idx, ok := barIdx[len(levels) - 1]
+					if !ok {
+						idx = 0
+					}
+					for _, s := range levels[len(levels) - 1] {
+						addStrs = append(addStrs, strings.Repeat(s.String(), start))
+					}
+					levels[len(levels) - 1] = levels[len(levels) - 1][: idx + 1]
+					levels[len(levels) - 1][idx].Reset()
+					// Delete the bar index on the top level.
+					if _, ok = barIdx[len(levels) - 1]; ok {
+						delete(barIdx, len(levels) - 1)
+					}
+					levels = levels[: len(levels) - 1]
+					combinePending = false
+				} else if len(bracket) > 0 {
+					for _, s := range bracket {
+						addStrs = append(addStrs, strings.Repeat(s, start))
+					}
+					bracket = bracket[:0]
+				} else {
+					addStrs = append(addStrs, strings.Repeat(string(pattern[i - 2]), start))
+				}
+				// fmt.Println("len addStrs", len(addStrs))
+				if idx, ok := barIdx[len(levels) - 1]; ok {
+					levels[len(levels) - 1] = addStrToLevel(levels[len(levels) - 1], addStrs, idx)
+				} else {
+					levels[len(levels) - 1] = addStrToLevel(levels[len(levels) - 1], addStrs, 0)
+				}
+			}
+			if combinePending {
+				if idx, ok := barIdx[len(levels) - 2]; ok {
+					levels[len(levels) - 2] = combineLevels(levels[len(levels) - 2], levels[len(levels) - 1], idx)
+				} else {
+					levels[len(levels) - 2] = combineLevels(levels[len(levels) - 2], levels[len(levels) - 1], 0)
+				}
+				// Delete the bar index on the top level.
+				if _, ok := barIdx[len(levels) - 1]; ok {
+					delete(barIdx, len(levels) - 1)
+				}
+				levels = levels[: len(levels) - 1]
+				combinePending = false
+			}
+			i = j
+			insideBraces = false
+		} else {
+			switch c := pattern[i]; {
+			case c == '*' || c == '+' || c == '.' || c == '?':
+				return []string{}
+			case c == '$':
+				i = handleEnd(pattern, i + 1)
+				if i == -1 {
+					return []string{}
+				}
+				break
+			case c == '\\':
+				escaped = true
+				break
+			case c == '[':
+				insideBrackets = true
+				break 
+			case c == '{':
+				insideBraces = true
+				break
+			case c == '(':
+				if i + 2 < len(pattern) && pattern[i + 1] == '?' && pattern[i + 2] == ':' {
+					i += 2
+				}
+				levels = append(levels, []*strings.Builder{&strings.Builder{}})
+				break
+			case c == ')':
+				// fmt.Println(len(levels))
+				if i + 1 < len(pattern) && pattern[i + 1] == '{' {
+					combinePending = true
+				} else {
+					if idx, ok := barIdx[len(levels) - 2]; ok {
+						levels[len(levels) - 2] = combineLevels(levels[len(levels) - 2], levels[len(levels) - 1], idx)
+					} else {
+						levels[len(levels) - 2] = combineLevels(levels[len(levels) - 2], levels[len(levels) - 1], 0)
+					}
+					// Delete the bar index on the top level.
+					if _, ok := barIdx[len(levels) - 1]; ok {
+						delete(barIdx, len(levels) - 1)
+					}
+					levels = levels[: len(levels) - 1]
+				}
+				break
+			case c == '|':
+				levels[len(levels) - 1] = append(levels[len(levels) - 1], &strings.Builder{})
+				barIdx[len(levels) - 1] = len(levels[len(levels) - 1]) - 1
+				break
+			default:
+				if len(bracket) > 0 {
+					if idx, ok := barIdx[len(levels) - 1]; ok {
+						levels[len(levels) - 1] = addStrToLevel(levels[len(levels) - 1], bracket, idx)
+					} else {
+						levels[len(levels) - 1] = addStrToLevel(levels[len(levels) - 1], bracket, 0)
+					}
+					bracket = bracket[:0]
+				} 
+				if !(i + 1 < len(pattern) && pattern[i + 1] == '{') {
+					if idx, ok := barIdx[len(levels) - 1]; ok {
+						levels[len(levels) - 1] = addStrToLevel(levels[len(levels) - 1], []string{string(c)}, idx)
+					} else {
+						levels[len(levels) - 1] = addStrToLevel(levels[len(levels) - 1], []string{string(c)}, 0)
+					}
+				}
+				break
+			}
+		}
+		i += 1
+	}
+	for _, s := range levels[0] {
+		if s.Len() > 0{
+			matches = append(matches, s.String())
+		}
+	}
+	return matches
+}
+
 // PostingsForMatchers assembles a single postings iterator against the index reader
 // based on the given matchers.
 func PostingsForMatchers(ix IndexReader, ms ...labels.Matcher) (index.Postings, error) {
@@ -346,6 +690,14 @@ func postingsForMatcher(ix IndexReader, m labels.Matcher) (index.Postings, error
 		return ix.Postings(em.Name(), em.Value())
 	}
 
+	// Fast-path for set matching.
+	if em, ok := m.(*labels.RegexpMatcher); ok {
+		setMatches := findSetMatches(em.Value())
+		if len(setMatches) > 0 {
+			return postingsForSetMatcher(ix, em.Name(), setMatches)
+		}
+	}
+
 	tpls, err := ix.LabelValues(m.Name())
 	if err != nil {
 		return nil, err
@@ -409,6 +761,16 @@ func inversePostingsForMatcher(ix IndexReader, m labels.Matcher) (index.Postings
 	}
 
 	return index.Merge(rit...), nil
+}
+
+func postingsForSetMatcher(ix IndexReader, name string, matches []string) (index.Postings, error) {
+	var its []index.Postings
+	for _, match := range matches {
+		if it, err := ix.Postings(name, match); err == nil {
+			its = append(its, it)
+		}
+	}
+	return index.Merge(its...), nil
 }
 
 func mergeStrings(a, b []string) []string {
