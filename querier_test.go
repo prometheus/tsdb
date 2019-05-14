@@ -1701,8 +1701,8 @@ func TestFindSetMatches(t *testing.T) {
 		{
 			pattern: "foo|bar|baz",
 			exp: []string{
-				"foo", 
-				"bar", 
+				"foo",
+				"bar",
 				"baz",
 			},
 		},
@@ -1710,8 +1710,8 @@ func TestFindSetMatches(t *testing.T) {
 		{
 			pattern: "fo\\.o|bar\\?|\\^baz",
 			exp: []string{
-				"fo.o", 
-				"bar?", 
+				"fo.o",
+				"bar?",
 				"^baz",
 			},
 		},
@@ -1732,7 +1732,7 @@ func TestFindSetMatches(t *testing.T) {
 			if len(matches) != len(c.exp) {
 				t.Errorf("Evaluating %s, length of result not equal to exp", c.pattern)
 			} else {
-				for i := 0; i < len(c.exp); i ++ {
+				for i := 0; i < len(c.exp); i++ {
 					if c.exp[i] != matches[i] {
 						t.Errorf("Evaluating %s, unexpected result %s", c.pattern, matches[i])
 					}

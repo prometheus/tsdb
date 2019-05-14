@@ -284,7 +284,7 @@ func init() {
 func findSetMatches(pattern string) []string {
 	escaped := false
 	sets := []*strings.Builder{&strings.Builder{}}
-	for i := 0; i < len(pattern); i ++ {
+	for i := 0; i < len(pattern); i++ {
 		if escaped {
 			// Add the escaped special character to the sets.
 			if special(pattern[i]) {
