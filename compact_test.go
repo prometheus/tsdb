@@ -22,6 +22,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -1061,49 +1062,48 @@ func TestDeleteCompactionBlockAfterFailedReload(t *testing.T) {
 	}
 }
 
-// These two testcases needs the permission issue because it use the fuse
 
-//func TestCreateBlockWithHook(t *testing.T) {
-//	//init acgtion
-//	original := filepath.Join(string(filepath.Separator), "tmp", fmt.Sprintf("dev-%d", time.Now().Unix()))
-//	mountpoint := filepath.Join(string(filepath.Separator), "tmp", fmt.Sprintf("mountpoint-%d", time.Now().Unix()))
-//	server := newFuseServer(t, original, mountpoint)
-//	//remember to call unmount after you do not use it
-//	defer cleanUp(server, mountpoint, original)
-//
-//	//normal logic
-//	createBlock(t, mountpoint, genSeries(1, 1, 200, 300))
-//
-//	dir, _ := ioutil.ReadDir(mountpoint)
-//	testutil.Equals(t, 0, len(dir))
-//}
-//
-//func TestOpenBlockWithHook(t *testing.T) {
-//	//init action
-//	original := filepath.Join(string(filepath.Separator), "tmp", fmt.Sprintf("dev-%d", time.Now().Unix()))
-//	mountpoint := filepath.Join(string(filepath.Separator), "tmp", fmt.Sprintf("mountpoint-%d", time.Now().Unix()))
-//	//create block will be successful because hook server does not start
-//	path := createBlock(t, original, genSeries(1, 1, 200, 300))
-//	_, file := filepath.Split(path)
-//	server := newFuseServer(t, original, mountpoint)
-//	//remember to call unmount after you do not use it
-//	defer cleanUp(server, mountpoint, original)
-//
-//	//normal logic
-//	OpenBlock(nil, filepath.Join(mountpoint, file), nil)
-//	dir, _ := ioutil.ReadDir(filepath.Join(mountpoint, file))
-//
-//	testutil.Equals(t, true, len(dir) > 0)
-//	hasTempFile := false
-//	for _, info := range dir {
-//		if strings.HasSuffix(info.Name(), "tmp") {
-//			hasTempFile = true
-//			break
-//		}
-//	}
-//
-//	testutil.Equals(t, true, hasTempFile)
-//}
+func TestCreateBlockWithHook(t *testing.T) {
+	//init acgtion
+	original := filepath.Join(string(filepath.Separator), "tmp", fmt.Sprintf("dev-%d", time.Now().Unix()))
+	mountpoint := filepath.Join(string(filepath.Separator), "tmp", fmt.Sprintf("mountpoint-%d", time.Now().Unix()))
+	server := newFuseServer(t, original, mountpoint)
+	//remember to call unmount after you do not use it
+	defer cleanUp(server, mountpoint, original)
+
+	//normal logic
+	createBlock(t, mountpoint, genSeries(1, 1, 200, 300))
+
+	dir, _ := ioutil.ReadDir(mountpoint)
+	testutil.Equals(t, 0, len(dir))
+}
+
+func TestOpenBlockWithHook(t *testing.T) {
+	//init action
+	original := filepath.Join(string(filepath.Separator), "tmp", fmt.Sprintf("dev-%d", time.Now().Unix()))
+	mountpoint := filepath.Join(string(filepath.Separator), "tmp", fmt.Sprintf("mountpoint-%d", time.Now().Unix()))
+	//create block will be successful because hook server does not start
+	path := createBlock(t, original, genSeries(1, 1, 200, 300))
+	_, file := filepath.Split(path)
+	server := newFuseServer(t, original, mountpoint)
+	//remember to call unmount after you do not use it
+	defer cleanUp(server, mountpoint, original)
+
+	//normal logic
+	OpenBlock(nil, filepath.Join(mountpoint, file), nil)
+	dir, _ := ioutil.ReadDir(filepath.Join(mountpoint, file))
+
+	testutil.Equals(t, true, len(dir) > 0)
+	hasTempFile := false
+	for _, info := range dir {
+		if strings.HasSuffix(info.Name(), "tmp") {
+			hasTempFile = true
+			break
+		}
+	}
+
+	testutil.Equals(t, true, hasTempFile)
+}
 
 func newFuseServer(t *testing.T, original, mountpoint string) *fuse.Server {
 	createDirIfAbsent(original)
