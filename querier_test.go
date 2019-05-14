@@ -1691,6 +1691,57 @@ func BenchmarkQuerySeek(b *testing.B) {
 	}
 }
 
+// Refer to https://github.com/prometheus/prometheus/issues/2651.
+func TestFindSetMatches(t *testing.T) {
+	cases := []struct {
+		pattern string
+		exp     []string
+	}{
+		// Simple sets.
+		{
+			pattern: "foo|bar|baz",
+			exp: []string{
+				"foo", 
+				"bar", 
+				"baz",
+			},
+		},
+		// Simple sets containing escaped characters.
+		{
+			pattern: "fo\\.o|bar\\?|\\^baz",
+			exp: []string{
+				"fo.o", 
+				"bar?", 
+				"^baz",
+			},
+		},
+		// Simple sets containing special characters without escaping.
+		{
+			pattern: "fo.o|bar?|^baz",
+			exp:     []string{},
+		},
+	}
+
+	for _, c := range cases {
+		matches := findSetMatches(c.pattern)
+		if len(c.exp) == 0 {
+			if len(matches) != 0 {
+				t.Errorf("Evaluating %s, unexpected result %v", c.pattern, matches)
+			}
+		} else {
+			if len(matches) != len(c.exp) {
+				t.Errorf("Evaluating %s, length of result not equal to exp", c.pattern)
+			} else {
+				for i := 0; i < len(c.exp); i ++ {
+					if c.exp[i] != matches[i] {
+						t.Errorf("Evaluating %s, unexpected result %s", c.pattern, matches[i])
+					}
+				}
+			}
+		}
+	}
+}
+
 func TestPostingsForMatchers(t *testing.T) {
 	h, err := NewHead(nil, nil, nil, 1000)
 	testutil.Ok(t, err)
@@ -1703,6 +1754,7 @@ func TestPostingsForMatchers(t *testing.T) {
 	app.Add(labels.FromStrings("n", "1", "i", "a"), 0, 0)
 	app.Add(labels.FromStrings("n", "1", "i", "b"), 0, 0)
 	app.Add(labels.FromStrings("n", "2"), 0, 0)
+	app.Add(labels.FromStrings("n", "2.5"), 0, 0)
 	testutil.Ok(t, app.Commit())
 
 	cases := []struct {
@@ -1735,6 +1787,7 @@ func TestPostingsForMatchers(t *testing.T) {
 				labels.FromStrings("n", "1", "i", "a"),
 				labels.FromStrings("n", "1", "i", "b"),
 				labels.FromStrings("n", "2"),
+				labels.FromStrings("n", "2.5"),
 			},
 		},
 		// Not equals.
@@ -1742,6 +1795,7 @@ func TestPostingsForMatchers(t *testing.T) {
 			matchers: []labels.Matcher{labels.Not(labels.NewEqualMatcher("n", "1"))},
 			exp: []labels.Labels{
 				labels.FromStrings("n", "2"),
+				labels.FromStrings("n", "2.5"),
 			},
 		},
 		{
@@ -1796,6 +1850,7 @@ func TestPostingsForMatchers(t *testing.T) {
 			exp: []labels.Labels{
 				labels.FromStrings("n", "1"),
 				labels.FromStrings("n", "2"),
+				labels.FromStrings("n", "2.5"),
 			},
 		},
 		{
@@ -1824,6 +1879,7 @@ func TestPostingsForMatchers(t *testing.T) {
 			matchers: []labels.Matcher{labels.Not(labels.NewMustRegexpMatcher("n", "^1$"))},
 			exp: []labels.Labels{
 				labels.FromStrings("n", "2"),
+				labels.FromStrings("n", "2.5"),
 			},
 		},
 		{
@@ -1867,6 +1923,37 @@ func TestPostingsForMatchers(t *testing.T) {
 			matchers: []labels.Matcher{labels.NewEqualMatcher("n", "1"), labels.Not(labels.NewEqualMatcher("i", "b")), labels.NewMustRegexpMatcher("i", "^(b|a).*$")},
 			exp: []labels.Labels{
 				labels.FromStrings("n", "1", "i", "a"),
+			},
+		},
+		// Set optimization for Regex.
+		// Refer to https://github.com/prometheus/prometheus/issues/2651.
+		{
+			matchers: []labels.Matcher{labels.NewMustRegexpMatcher("n", "1|2")},
+			exp: []labels.Labels{
+				labels.FromStrings("n", "1"),
+				labels.FromStrings("n", "1", "i", "a"),
+				labels.FromStrings("n", "1", "i", "b"),
+				labels.FromStrings("n", "2"),
+			},
+		},
+		{
+			matchers: []labels.Matcher{labels.NewMustRegexpMatcher("i", "a|b")},
+			exp: []labels.Labels{
+				labels.FromStrings("n", "1", "i", "a"),
+				labels.FromStrings("n", "1", "i", "b"),
+			},
+		},
+		{
+			matchers: []labels.Matcher{labels.NewMustRegexpMatcher("n", "x1|2")},
+			exp: []labels.Labels{
+				labels.FromStrings("n", "2"),
+			},
+		},
+		{
+			matchers: []labels.Matcher{labels.NewMustRegexpMatcher("n", "2|2\\.5")},
+			exp: []labels.Labels{
+				labels.FromStrings("n", "2"),
+				labels.FromStrings("n", "2.5"),
 			},
 		},
 	}
