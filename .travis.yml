@@ -1,20 +1,35 @@
 dist: trusty
 language: go
-os:
-  - windows
-  - linux
-  - osx
-
-go:
-  - 1.12.x
-
 go_import_path: github.com/prometheus/tsdb
+matrix:
+  include:
+  - os: linux
+    sudo: required
+    go: 1.12.x
+    install:
+      - make deps
+    script:
+      - sudo -E apt-get -yq --no-install-suggests --no-install-recommends --force-yes install fuse
+      - sudo modprobe fuse
+      - sudo chmod 666 /dev/fuse
+      - sudo chown root:$USER /etc/fuse.conf
+      - make all
+  - os: osx
+    go: 1.12.x
+    sudo: required
+    install:
+      - make deps
+    script:
+      - brew update
+      - brew install caskroom/cask/brew-cask
+      - brew cask install osxfuse
+      - make all
+  - os: windows
+    go: 1.12.x
+    before_install:
+      - choco install make
+    install:
+       - make deps
+    script:
+      - make test
 
-before_install:
-  - if [[ "$TRAVIS_OS_NAME" == "windows" ]]; then choco install make; fi
-
-install:
-  - make deps
-
-script:
-  - if [[ "$TRAVIS_OS_NAME" == "windows" ]]; then make test; else make all; fi
