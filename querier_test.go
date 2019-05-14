@@ -1699,7 +1699,7 @@ func TestFindSetMatches(t *testing.T) {
 	}{
 		// Simple sets.
 		{
-			pattern: "foo|bar|baz",
+			pattern: "^(?:foo|bar|baz)$",
 			exp: []string{
 				"foo",
 				"bar",
@@ -1708,7 +1708,7 @@ func TestFindSetMatches(t *testing.T) {
 		},
 		// Simple sets containing escaped characters.
 		{
-			pattern: "fo\\.o|bar\\?|\\^baz",
+			pattern: "^(?:fo\\.o|bar\\?|\\^baz)$",
 			exp: []string{
 				"fo.o",
 				"bar?",
@@ -1717,7 +1717,12 @@ func TestFindSetMatches(t *testing.T) {
 		},
 		// Simple sets containing special characters without escaping.
 		{
-			pattern: "fo.o|bar?|^baz",
+			pattern: "^(?:fo.o|bar?|^baz)$",
+			exp:     []string{},
+		},
+		// Missing wrapper.
+		{
+			pattern: "foo|bar|baz",
 			exp:     []string{},
 		},
 	}
@@ -1928,7 +1933,7 @@ func TestPostingsForMatchers(t *testing.T) {
 		// Set optimization for Regex.
 		// Refer to https://github.com/prometheus/prometheus/issues/2651.
 		{
-			matchers: []labels.Matcher{labels.NewMustRegexpMatcher("n", "1|2")},
+			matchers: []labels.Matcher{labels.NewMustRegexpMatcher("n", "^(?:1|2)$")},
 			exp: []labels.Labels{
 				labels.FromStrings("n", "1"),
 				labels.FromStrings("n", "1", "i", "a"),
@@ -1937,20 +1942,20 @@ func TestPostingsForMatchers(t *testing.T) {
 			},
 		},
 		{
-			matchers: []labels.Matcher{labels.NewMustRegexpMatcher("i", "a|b")},
+			matchers: []labels.Matcher{labels.NewMustRegexpMatcher("i", "^(?:a|b)$")},
 			exp: []labels.Labels{
 				labels.FromStrings("n", "1", "i", "a"),
 				labels.FromStrings("n", "1", "i", "b"),
 			},
 		},
 		{
-			matchers: []labels.Matcher{labels.NewMustRegexpMatcher("n", "x1|2")},
+			matchers: []labels.Matcher{labels.NewMustRegexpMatcher("n", "^(?:x1|2)$")},
 			exp: []labels.Labels{
 				labels.FromStrings("n", "2"),
 			},
 		},
 		{
-			matchers: []labels.Matcher{labels.NewMustRegexpMatcher("n", "2|2\\.5")},
+			matchers: []labels.Matcher{labels.NewMustRegexpMatcher("n", "^(?:2|2\\.5)$")},
 			exp: []labels.Labels{
 				labels.FromStrings("n", "2"),
 				labels.FromStrings("n", "2.5"),

@@ -282,9 +282,13 @@ func init() {
 }
 
 func findSetMatches(pattern string) []string {
+	// Return empty matches if the wrapper from Prometheus is missing.
+	if len(pattern) < 6 || pattern[:4] != "^(?:" || pattern[len(pattern)-2:] != ")$" {
+		return []string{}
+	}
 	escaped := false
 	sets := []*strings.Builder{&strings.Builder{}}
-	for i := 0; i < len(pattern); i++ {
+	for i := 4; i < len(pattern)-2; i++ {
 		if escaped {
 			// Add the escaped special character to the sets.
 			if special(pattern[i]) {
