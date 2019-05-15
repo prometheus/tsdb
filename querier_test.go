@@ -1709,7 +1709,7 @@ func BenchmarkSetMatcher(b *testing.B) {
 		{
 			numBlocks:                   1,
 			numSeries:                   15,
-			numSamplesPerSeriesPerBlock: 10, 
+			numSamplesPerSeriesPerBlock: 10,
 			setPattern:                  "^(?:1|2|3|4|5|6|7|8|9|10)$",
 			regexPattern:                "1|2|3|4|5|6|7|8|9|10",
 		},
@@ -1723,7 +1723,7 @@ func BenchmarkSetMatcher(b *testing.B) {
 		{
 			numBlocks:                   1,
 			numSeries:                   200,
-			numSamplesPerSeriesPerBlock: 10, 
+			numSamplesPerSeriesPerBlock: 10,
 			setPattern:                  "^(?:1|2|3|4|5|6|7|8|9|10)$",
 			regexPattern:                "1|2|3|4|5|6|7|8|9|10",
 		},
@@ -1742,7 +1742,7 @@ func BenchmarkSetMatcher(b *testing.B) {
 			generatedSeries []Series
 		)
 		for i := int64(0); i < int64(c.numBlocks); i++ {
-			mint := i*int64(c.numSamplesPerSeriesPerBlock)
+			mint := i * int64(c.numSamplesPerSeriesPerBlock)
 			maxt := mint + int64(c.numSamplesPerSeriesPerBlock) - 1
 			if len(prefilledLabels) == 0 {
 				generatedSeries = make([]Series, c.numSeries)
