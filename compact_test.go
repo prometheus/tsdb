@@ -1062,7 +1062,6 @@ func TestDeleteCompactionBlockAfterFailedReload(t *testing.T) {
 	}
 }
 
-
 func TestCreateBlockWithHook(t *testing.T) {
 	//init acgtion
 	original := filepath.Join(string(filepath.Separator), "tmp", fmt.Sprintf("dev-%d", time.Now().Unix()))
