@@ -1709,7 +1709,7 @@ func BenchmarkSetMatcher(b *testing.B) {
 		{
 			numBlocks:                   1,
 			numSeries:                   15,
-			numSamplesPerSeriesPerBlock: 10, 
+			numSamplesPerSeriesPerBlock: 10,
 			pattern:                     "^(?:1|2|3|4|5|6|7|8|9|10)$",
 		},
 		{
@@ -1721,7 +1721,7 @@ func BenchmarkSetMatcher(b *testing.B) {
 		{
 			numBlocks:                   20,
 			numSeries:                   1000,
-			numSamplesPerSeriesPerBlock: 10, 
+			numSamplesPerSeriesPerBlock: 10,
 			pattern:                     "^(?:1|2|3|4|5|6|7|8|9|10)$",
 		},
 	}
@@ -1739,14 +1739,14 @@ func BenchmarkSetMatcher(b *testing.B) {
 			generatedSeries []Series
 		)
 		for i := int64(0); i < int64(c.numBlocks); i++ {
-			mint := i*int64(c.numSamplesPerSeriesPerBlock)
+			mint := i * int64(c.numSamplesPerSeriesPerBlock)
 			maxt := mint + int64(c.numSamplesPerSeriesPerBlock) - 1
 			if len(prefilledLabels) == 0 {
 				generatedSeries = make([]Series, c.numSeries)
 				for i := 0; i < c.numSeries; i++ {
 					lbls := make(map[string]string, 10)
 					// The first label pair is {"test", "i%50"} which is for benchmarking set matcher.
-					lbls["test"] = strconv.Itoa(i%50)
+					lbls["test"] = strconv.Itoa(i % 50)
 					for len(lbls) < 10 {
 						lbls[randString()] = randString()
 					}
