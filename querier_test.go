@@ -1700,11 +1700,13 @@ func BenchmarkSetMatcher(b *testing.B) {
 		numSamplesPerSeriesPerBlock int
 		pattern                     string
 	}{
+		// The first three cases are to find out whether the set
+		// matcher is always faster than regex matcher.
 		{
 			numBlocks:                   1,
-			numSeries:                   15,
+			numSeries:                   1,
 			numSamplesPerSeriesPerBlock: 10,
-			pattern:                     "^(?:1|2|3)$",
+			pattern:                     "^(?:1|2|3|4|5|6|7|8|9|10)$",
 		},
 		{
 			numBlocks:                   1,
@@ -1713,6 +1715,13 @@ func BenchmarkSetMatcher(b *testing.B) {
 			pattern:                     "^(?:1|2|3|4|5|6|7|8|9|10)$",
 		},
 		{
+			numBlocks:                   1,
+			numSeries:                   15,
+			numSamplesPerSeriesPerBlock: 10,
+			pattern:                     "^(?:1|2|3)$",
+		},
+		// Big data sizes benchmarks.
+		{
 			numBlocks:                   20,
 			numSeries:                   1000,
 			numSamplesPerSeriesPerBlock: 10,
@@ -1721,6 +1730,18 @@ func BenchmarkSetMatcher(b *testing.B) {
 		{
 			numBlocks:                   20,
 			numSeries:                   1000,
+			numSamplesPerSeriesPerBlock: 10,
+			pattern:                     "^(?:1|2|3|4|5|6|7|8|9|10)$",
+		},
+		{
+			numBlocks:                   1,
+			numSeries:                   100000,
+			numSamplesPerSeriesPerBlock: 10,
+			pattern:                     "^(?:1|2|3|4|5|6|7|8|9|10)$",
+		},
+		{
+			numBlocks:                   1,
+			numSeries:                   500000,
 			numSamplesPerSeriesPerBlock: 10,
 			pattern:                     "^(?:1|2|3|4|5|6|7|8|9|10)$",
 		},
@@ -1745,8 +1766,8 @@ func BenchmarkSetMatcher(b *testing.B) {
 				generatedSeries = make([]Series, c.numSeries)
 				for i := 0; i < c.numSeries; i++ {
 					lbls := make(map[string]string, 10)
-					// The first label pair is {"test", "i%50"} which is for benchmarking set matcher.
-					lbls["test"] = strconv.Itoa(i % 50)
+					// The first label pair is {"test", "i%100"} which is for benchmarking set matcher.
+					lbls["test"] = strconv.Itoa(i % 100)
 					for len(lbls) < 10 {
 						lbls[randString()] = randString()
 					}
@@ -1778,7 +1799,7 @@ func BenchmarkSetMatcher(b *testing.B) {
 		}
 		defer que.Close()
 
-		benchMsg := fmt.Sprintf("nSeries=%d,pattern=\"%s\"", c.numSeries, c.pattern)
+		benchMsg := fmt.Sprintf("nSeries=%d,nBlocks=%d,pattern=\"%s\"", c.numSeries, c.numBlocks, c.pattern)
 		b.Run(benchMsg, func(b *testing.B) {
 			b.ResetTimer()
 			b.ReportAllocs()
