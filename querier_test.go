@@ -1692,41 +1692,37 @@ func BenchmarkQuerySeek(b *testing.B) {
 	}
 }
 
+// Refer to https://github.com/prometheus/prometheus/issues/2651.
 func BenchmarkSetMatcher(b *testing.B) {
 	cases := []struct {
 		numBlocks                   int
 		numSeries                   int
 		numSamplesPerSeriesPerBlock int
-		setPattern                  string
-		regexPattern                string
+		pattern                     string
 	}{
 		{
 			numBlocks:                   1,
 			numSeries:                   15,
 			numSamplesPerSeriesPerBlock: 10,
-			setPattern:                  "^(?:1|2|3)$",
-			regexPattern:                "1|2|3",
+			pattern:                     "^(?:1|2|3)$",
 		},
 		{
 			numBlocks:                   1,
 			numSeries:                   15,
-			numSamplesPerSeriesPerBlock: 10,
-			setPattern:                  "^(?:1|2|3|4|5|6|7|8|9|10)$",
-			regexPattern:                "1|2|3|4|5|6|7|8|9|10",
+			numSamplesPerSeriesPerBlock: 10, 
+			pattern:                     "^(?:1|2|3|4|5|6|7|8|9|10)$",
 		},
 		{
-			numBlocks:                   1,
-			numSeries:                   200,
+			numBlocks:                   20,
+			numSeries:                   1000,
 			numSamplesPerSeriesPerBlock: 10,
-			setPattern:                  "^(?:1|2|3)$",
-			regexPattern:                "1|2|3",
+			pattern:                     "^(?:1|2|3)$",
 		},
 		{
-			numBlocks:                   1,
-			numSeries:                   200,
-			numSamplesPerSeriesPerBlock: 10,
-			setPattern:                  "^(?:1|2|3|4|5|6|7|8|9|10)$",
-			regexPattern:                "1|2|3|4|5|6|7|8|9|10",
+			numBlocks:                   20,
+			numSeries:                   1000,
+			numSamplesPerSeriesPerBlock: 10, 
+			pattern:                     "^(?:1|2|3|4|5|6|7|8|9|10)$",
 		},
 	}
 
@@ -1743,14 +1739,14 @@ func BenchmarkSetMatcher(b *testing.B) {
 			generatedSeries []Series
 		)
 		for i := int64(0); i < int64(c.numBlocks); i++ {
-			mint := i * int64(c.numSamplesPerSeriesPerBlock)
+			mint := i*int64(c.numSamplesPerSeriesPerBlock)
 			maxt := mint + int64(c.numSamplesPerSeriesPerBlock) - 1
 			if len(prefilledLabels) == 0 {
 				generatedSeries = make([]Series, c.numSeries)
 				for i := 0; i < c.numSeries; i++ {
 					lbls := make(map[string]string, 10)
-					// The first label pair is {"test", "i"} which is for benchmarking set matcher.
-					lbls["test"] = strconv.Itoa(i)
+					// The first label pair is {"test", "i%50"} which is for benchmarking set matcher.
+					lbls["test"] = strconv.Itoa(i%50)
 					for len(lbls) < 10 {
 						lbls[randString()] = randString()
 					}
@@ -1782,23 +1778,14 @@ func BenchmarkSetMatcher(b *testing.B) {
 		}
 		defer que.Close()
 
-		benchMsg1 := fmt.Sprintf("SetMatch,nSeries=%d,pattern=\"%s\"", c.numSeries, c.setPattern)
-		benchMsg2 := fmt.Sprintf("RegexMatch,nSeries=%d,pattern=\"%s\"", c.numSeries, c.regexPattern)
-		b.Run(benchMsg1, func(b *testing.B) {
+		benchMsg := fmt.Sprintf("nSeries=%d,pattern=\"%s\"", c.numSeries, c.pattern)
+		b.Run(benchMsg, func(b *testing.B) {
 			b.ResetTimer()
 			b.ReportAllocs()
 			for n := 0; n < b.N; n++ {
-				_, err := que.Select(labels.NewMustRegexpMatcher("test", c.setPattern))
+				_, err := que.Select(labels.NewMustRegexpMatcher("test", c.pattern))
 				testutil.Ok(b, err)
 
-			}
-		})
-		b.Run(benchMsg2, func(b *testing.B) {
-			b.ResetTimer()
-			b.ReportAllocs()
-			for n := 0; n < b.N; n++ {
-				_, err := que.Select(labels.NewMustRegexpMatcher("test", c.regexPattern))
-				testutil.Ok(b, err)
 			}
 		})
 	}
