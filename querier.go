@@ -267,49 +267,49 @@ func (q *blockQuerier) Close() error {
 	return merr.Err()
 }
 
-// Bitmap used by func special to check whether a character needs to be escaped.
-var specialBytes [16]byte
+// Bitmap used by func isRegexMetaCharacter to check whether a character needs to be escaped.
+var regexMetaCharacterBytes [16]byte
 
-// special reports whether byte b needs to be escaped.
-func special(b byte) bool {
-	return b < utf8.RuneSelf && specialBytes[b%16]&(1<<(b/16)) != 0
+// isRegexMetaCharacter reports whether byte b needs to be escaped.
+func isRegexMetaCharacter(b byte) bool {
+	return b < utf8.RuneSelf && regexMetaCharacterBytes[b%16]&(1<<(b/16)) != 0
 }
 
 func init() {
 	for _, b := range []byte(`.+*?()|[]{}^$`) {
-		specialBytes[b%16] |= 1 << (b / 16)
+		regexMetaCharacterBytes[b%16] |= 1 << (b / 16)
 	}
 }
 
 func findSetMatches(pattern string) []string {
 	// Return empty matches if the wrapper from Prometheus is missing.
 	if len(pattern) < 6 || pattern[:4] != "^(?:" || pattern[len(pattern)-2:] != ")$" {
-		return []string{}
+		return nil
 	}
 	escaped := false
 	sets := []*strings.Builder{&strings.Builder{}}
 	for i := 4; i < len(pattern)-2; i++ {
 		if escaped {
-			// Add the escaped special character to the sets.
-			if special(pattern[i]) {
+			switch {
+			case isRegexMetaCharacter(pattern[i]):
 				sets[len(sets)-1].WriteByte(pattern[i])
-			} else if pattern[i] == '\\' {
+			case pattern[i] == '\\':
 				sets[len(sets)-1].WriteByte('\\')
-			} else {
-				return []string{}
+			default:
+				return nil
 			}
 			escaped = false
 		} else {
-			// Return empty sets when there are special characters excluding '|'.
-			if special(pattern[i]) {
+			switch {
+			case isRegexMetaCharacter(pattern[i]):
 				if pattern[i] == '|' {
 					sets = append(sets, &strings.Builder{})
 				} else {
-					return []string{}
+					return nil
 				}
-			} else if pattern[i] == '\\' {
+			case pattern[i] == '\\':
 				escaped = true
-			} else {
+			default:
 				sets[len(sets)-1].WriteByte(pattern[i])
 			}
 		}
@@ -481,6 +481,8 @@ func postingsForSetMatcher(ix IndexReader, name string, matches []string) (index
 	for _, match := range matches {
 		if it, err := ix.Postings(name, match); err == nil {
 			its = append(its, it)
+		} else {
+			return nil, err
 		}
 	}
 	return index.Merge(its...), nil

@@ -1864,12 +1864,12 @@ func TestFindSetMatches(t *testing.T) {
 		// Simple sets containing special characters without escaping.
 		{
 			pattern: "^(?:fo.o|bar?|^baz)$",
-			exp:     []string{},
+			exp:     nil,
 		},
 		// Missing wrapper.
 		{
 			pattern: "foo|bar|baz",
-			exp:     []string{},
+			exp:     nil,
 		},
 	}
 
