@@ -1822,7 +1822,7 @@ func BenchmarkSetMatcher(b *testing.B) {
 		}
 		defer que.Close()
 
-		benchMsg := fmt.Sprintf("nSeries=%d,nBlocks=%d,pattern=\"%s\"", c.numSeries, c.numBlocks, c.pattern)
+		benchMsg := fmt.Sprintf("nSeries=%d,nBlocks=%d,cardinality=%d,pattern=\"%s\"", c.numSeries, c.numBlocks, c.cardinality, c.pattern)
 		b.Run(benchMsg, func(b *testing.B) {
 			b.ResetTimer()
 			b.ReportAllocs()
