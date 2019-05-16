@@ -1698,6 +1698,7 @@ func BenchmarkSetMatcher(b *testing.B) {
 		numBlocks                   int
 		numSeries                   int
 		numSamplesPerSeriesPerBlock int
+		cardinality                 int
 		pattern                     string
 	}{
 		// The first three cases are to find out whether the set
@@ -1706,18 +1707,21 @@ func BenchmarkSetMatcher(b *testing.B) {
 			numBlocks:                   1,
 			numSeries:                   1,
 			numSamplesPerSeriesPerBlock: 10,
+			cardinality:                 100,
 			pattern:                     "^(?:1|2|3|4|5|6|7|8|9|10)$",
 		},
 		{
 			numBlocks:                   1,
 			numSeries:                   15,
 			numSamplesPerSeriesPerBlock: 10,
+			cardinality:                 100,
 			pattern:                     "^(?:1|2|3|4|5|6|7|8|9|10)$",
 		},
 		{
 			numBlocks:                   1,
 			numSeries:                   15,
 			numSamplesPerSeriesPerBlock: 10,
+			cardinality:                 100,
 			pattern:                     "^(?:1|2|3)$",
 		},
 		// Big data sizes benchmarks.
@@ -1725,30 +1729,43 @@ func BenchmarkSetMatcher(b *testing.B) {
 			numBlocks:                   20,
 			numSeries:                   1000,
 			numSamplesPerSeriesPerBlock: 10,
+			cardinality:                 100,
 			pattern:                     "^(?:1|2|3)$",
 		},
 		{
 			numBlocks:                   20,
 			numSeries:                   1000,
 			numSamplesPerSeriesPerBlock: 10,
+			cardinality:                 100,
 			pattern:                     "^(?:1|2|3|4|5|6|7|8|9|10)$",
 		},
+		// Increase cardinality.
 		{
 			numBlocks:                   1,
 			numSeries:                   100000,
 			numSamplesPerSeriesPerBlock: 10,
+			cardinality:                 100000,
 			pattern:                     "^(?:1|2|3|4|5|6|7|8|9|10)$",
 		},
 		{
 			numBlocks:                   1,
 			numSeries:                   500000,
 			numSamplesPerSeriesPerBlock: 10,
+			cardinality:                 500000,
 			pattern:                     "^(?:1|2|3|4|5|6|7|8|9|10)$",
 		},
 		{
 			numBlocks:                   10,
 			numSeries:                   500000,
 			numSamplesPerSeriesPerBlock: 10,
+			cardinality:                 500000,
+			pattern:                     "^(?:1|2|3|4|5|6|7|8|9|10)$",
+		},
+		{
+			numBlocks:                   1,
+			numSeries:                   1000000,
+			numSamplesPerSeriesPerBlock: 10,
+			cardinality:                 1000000,
 			pattern:                     "^(?:1|2|3|4|5|6|7|8|9|10)$",
 		},
 	}
@@ -1772,8 +1789,8 @@ func BenchmarkSetMatcher(b *testing.B) {
 				generatedSeries = make([]Series, c.numSeries)
 				for i := 0; i < c.numSeries; i++ {
 					lbls := make(map[string]string, 10)
-					// The first label pair is {"test", "i%100"} which is for benchmarking set matcher.
-					lbls["test"] = strconv.Itoa(i % 100)
+					// The first label pair is {"test", "i%cardinality"} which is for benchmarking set matcher.
+					lbls["test"] = strconv.Itoa(i % c.cardinality)
 					for len(lbls) < 10 {
 						lbls[randString()] = randString()
 					}
