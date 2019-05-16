@@ -1791,8 +1791,10 @@ func BenchmarkSetMatcher(b *testing.B) {
 					lbls := make(map[string]string, 10)
 					// The first label pair is {"test", "i%cardinality"} which is for benchmarking set matcher.
 					lbls["test"] = strconv.Itoa(i % c.cardinality)
+					j := 1
 					for len(lbls) < 10 {
-						lbls[randString()] = randString()
+						lbls["labelName"+strconv.Itoa(j)] = "labelValue" + strconv.Itoa(j)
+						j += 1
 					}
 					samples := make([]tsdbutil.Sample, 0, maxt-mint+1)
 					for t := mint; t <= maxt; t++ {
