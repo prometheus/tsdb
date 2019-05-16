@@ -179,7 +179,8 @@ func createBlock(tb testing.TB, dir string, series []Series) string {
 
 	testutil.Ok(tb, os.MkdirAll(dir, 0777))
 
-	ulid, err := compactor.Write(dir, head, head.MinTime(), head.MaxTime(), nil)
+	ulid, _ := compactor.Write(dir, head, head.MinTime(), head.MaxTime(), nil)
+	//if inject failed operation by fuse, the error is expected
 	//testutil.Ok(tb, err)
 	return filepath.Join(dir, ulid.String())
 }
