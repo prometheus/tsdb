@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tsdb
+package record
 
 import (
 	"math"
@@ -131,8 +131,8 @@ func (d *RecordDecoder) Tombstones(rec []byte, tstones []Stone) ([]Stone, error)
 	}
 	for dec.Len() > 0 && dec.Err() == nil {
 		tstones = append(tstones, Stone{
-			ref: dec.Be64(),
-			intervals: Intervals{
+			Ref: dec.Be64(),
+			Intervals: Intervals{
 				{Mint: dec.Varint64(), Maxt: dec.Varint64()},
 			},
 		})
@@ -198,8 +198,8 @@ func (e *RecordEncoder) Tombstones(tstones []Stone, b []byte) []byte {
 	buf.PutByte(byte(RecordTombstones))
 
 	for _, s := range tstones {
-		for _, iv := range s.intervals {
-			buf.PutBE64(s.ref)
+		for _, iv := range s.Intervals {
+			buf.PutBE64(s.Ref)
 			buf.PutVarint64(iv.Mint)
 			buf.PutVarint64(iv.Maxt)
 		}

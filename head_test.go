@@ -30,6 +30,7 @@ import (
 	"github.com/prometheus/tsdb/chunks"
 	"github.com/prometheus/tsdb/index"
 	"github.com/prometheus/tsdb/labels"
+	"github.com/prometheus/tsdb/record"
 	"github.com/prometheus/tsdb/testutil"
 	"github.com/prometheus/tsdb/tsdbutil"
 	"github.com/prometheus/tsdb/wal"
@@ -51,14 +52,14 @@ func BenchmarkCreateSeries(b *testing.B) {
 }
 
 func populateTestWAL(t testing.TB, w *wal.WAL, recs []interface{}) {
-	var enc RecordEncoder
+	var enc record.RecordEncoder
 	for _, r := range recs {
 		switch v := r.(type) {
-		case []RefSeries:
+		case []record.RefSeries:
 			testutil.Ok(t, w.Log(enc.Series(v, nil)))
-		case []RefSample:
+		case []record.RefSample:
 			testutil.Ok(t, w.Log(enc.Samples(v, nil)))
-		case []Stone:
+		case []record.Stone:
 			testutil.Ok(t, w.Log(enc.Tombstones(v, nil)))
 		}
 	}
@@ -69,22 +70,22 @@ func readTestWAL(t testing.TB, dir string) (recs []interface{}) {
 	testutil.Ok(t, err)
 	defer sr.Close()
 
-	var dec RecordDecoder
+	var dec record.RecordDecoder
 	r := wal.NewReader(sr)
 
 	for r.Next() {
 		rec := r.Record()
 
 		switch dec.Type(rec) {
-		case RecordSeries:
+		case record.RecordSeries:
 			series, err := dec.Series(rec, nil)
 			testutil.Ok(t, err)
 			recs = append(recs, series)
-		case RecordSamples:
+		case record.RecordSamples:
 			samples, err := dec.Samples(rec, nil)
 			testutil.Ok(t, err)
 			recs = append(recs, samples)
-		case RecordTombstones:
+		case record.RecordTombstones:
 			tstones, err := dec.Tombstones(rec, nil)
 			testutil.Ok(t, err)
 			recs = append(recs, tstones)
@@ -223,38 +224,38 @@ func TestHead_Truncate(t *testing.T) {
 	s3, _ := h.getOrCreate(3, labels.FromStrings("a", "1", "b", "2"))
 	s4, _ := h.getOrCreate(4, labels.FromStrings("a", "2", "b", "2", "c", "1"))
 
-	s1.chunks = []*memChunk{
-		{minTime: 0, maxTime: 999},
-		{minTime: 1000, maxTime: 1999},
-		{minTime: 2000, maxTime: 2999},
+	s1.Chunks = []*record.MemChunk{
+		{MinTime: 0, MaxTime: 999},
+		{MinTime: 1000, MaxTime: 1999},
+		{MinTime: 2000, MaxTime: 2999},
 	}
-	s2.chunks = []*memChunk{
-		{minTime: 1000, maxTime: 1999},
-		{minTime: 2000, maxTime: 2999},
-		{minTime: 3000, maxTime: 3999},
+	s2.Chunks = []*record.MemChunk{
+		{MinTime: 1000, MaxTime: 1999},
+		{MinTime: 2000, MaxTime: 2999},
+		{MinTime: 3000, MaxTime: 3999},
 	}
-	s3.chunks = []*memChunk{
-		{minTime: 0, maxTime: 999},
-		{minTime: 1000, maxTime: 1999},
+	s3.Chunks = []*record.MemChunk{
+		{MinTime: 0, MaxTime: 999},
+		{MinTime: 1000, MaxTime: 1999},
 	}
-	s4.chunks = []*memChunk{}
+	s4.Chunks = []*record.MemChunk{}
 
 	// Truncation need not be aligned.
 	testutil.Ok(t, h.Truncate(1))
 
 	testutil.Ok(t, h.Truncate(2000))
 
-	testutil.Equals(t, []*memChunk{
-		{minTime: 2000, maxTime: 2999},
-	}, h.series.getByID(s1.ref).chunks)
+	testutil.Equals(t, []*record.MemChunk{
+		{MinTime: 2000, MaxTime: 2999},
+	}, h.series.getByID(s1.Ref).Chunks)
 
-	testutil.Equals(t, []*memChunk{
-		{minTime: 2000, maxTime: 2999},
-		{minTime: 3000, maxTime: 3999},
-	}, h.series.getByID(s2.ref).chunks)
+	testutil.Equals(t, []*record.MemChunk{
+		{MinTime: 2000, MaxTime: 2999},
+		{MinTime: 3000, MaxTime: 3999},
+	}, h.series.getByID(s2.Ref).Chunks)
 
-	testutil.Assert(t, h.series.getByID(s3.ref) == nil, "")
-	testutil.Assert(t, h.series.getByID(s4.ref) == nil, "")
+	testutil.Assert(t, h.series.getByID(s3.Ref) == nil, "")
+	testutil.Assert(t, h.series.getByID(s4.Ref) == nil, "")
 
 	postingsA1, _ := index.ExpandPostings(h.postings.Get("a", "1"))
 	postingsA2, _ := index.ExpandPostings(h.postings.Get("a", "2"))
@@ -263,10 +264,10 @@ func TestHead_Truncate(t *testing.T) {
 	postingsC1, _ := index.ExpandPostings(h.postings.Get("c", "1"))
 	postingsAll, _ := index.ExpandPostings(h.postings.Get("", ""))
 
-	testutil.Equals(t, []uint64{s1.ref}, postingsA1)
-	testutil.Equals(t, []uint64{s2.ref}, postingsA2)
-	testutil.Equals(t, []uint64{s1.ref, s2.ref}, postingsB1)
-	testutil.Equals(t, []uint64{s1.ref, s2.ref}, postingsAll)
+	testutil.Equals(t, []uint64{s1.Ref}, postingsA1)
+	testutil.Equals(t, []uint64{s2.Ref}, postingsA2)
+	testutil.Equals(t, []uint64{s1.Ref, s2.Ref}, postingsB1)
+	testutil.Equals(t, []uint64{s1.Ref, s2.Ref}, postingsAll)
 	testutil.Assert(t, postingsB2 == nil, "")
 	testutil.Assert(t, postingsC1 == nil, "")
 
@@ -288,28 +289,28 @@ func TestHead_Truncate(t *testing.T) {
 // Validate various behaviors brought on by firstChunkID accounting for
 // garbage collected chunks.
 func TestMemSeries_truncateChunks(t *testing.T) {
-	s := newMemSeries(labels.FromStrings("a", "b"), 1, 2000)
+	s := record.NewMemSeries(labels.FromStrings("a", "b"), 1, 2000)
 
 	for i := 0; i < 4000; i += 5 {
-		ok, _ := s.append(int64(i), float64(i))
+		ok, _ := s.Append(int64(i), float64(i))
 		testutil.Assert(t, ok == true, "sample append failed")
 	}
 
 	// Check that truncate removes half of the chunks and afterwards
 	// that the ID of the last chunk still gives us the same chunk afterwards.
-	countBefore := len(s.chunks)
-	lastID := s.chunkID(countBefore - 1)
-	lastChunk := s.chunk(lastID)
+	countBefore := len(s.Chunks)
+	lastID := s.ChunkID(countBefore - 1)
+	lastChunk := s.Chunk(lastID)
 
-	testutil.Assert(t, s.chunk(0) != nil, "")
+	testutil.Assert(t, s.Chunk(0) != nil, "")
 	testutil.Assert(t, lastChunk != nil, "")
 
-	s.truncateChunksBefore(2000)
+	s.TruncateChunksBefore(2000)
 
-	testutil.Equals(t, int64(2000), s.chunks[0].minTime)
-	testutil.Assert(t, s.chunk(0) == nil, "first chunks not gone")
-	testutil.Equals(t, countBefore/2, len(s.chunks))
-	testutil.Equals(t, lastChunk, s.chunk(lastID))
+	testutil.Equals(t, int64(2000), s.Chunks[0].MinTime)
+	testutil.Assert(t, s.Chunk(0) == nil, "first chunks not gone")
+	testutil.Equals(t, countBefore/2, len(s.Chunks))
+	testutil.Equals(t, lastChunk, s.Chunk(lastID))
 
 	// Validate that the series' sample buffer is applied correctly to the last chunk
 	// after truncation.
@@ -371,27 +372,27 @@ func TestHeadDeleteSimple(t *testing.T) {
 	lblDefault := labels.Label{"a", "b"}
 
 	cases := []struct {
-		dranges  Intervals
+		dranges  record.Intervals
 		smplsExp []sample
 	}{
 		{
-			dranges:  Intervals{{0, 3}},
+			dranges:  record.Intervals{{0, 3}},
 			smplsExp: buildSmpls([]int64{4, 5, 6, 7, 8, 9}),
 		},
 		{
-			dranges:  Intervals{{1, 3}},
+			dranges:  record.Intervals{{1, 3}},
 			smplsExp: buildSmpls([]int64{0, 4, 5, 6, 7, 8, 9}),
 		},
 		{
-			dranges:  Intervals{{1, 3}, {4, 7}},
+			dranges:  record.Intervals{{1, 3}, {4, 7}},
 			smplsExp: buildSmpls([]int64{0, 8, 9}),
 		},
 		{
-			dranges:  Intervals{{1, 3}, {4, 700}},
+			dranges:  record.Intervals{{1, 3}, {4, 700}},
 			smplsExp: buildSmpls([]int64{0}),
 		},
 		{ // This case is to ensure that labels and symbols are deleted.
-			dranges:  Intervals{{0, 9}},
+			dranges:  record.Intervals{{0, 9}},
 			smplsExp: buildSmpls([]int64{}),
 		},
 	}
@@ -591,7 +592,7 @@ func TestDeletedSamplesAndSeriesStillInWALAfterCheckpoint(t *testing.T) {
 	testutil.Ok(t, hb.Close())
 
 	// Confirm there's been a checkpoint.
-	cdir, _, err := LastCheckpoint(dir)
+	cdir, _, err := wal.LastCheckpoint(dir)
 	testutil.Ok(t, err)
 	// Read in checkpoint and WAL.
 	recs := readTestWAL(t, cdir)
@@ -600,11 +601,11 @@ func TestDeletedSamplesAndSeriesStillInWALAfterCheckpoint(t *testing.T) {
 	var series, samples, stones int
 	for _, rec := range recs {
 		switch rec.(type) {
-		case []RefSeries:
+		case []record.RefSeries:
 			series++
-		case []RefSample:
+		case []record.RefSample:
 			samples++
-		case []Stone:
+		case []record.Stone:
 			stones++
 		default:
 			t.Fatalf("unknown record type")
@@ -692,18 +693,18 @@ func TestDelete_e2e(t *testing.T) {
 	// Delete a time-range from each-selector.
 	dels := []struct {
 		ms     []labels.Matcher
-		drange Intervals
+		drange record.Intervals
 	}{
 		{
 			ms:     []labels.Matcher{labels.NewEqualMatcher("a", "b")},
-			drange: Intervals{{300, 500}, {600, 670}},
+			drange: record.Intervals{{300, 500}, {600, 670}},
 		},
 		{
 			ms: []labels.Matcher{
 				labels.NewEqualMatcher("a", "b"),
 				labels.NewEqualMatcher("job", "prom-k8s"),
 			},
-			drange: Intervals{{300, 500}, {100, 670}},
+			drange: record.Intervals{{300, 500}, {100, 670}},
 		},
 		{
 			ms: []labels.Matcher{
@@ -711,7 +712,7 @@ func TestDelete_e2e(t *testing.T) {
 				labels.NewEqualMatcher("instance", "localhost:9090"),
 				labels.NewEqualMatcher("job", "prometheus"),
 			},
-			drange: Intervals{{300, 400}, {100, 6700}},
+			drange: record.Intervals{{300, 400}, {100, 6700}},
 		},
 		// TODO: Add Regexp Matchers.
 	}
@@ -794,12 +795,12 @@ func boundedSamples(full []tsdbutil.Sample, mint, maxt int64) []tsdbutil.Sample 
 	return full
 }
 
-func deletedSamples(full []tsdbutil.Sample, dranges Intervals) []tsdbutil.Sample {
+func deletedSamples(full []tsdbutil.Sample, dranges record.Intervals) []tsdbutil.Sample {
 	ds := make([]tsdbutil.Sample, 0, len(full))
 Outer:
 	for _, s := range full {
 		for _, r := range dranges {
-			if r.inBounds(s.T()) {
+			if r.InBounds(s.T()) {
 				continue Outer
 			}
 		}
@@ -852,42 +853,42 @@ func TestComputeChunkEndTime(t *testing.T) {
 }
 
 func TestMemSeries_append(t *testing.T) {
-	s := newMemSeries(labels.Labels{}, 1, 500)
+	s := record.NewMemSeries(labels.Labels{}, 1, 500)
 
 	// Add first two samples at the very end of a chunk range and the next two
 	// on and after it.
 	// New chunk must correctly be cut at 1000.
-	ok, chunkCreated := s.append(998, 1)
+	ok, chunkCreated := s.Append(998, 1)
 	testutil.Assert(t, ok, "append failed")
 	testutil.Assert(t, chunkCreated, "first sample created chunk")
 
-	ok, chunkCreated = s.append(999, 2)
+	ok, chunkCreated = s.Append(999, 2)
 	testutil.Assert(t, ok, "append failed")
 	testutil.Assert(t, !chunkCreated, "second sample should use same chunk")
 
-	ok, chunkCreated = s.append(1000, 3)
+	ok, chunkCreated = s.Append(1000, 3)
 	testutil.Assert(t, ok, "append failed")
 	testutil.Assert(t, chunkCreated, "expected new chunk on boundary")
 
-	ok, chunkCreated = s.append(1001, 4)
+	ok, chunkCreated = s.Append(1001, 4)
 	testutil.Assert(t, ok, "append failed")
 	testutil.Assert(t, !chunkCreated, "second sample should use same chunk")
 
-	testutil.Assert(t, s.chunks[0].minTime == 998 && s.chunks[0].maxTime == 999, "wrong chunk range")
-	testutil.Assert(t, s.chunks[1].minTime == 1000 && s.chunks[1].maxTime == 1001, "wrong chunk range")
+	testutil.Assert(t, s.Chunks[0].MinTime == 998 && s.Chunks[0].MaxTime == 999, "wrong chunk range")
+	testutil.Assert(t, s.Chunks[1].MinTime == 1000 && s.Chunks[1].MaxTime == 1001, "wrong chunk range")
 
 	// Fill the range [1000,2000) with many samples. Intermediate chunks should be cut
 	// at approximately 120 samples per chunk.
 	for i := 1; i < 1000; i++ {
-		ok, _ := s.append(1001+int64(i), float64(i))
+		ok, _ := s.Append(1001+int64(i), float64(i))
 		testutil.Assert(t, ok, "append failed")
 	}
 
-	testutil.Assert(t, len(s.chunks) > 7, "expected intermediate chunks")
+	testutil.Assert(t, len(s.Chunks) > 7, "expected intermediate chunks")
 
 	// All chunks but the first and last should now be moderately full.
-	for i, c := range s.chunks[1 : len(s.chunks)-1] {
-		testutil.Assert(t, c.chunk.NumSamples() > 100, "unexpected small chunk %d of length %d", i, c.chunk.NumSamples())
+	for i, c := range s.Chunks[1 : len(s.Chunks)-1] {
+		testutil.Assert(t, c.Chunk.NumSamples() > 100, "unexpected small chunk %d of length %d", i, c.Chunk.NumSamples())
 	}
 }
 
@@ -900,9 +901,9 @@ func TestGCChunkAccess(t *testing.T) {
 	h.initTime(0)
 
 	s, _ := h.getOrCreate(1, labels.FromStrings("a", "1"))
-	s.chunks = []*memChunk{
-		{minTime: 0, maxTime: 999},
-		{minTime: 1000, maxTime: 1999},
+	s.Chunks = []*record.MemChunk{
+		{MinTime: 0, MaxTime: 999},
+		{MinTime: 1000, MaxTime: 1999},
 	}
 
 	idx := h.indexRange(0, 1500)
@@ -926,7 +927,7 @@ func TestGCChunkAccess(t *testing.T) {
 	testutil.Ok(t, h.Truncate(1500)) // Remove a chunk.
 
 	_, err = cr.Chunk(chunks[0].Ref)
-	testutil.Equals(t, ErrNotFound, err)
+	testutil.Equals(t, record.ErrNotFound, err)
 	_, err = cr.Chunk(chunks[1].Ref)
 	testutil.Ok(t, err)
 }
@@ -940,9 +941,9 @@ func TestGCSeriesAccess(t *testing.T) {
 	h.initTime(0)
 
 	s, _ := h.getOrCreate(1, labels.FromStrings("a", "1"))
-	s.chunks = []*memChunk{
-		{minTime: 0, maxTime: 999},
-		{minTime: 1000, maxTime: 1999},
+	s.Chunks = []*record.MemChunk{
+		{MinTime: 0, MaxTime: 999},
+		{MinTime: 1000, MaxTime: 1999},
 	}
 
 	idx := h.indexRange(0, 2000)
@@ -965,12 +966,12 @@ func TestGCSeriesAccess(t *testing.T) {
 
 	testutil.Ok(t, h.Truncate(2000)) // Remove the series.
 
-	testutil.Equals(t, (*memSeries)(nil), h.series.getByID(1))
+	testutil.Equals(t, (*record.MemSeries)(nil), h.series.getByID(1))
 
 	_, err = cr.Chunk(chunks[0].Ref)
-	testutil.Equals(t, ErrNotFound, err)
+	testutil.Equals(t, record.ErrNotFound, err)
 	_, err = cr.Chunk(chunks[1].Ref)
-	testutil.Equals(t, ErrNotFound, err)
+	testutil.Equals(t, record.ErrNotFound, err)
 }
 
 func TestUncommittedSamplesNotLostOnTruncate(t *testing.T) {
@@ -1028,7 +1029,7 @@ func TestRemoveSeriesAfterRollbackAndTruncate(t *testing.T) {
 
 	// Truncate again, this time the series should be deleted
 	testutil.Ok(t, h.Truncate(2050))
-	testutil.Equals(t, (*memSeries)(nil), h.series.getByHash(lset.Hash(), lset))
+	testutil.Equals(t, (*record.MemSeries)(nil), h.series.getByHash(lset.Hash(), lset))
 }
 
 func TestHead_LogRollback(t *testing.T) {
@@ -1080,7 +1081,7 @@ func TestWalRepair_DecodingError(t *testing.T) {
 				res[0] = byte(RecordInvalid)
 				return res
 			},
-			enc.Series([]RefSeries{{Ref: 1, Labels: labels.FromStrings("a", "b")}}, []byte{}),
+			enc.Series([]record.RefSeries{{Ref: 1, Labels: labels.FromStrings("a", "b")}}, []byte{}),
 			9,
 			5,
 		},
@@ -1088,7 +1089,7 @@ func TestWalRepair_DecodingError(t *testing.T) {
 			func(rec []byte) []byte {
 				return rec[:3]
 			},
-			enc.Series([]RefSeries{{Ref: 1, Labels: labels.FromStrings("a", "b")}}, []byte{}),
+			enc.Series([]record.RefSeries{{Ref: 1, Labels: labels.FromStrings("a", "b")}}, []byte{}),
 			9,
 			5,
 		},
@@ -1096,7 +1097,7 @@ func TestWalRepair_DecodingError(t *testing.T) {
 			func(rec []byte) []byte {
 				return rec[:3]
 			},
-			enc.Samples([]RefSample{{Ref: 0, T: 99, V: 1}}, []byte{}),
+			enc.Samples([]record.RefSample{{Ref: 0, T: 99, V: 1}}, []byte{}),
 			9,
 			5,
 		},
@@ -1104,7 +1105,7 @@ func TestWalRepair_DecodingError(t *testing.T) {
 			func(rec []byte) []byte {
 				return rec[:3]
 			},
-			enc.Tombstones([]Stone{{ref: 1, intervals: Intervals{}}}, []byte{}),
+			enc.Tombstones([]record.Stone{{Ref: 1, Intervals: record.Intervals{}}}, []byte{}),
 			9,
 			5,
 		},

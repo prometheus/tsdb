@@ -36,6 +36,7 @@ import (
 	"github.com/prometheus/tsdb/chunks"
 	tsdb_errors "github.com/prometheus/tsdb/errors"
 	"github.com/prometheus/tsdb/labels"
+	"github.com/prometheus/tsdb/record"
 	"gopkg.in/alecthomas/kingpin.v2"
 )
 
@@ -306,7 +307,7 @@ func (b *writeBenchmark) ingestScrapesShard(lbls []labels.Labels, scrapeCount in
 				s.ref = &ref
 			} else if err := app.AddFast(*s.ref, ts, float64(s.value)); err != nil {
 
-				if errors.Cause(err) != tsdb.ErrNotFound {
+				if errors.Cause(err) != record.ErrNotFound {
 					panic(err)
 				}
 

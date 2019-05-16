@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tsdb
+package record
 
 import (
 	"testing"
@@ -55,11 +55,11 @@ func TestRecord_EncodeDecode(t *testing.T) {
 	// Intervals get split up into single entries. So we don't get back exactly
 	// what we put in.
 	tstones := []Stone{
-		{ref: 123, intervals: Intervals{
+		{Ref: 123, Intervals: Intervals{
 			{Mint: -1000, Maxt: 1231231},
 			{Mint: 5000, Maxt: 0},
 		}},
-		{ref: 13, intervals: Intervals{
+		{Ref: 13, Intervals: Intervals{
 			{Mint: -1000, Maxt: -11},
 			{Mint: 5000, Maxt: 1000},
 		}},
@@ -67,10 +67,10 @@ func TestRecord_EncodeDecode(t *testing.T) {
 	decTstones, err := dec.Tombstones(enc.Tombstones(tstones, nil), nil)
 	testutil.Ok(t, err)
 	testutil.Equals(t, []Stone{
-		{ref: 123, intervals: Intervals{{Mint: -1000, Maxt: 1231231}}},
-		{ref: 123, intervals: Intervals{{Mint: 5000, Maxt: 0}}},
-		{ref: 13, intervals: Intervals{{Mint: -1000, Maxt: -11}}},
-		{ref: 13, intervals: Intervals{{Mint: 5000, Maxt: 1000}}},
+		{Ref: 123, Intervals: Intervals{{Mint: -1000, Maxt: 1231231}}},
+		{Ref: 123, Intervals: Intervals{{Mint: 5000, Maxt: 0}}},
+		{Ref: 13, Intervals: Intervals{{Mint: -1000, Maxt: -11}}},
+		{Ref: 13, Intervals: Intervals{{Mint: 5000, Maxt: 1000}}},
 	}, decTstones)
 }
 
@@ -105,7 +105,7 @@ func TestRecord_Corruputed(t *testing.T) {
 
 	t.Run("Test corrupted tombstone record", func(t *testing.T) {
 		tstones := []Stone{
-			{ref: 123, intervals: Intervals{
+			{Ref: 123, Intervals: Intervals{
 				{Mint: -1000, Maxt: 1231231},
 				{Mint: 5000, Maxt: 0},
 			}},

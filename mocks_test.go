@@ -18,6 +18,7 @@ import (
 	"github.com/prometheus/tsdb/chunks"
 	"github.com/prometheus/tsdb/index"
 	"github.com/prometheus/tsdb/labels"
+	"github.com/prometheus/tsdb/record"
 )
 
 type mockIndexWriter struct {

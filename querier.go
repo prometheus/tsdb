@@ -25,6 +25,7 @@ import (
 	tsdb_errors "github.com/prometheus/tsdb/errors"
 	"github.com/prometheus/tsdb/index"
 	"github.com/prometheus/tsdb/labels"
+	"github.com/prometheus/tsdb/record"
 )
 
 // Querier provides querying access over time series data of a fixed
@@ -204,7 +205,7 @@ func NewBlockQuerier(b BlockReader, mint, maxt int64) (Querier, error) {
 type blockQuerier struct {
 	index      IndexReader
 	chunks     ChunkReader
-	tombstones TombstoneReader
+	tombstones record.TombstoneReader
 
 	closed bool
 
@@ -670,7 +671,7 @@ func (s *mergedVerticalSeriesSet) Next() bool {
 // actual series itself.
 type ChunkSeriesSet interface {
 	Next() bool
-	At() (labels.Labels, []chunks.Meta, Intervals)
+	At() (labels.Labels, []chunks.Meta, record.Intervals)
 	Err() error
 }
 
@@ -679,19 +680,19 @@ type ChunkSeriesSet interface {
 type baseChunkSeries struct {
 	p          index.Postings
 	index      IndexReader
-	tombstones TombstoneReader
+	tombstones record.TombstoneReader
 
 	lset      labels.Labels
 	chks      []chunks.Meta
-	intervals Intervals
+	intervals record.Intervals
 	err       error
 }
 
 // LookupChunkSeries retrieves all series for the given matchers and returns a ChunkSeriesSet
 // over them. It drops chunks based on tombstones in the given reader.
-func LookupChunkSeries(ir IndexReader, tr TombstoneReader, ms ...labels.Matcher) (ChunkSeriesSet, error) {
+func LookupChunkSeries(ir IndexReader, tr record.TombstoneReader, ms ...labels.Matcher) (ChunkSeriesSet, error) {
 	if tr == nil {
-		tr = newMemTombstones()
+		tr = record.NewMemTombstones()
 	}
 	p, err := PostingsForMatchers(ir, ms...)
 	if err != nil {
@@ -704,7 +705,7 @@ func LookupChunkSeries(ir IndexReader, tr TombstoneReader, ms ...labels.Matcher)
 	}, nil
 }
 
-func (s *baseChunkSeries) At() (labels.Labels, []chunks.Meta, Intervals) {
+func (s *baseChunkSeries) At() (labels.Labels, []chunks.Meta, record.Intervals) {
 	return s.lset, s.chks, s.intervals
 }
 
@@ -721,7 +722,7 @@ func (s *baseChunkSeries) Next() bool {
 		ref := s.p.At()
 		if err := s.index.Series(ref, &lset, &chkMetas); err != nil {
 			// Postings may be stale. Skip if no underlying series exists.
-			if errors.Cause(err) == ErrNotFound {
+			if errors.Cause(err) == record.ErrNotFound {
 				continue
 			}
 			s.err = err
@@ -740,7 +741,7 @@ func (s *baseChunkSeries) Next() bool {
 			// Only those chunks that are not entirely deleted.
 			chks := make([]chunks.Meta, 0, len(s.chks))
 			for _, chk := range s.chks {
-				if !(Interval{chk.MinTime, chk.MaxTime}.isSubrange(s.intervals)) {
+				if !(record.Interval{chk.MinTime, chk.MaxTime}.IsSubrange(s.intervals)) {
 					chks = append(chks, chk)
 				}
 			}
@@ -767,10 +768,10 @@ type populatedChunkSeries struct {
 	err       error
 	chks      []chunks.Meta
 	lset      labels.Labels
-	intervals Intervals
+	intervals record.Intervals
 }
 
-func (s *populatedChunkSeries) At() (labels.Labels, []chunks.Meta, Intervals) {
+func (s *populatedChunkSeries) At() (labels.Labels, []chunks.Meta, record.Intervals) {
 	return s.lset, s.chks, s.intervals
 }
 
@@ -801,7 +802,7 @@ func (s *populatedChunkSeries) Next() bool {
 			c.Chunk, s.err = s.chunks.Chunk(c.Ref)
 			if s.err != nil {
 				// This means that the chunk has be garbage collected. Remove it from the list.
-				if s.err == ErrNotFound {
+				if s.err == record.ErrNotFound {
 					s.err = nil
 					// Delete in-place.
 					s.chks = append(chks[:j], chks[j+1:]...)
@@ -865,7 +866,7 @@ type chunkSeries struct {
 
 	mint, maxt int64
 
-	intervals Intervals
+	intervals record.Intervals
 }
 
 func (s *chunkSeries) Labels() labels.Labels {
@@ -1066,7 +1067,7 @@ type chunkSeriesIterator struct {
 
 	maxt, mint int64
 
-	intervals Intervals
+	intervals record.Intervals
 }
 
 func newChunkSeriesIterator(cs []chunks.Meta, dranges Intervals, mint, maxt int64) *chunkSeriesIterator {
@@ -1168,7 +1169,7 @@ func (it *chunkSeriesIterator) Err() error {
 type deletedIterator struct {
 	it chunkenc.Iterator
 
-	intervals Intervals
+	intervals record.Intervals
 }
 
 func (it *deletedIterator) At() (int64, float64) {
@@ -1181,7 +1182,7 @@ Outer:
 		ts, _ := it.it.At()
 
 		for _, tr := range it.intervals {
-			if tr.inBounds(ts) {
+			if tr.InBounds(ts) {
 				continue Outer
 			}
 
