@@ -1785,22 +1785,7 @@ func BenchmarkSetMatcher(b *testing.B) {
 			mint := i * int64(c.numSamplesPerSeriesPerBlock)
 			maxt := mint + int64(c.numSamplesPerSeriesPerBlock) - 1
 			if len(prefilledLabels) == 0 {
-				generatedSeries = make([]Series, c.numSeries)
-				for i := 0; i < c.numSeries; i++ {
-					lbls := make(map[string]string, 10)
-					// The first label pair is {"test", "i%cardinality"} which is for benchmarking set matcher.
-					lbls["test"] = strconv.Itoa(i % c.cardinality)
-					j := 1
-					for len(lbls) < 10 {
-						lbls["labelName"+strconv.Itoa(j)] = "labelValue" + strconv.Itoa(j)
-						j += 1
-					}
-					samples := make([]tsdbutil.Sample, 0, maxt-mint+1)
-					for t := mint; t <= maxt; t++ {
-						samples = append(samples, sample{t: t, v: rand.Float64()})
-					}
-					generatedSeries[i] = newSeries(lbls, samples)
-				}
+				generatedSeries = genSeries(c.numSeries, 10, mint, maxt)
 				for _, s := range generatedSeries {
 					prefilledLabels = append(prefilledLabels, s.Labels().Map())
 				}
