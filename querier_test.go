@@ -2107,6 +2107,15 @@ func TestPostingsForMatchers(t *testing.T) {
 				labels.FromStrings("n", "2.5"),
 			},
 		},
+		// Empty value.
+		{
+			matchers: []labels.Matcher{labels.NewMustRegexpMatcher("i", "^(?:c||d)$")},
+			exp: []labels.Labels{
+				labels.FromStrings("n", "1"),
+				labels.FromStrings("n", "2"),
+				labels.FromStrings("n", "2.5"),
+			},
+		},
 	}
 
 	ir, err := h.Index()
