@@ -146,13 +146,11 @@ func TestWAL_Repair(t *testing.T) {
 			first, last, err := w.Segments()
 			testutil.Ok(t, err)
 
-			// Backfill segments from the last checkpoint onwards
+			// Backfill segments from the most recent checkpoint onwards.
 			for i := first; i <= last; i++ {
 				s, err := OpenReadSegment(SegmentName(w.Dir(), i))
 				testutil.Ok(t, err)
-				// if err != nil {
-				// 	return errors.Wrap(err, fmt.Sprintf("open WAL segment: %d", i))
-				// }
+
 				sr := NewSegmentBufReader(s)
 				testutil.Ok(t, err)
 				r := NewReader(sr)
