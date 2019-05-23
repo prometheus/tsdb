@@ -156,6 +156,10 @@ func TestWAL_Repair(t *testing.T) {
 				r := NewReader(sr)
 				for r.Next() {
 				}
+
+				//Close the segment so we don't break things on Windows.
+				s.Close()
+
 				// No corruption in this segment.
 				if r.Err() == nil {
 					continue
