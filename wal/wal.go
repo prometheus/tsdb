@@ -372,6 +372,9 @@ func (w *WAL) Repair(origErr error) error {
 		return errors.Wrap(err, "delete corrupted segment")
 	}
 
+	// Explicitly close the the segment we just repaired to avoid issues with Windows.
+	s.Close()
+
 	// We always want to start writing to a new Segment rather than an existing
 	// Segment, which is handled by NewSize, but earlier in Repair we're deleting
 	// all segments that come after the corrupted Segment. Recreate a new Segment here.
@@ -382,7 +385,6 @@ func (w *WAL) Repair(origErr error) error {
 	if err := w.setSegment(s); err != nil {
 		return err
 	}
-
 	return nil
 }
 
