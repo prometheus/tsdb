@@ -290,6 +290,10 @@ func TestCorruptAndCarryOn(t *testing.T) {
 		err = w.Repair(corruptionErr)
 		testutil.Ok(t, err)
 
+		// Ensure that we have a completely clean slate after reapiring.
+		testutil.Equals(t, w.segment.Index(), 1) // We corrupted segment 0.
+		testutil.Equals(t, w.donePages, 0)
+
 		for i := 0; i < 5; i++ {
 			buf := make([]byte, recordSize)
 			_, err := rand.Read(buf)

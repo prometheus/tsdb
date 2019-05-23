@@ -359,6 +359,9 @@ func (w *WAL) Repair(origErr error) error {
 	}
 	// We expect an error here from r.Err(), so nothing to handle.
 
+	// We need to pad to the end of the last page in the repaired segment
+	w.flushPage(true)
+
 	// We explicitly close even when there is a defer for Windows to be
 	// able to delete it. The defer is in place to close it in-case there
 	// are errors above.
