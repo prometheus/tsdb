@@ -15,8 +15,8 @@ matrix:
       - sudo chmod 666 /dev/fuse
       - sudo chown root:$USER /etc/fuse.conf
       - sudo addgroup $USER fuse
-      - chmod a+r /etc/fuse.conf
-      - chmod a+w /etc/fuse.conf
+      - sudo chmod a+r /etc/fuse.conf
+      - sudo chmod a+w /etc/fuse.conf
       - sudo echo user_allow_other >> /etc/fuse.conf
       - make all
   - os: osx
