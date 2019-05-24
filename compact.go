@@ -1018,7 +1018,10 @@ func renameFile(from, to string) error {
 	if err := os.RemoveAll(to); err != nil {
 		return err
 	}
+
+	fmt.Printf("renamed file from %s to %s \n", from, to)
 	if err := os.Rename(from, to); err != nil {
+		fmt.Printf("renamed file failed  %s to %s \n", from, to)
 		return err
 	}
 

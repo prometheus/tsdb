@@ -10,7 +10,7 @@ matrix:
     install:
       - make deps
     script:
-      - sudo -E apt-get -yq --no-install-suggests --no-install-recommends --force-yes install fuse
+      - sudo -E apt-get -yq --no-install-suggests --no-install-recommends --force-yes install fuse libfuse-dev
       - sudo modprobe fuse
       - sudo chmod 666 /dev/fuse
       - sudo chown root:$USER /etc/fuse.conf
