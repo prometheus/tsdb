@@ -16,6 +16,7 @@ package tsdb
 import (
 	"context"
 	"fmt"
+	"github.com/go-kit/kit/log/level"
 	"github.com/hanwen/go-fuse/fuse"
 	"io/ioutil"
 	"math"
@@ -1089,7 +1090,11 @@ func TestOpenBlockWithHook(t *testing.T) {
 	defer cleanUp(server, mountpoint, original)
 
 	//normal logic
-	OpenBlock(nil, filepath.Join(mountpoint, file), nil)
+	_, err := OpenBlock(nil, filepath.Join(mountpoint, file), nil)
+	if err != nil {
+		level.Warn(log.NewNopLogger()).Log("msg", "couldn't write the meta file for the block size", "err", err)
+		return
+	}
 	dir, _ := ioutil.ReadDir(filepath.Join(mountpoint, file))
 
 	testutil.Equals(t, true, len(dir) > 0)
