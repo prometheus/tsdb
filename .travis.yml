@@ -4,6 +4,7 @@ go_import_path: github.com/prometheus/tsdb
 matrix:
   include:
   - os: linux
+    dist: trusty
     sudo: required
     go: 1.12.x
     install:
@@ -14,7 +15,7 @@ matrix:
       - sudo chmod 666 /dev/fuse
       - sudo chown root:$USER /etc/fuse.conf
       - sudo addgroup $USER fuse
-      - sudo pkill -u username
+      - sudo pkill -u $USER
       - make all
   - os: osx
     go: 1.12.x
