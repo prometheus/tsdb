@@ -1019,9 +1019,7 @@ func renameFile(from, to string) error {
 		return err
 	}
 
-	fmt.Printf("renamed file from %s to %s \n", from, to)
 	if err := os.Rename(from, to); err != nil {
-		fmt.Printf("renamed file failed  %s to %s \n", from, to)
 		return err
 	}
 
