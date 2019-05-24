@@ -114,6 +114,9 @@ func TestHead_ReadWAL(t *testing.T) {
 			{Ref: 10, T: 101, V: 5},
 			{Ref: 50, T: 101, V: 6},
 		},
+		[]Stone{
+			{ref: 0, intervals: []Interval{{Mint: 99, Maxt: 101}}},
+		},
 	}
 	dir, err := ioutil.TempDir("", "test_read_wal")
 	testutil.Ok(t, err)
@@ -859,7 +862,7 @@ func TestGCChunkAccess(t *testing.T) {
 	_, err = cr.Chunk(chunks[1].Ref)
 	testutil.Ok(t, err)
 
-	h.Truncate(1500) // Remove a chunk.
+	testutil.Ok(t, h.Truncate(1500)) // Remove a chunk.
 
 	_, err = cr.Chunk(chunks[0].Ref)
 	testutil.Equals(t, ErrNotFound, err)
@@ -899,7 +902,7 @@ func TestGCSeriesAccess(t *testing.T) {
 	_, err = cr.Chunk(chunks[1].Ref)
 	testutil.Ok(t, err)
 
-	h.Truncate(2000) // Remove the series.
+	testutil.Ok(t, h.Truncate(2000)) // Remove the series.
 
 	testutil.Equals(t, (*memSeries)(nil), h.series.getByID(1))
 

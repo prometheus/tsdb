@@ -31,7 +31,6 @@ import (
 	"github.com/go-kit/kit/log"
 	"github.com/pkg/errors"
 	prom_testutil "github.com/prometheus/client_golang/prometheus/testutil"
-	dto "github.com/prometheus/client_model/go"
 	"github.com/prometheus/tsdb/chunks"
 	"github.com/prometheus/tsdb/fileutil"
 	"github.com/prometheus/tsdb/labels"
@@ -748,7 +747,7 @@ func TestCompaction_populateBlock(t *testing.T) {
 		if ok := t.Run(tc.title, func(t *testing.T) {
 			blocks := make([]BlockReader, 0, len(tc.inputSeriesSamples))
 			for _, b := range tc.inputSeriesSamples {
-				ir, cr, mint, maxt := createIdxChkReaders(b)
+				ir, cr, mint, maxt := createIdxChkReaders(t, b)
 				blocks = append(blocks, &mockBReader{ir: ir, cr: cr, mint: mint, maxt: maxt})
 			}
 
@@ -894,16 +893,14 @@ func TestDisableAutoCompactions(t *testing.T) {
 	default:
 	}
 
-	m := &dto.Metric{}
 	for x := 0; x < 10; x++ {
-		db.metrics.compactionsSkipped.Write(m)
-		if *m.Counter.Value > float64(0) {
+		if prom_testutil.ToFloat64(db.metrics.compactionsSkipped) > 0.0 {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
 
-	testutil.Assert(t, *m.Counter.Value > float64(0), "No compaction was skipped after the set timeout.")
+	testutil.Assert(t, prom_testutil.ToFloat64(db.metrics.compactionsSkipped) > 0.0, "No compaction was skipped after the set timeout.")
 	testutil.Equals(t, 0, len(db.blocks))
 
 	// Enable the compaction, trigger it and check that the block is persisted.

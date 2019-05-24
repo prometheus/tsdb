@@ -194,7 +194,7 @@ type seriesSamples struct {
 
 // Index: labels -> postings -> chunkMetas -> chunkRef
 // ChunkReader: ref -> vals
-func createIdxChkReaders(tc []seriesSamples) (IndexReader, ChunkReader, int64, int64) {
+func createIdxChkReaders(t *testing.T, tc []seriesSamples) (IndexReader, ChunkReader, int64, int64) {
 	sort.Slice(tc, func(i, j int) bool {
 		return labels.Compare(labels.FromMap(tc[i].lset), labels.FromMap(tc[i].lset)) < 0
 	})
@@ -206,13 +206,11 @@ func createIdxChkReaders(tc []seriesSamples) (IndexReader, ChunkReader, int64, i
 	blockMint := int64(math.MaxInt64)
 	blockMaxt := int64(math.MinInt64)
 
+	var chunkRef uint64
 	for i, s := range tc {
 		i = i + 1 // 0 is not a valid posting.
 		metas := make([]chunks.Meta, 0, len(s.chunks))
 		for _, chk := range s.chunks {
-			// Collisions can be there, but for tests, its fine.
-			ref := rand.Uint64()
-
 			if chk[0].t < blockMint {
 				blockMint = chk[0].t
 			}
@@ -223,7 +221,7 @@ func createIdxChkReaders(tc []seriesSamples) (IndexReader, ChunkReader, int64, i
 			metas = append(metas, chunks.Meta{
 				MinTime: chk[0].t,
 				MaxTime: chk[len(chk)-1].t,
-				Ref:     ref,
+				Ref:     chunkRef,
 			})
 
 			chunk := chunkenc.NewXORChunk()
@@ -231,11 +229,12 @@ func createIdxChkReaders(tc []seriesSamples) (IndexReader, ChunkReader, int64, i
 			for _, smpl := range chk {
 				app.Append(smpl.t, smpl.v)
 			}
-			chkReader[ref] = chunk
+			chkReader[chunkRef] = chunk
+			chunkRef += 1
 		}
 
 		ls := labels.FromMap(s.lset)
-		mi.AddSeries(uint64(i), ls, metas...)
+		testutil.Ok(t, mi.AddSeries(uint64(i), ls, metas...))
 
 		postings.Add(uint64(i), ls)
 
@@ -250,12 +249,12 @@ func createIdxChkReaders(tc []seriesSamples) (IndexReader, ChunkReader, int64, i
 	}
 
 	for l, vs := range lblIdx {
-		mi.WriteLabelIndex([]string{l}, vs.slice())
+		testutil.Ok(t, mi.WriteLabelIndex([]string{l}, vs.slice()))
 	}
 
-	postings.Iter(func(l labels.Label, p index.Postings) error {
+	testutil.Ok(t, postings.Iter(func(l labels.Label, p index.Postings) error {
 		return mi.WritePostings(l.Name, l.Value, p)
-	})
+	}))
 
 	return mi, chkReader, blockMint, blockMaxt
 }
@@ -364,7 +363,7 @@ func TestBlockQuerier(t *testing.T) {
 
 Outer:
 	for _, c := range cases.queries {
-		ir, cr, _, _ := createIdxChkReaders(cases.data)
+		ir, cr, _, _ := createIdxChkReaders(t, cases.data)
 		querier := &blockQuerier{
 			index:      ir,
 			chunks:     cr,
@@ -526,7 +525,7 @@ func TestBlockQuerierDelete(t *testing.T) {
 
 Outer:
 	for _, c := range cases.queries {
-		ir, cr, _, _ := createIdxChkReaders(cases.data)
+		ir, cr, _, _ := createIdxChkReaders(t, cases.data)
 		querier := &blockQuerier{
 			index:      ir,
 			chunks:     cr,
@@ -631,7 +630,7 @@ func TestBaseChunkSeries(t *testing.T) {
 	for _, tc := range cases {
 		mi := newMockIndex()
 		for _, s := range tc.series {
-			mi.AddSeries(s.ref, s.lset, s.chunks...)
+			testutil.Ok(t, mi.AddSeries(s.ref, s.lset, s.chunks...))
 		}
 
 		bcs := &baseChunkSeries{
@@ -1885,7 +1884,7 @@ func TestPostingsForMatchers(t *testing.T) {
 
 		for p.Next() {
 			lbls := labels.Labels{}
-			ir.Series(p.At(), &lbls, &[]chunks.Meta{})
+			testutil.Ok(t, ir.Series(p.At(), &lbls, &[]chunks.Meta{}))
 			if _, ok := exp[lbls.String()]; !ok {
 				t.Errorf("Evaluating %v, unexpected result %s", c.matchers, lbls.String())
 			} else {
@@ -1898,4 +1897,31 @@ func TestPostingsForMatchers(t *testing.T) {
 		}
 	}
 
+}
+
+// TestClose ensures that calling Close more than once doesn't block and doesn't panic.
+func TestClose(t *testing.T) {
+	dir, err := ioutil.TempDir("", "test_storage")
+	if err != nil {
+		t.Fatalf("Opening test dir failed: %s", err)
+	}
+	defer func() {
+		testutil.Ok(t, os.RemoveAll(dir))
+	}()
+
+	createBlock(t, dir, genSeries(1, 1, 0, 10))
+	createBlock(t, dir, genSeries(1, 1, 10, 20))
+
+	db, err := Open(dir, nil, nil, DefaultOptions)
+	if err != nil {
+		t.Fatalf("Opening test storage failed: %s", err)
+	}
+	defer func() {
+		testutil.Ok(t, db.Close())
+	}()
+
+	q, err := db.Querier(0, 20)
+	testutil.Ok(t, err)
+	testutil.Ok(t, q.Close())
+	testutil.NotOk(t, q.Close())
 }
