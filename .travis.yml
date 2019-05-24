@@ -15,7 +15,6 @@ matrix:
       - sudo chmod 666 /dev/fuse
       - sudo chown root:$USER /etc/fuse.conf
       - sudo addgroup $USER fuse
-      - sudo pkill -u $USER
       - make all
   - os: osx
     go: 1.12.x
