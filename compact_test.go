@@ -1146,7 +1146,7 @@ type TestRenameHook struct{}
 
 func (h *TestRenameHook) PreRename(oldPatgh string, newPath string) (hooked bool, err error) {
 	fmt.Printf("renamed file from %s to %s \n", oldPatgh, newPath)
-	return true, syscall.EIO
+	return true, syscall.EACCES
 }
 func (h *TestRenameHook) PostRename(oldPatgh string, newPath string) (hooked bool, err error) {
 	return false, nil

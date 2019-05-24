@@ -18,6 +18,7 @@ matrix:
       - sudo chmod a+r /etc/fuse.conf
       - sudo chmod a+w /etc/fuse.conf
       - sudo echo user_allow_other >> /etc/fuse.conf
+      - sudo chmod +x /bin/fusermount
       - make all
   - os: osx
     go: 1.12.x
