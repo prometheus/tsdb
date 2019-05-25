@@ -22,12 +22,13 @@ matrix:
   - os: osx
     go: 1.12.x
     sudo: required
-    install:
-      - make deps
     script:
       - brew update
       - brew install caskroom/cask/brew-cask
+      - brew install brew-cask-completion
       - brew cask install osxfuse
+      - brew install sshfs
+      - brew link sshfs
       - make all
   - os: windows
     go: 1.12.x
