@@ -23,7 +23,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -1092,18 +1091,15 @@ func TestOpenBlockWithHook(t *testing.T) {
 		level.Warn(log.NewNopLogger()).Log("msg", "couldn't write the meta file for the block size", "err", err)
 		return
 	}
-	dir, _ := ioutil.ReadDir(filepath.Join(mountpoint, file))
 
-	testutil.Equals(t, true, len(dir) > 0)
-	hasTempFile := false
-	for _, info := range dir {
-		if strings.HasSuffix(info.Name(), "tmp") {
-			hasTempFile = true
-			break
-		}
-	}
+	testutil.Equals(t, true, Exist(filepath.Join(mountpoint, file, "index")))
+	//rename failed because there is an error by injected file system exception with fuse
+	testutil.Equals(t, false, Exist(filepath.Join(mountpoint, file, "meta.json")))
+}
 
-	testutil.Equals(t, true, hasTempFile)
+func Exist(filename string) bool {
+	_, err := os.Stat(filename)
+	return err == nil || os.IsExist(err)
 }
 
 func newFuseServer(t *testing.T, original, mountpoint string) *fuse.Server {
@@ -1143,7 +1139,7 @@ type TestRenameHook struct{}
 
 func (h *TestRenameHook) PreRename(oldPatgh string, newPath string) (hooked bool, err error) {
 	fmt.Printf("renamed file from %s to %s \n", oldPatgh, newPath)
-	return true, syscall.EACCES
+	return true, syscall.EIO
 }
 func (h *TestRenameHook) PostRename(oldPatgh string, newPath string) (hooked bool, err error) {
 	return false, nil

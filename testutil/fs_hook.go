@@ -95,6 +95,7 @@ func (h *HookFs) Rename(oldName string, newName string, context *fuse.Context) f
 		preHooked, err := hook.PreRename(oldName, newName)
 		if preHooked {
 			if err != nil {
+
 				return fuse.ToStatus(err)
 			}
 		}
