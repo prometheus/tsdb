@@ -14,6 +14,7 @@
 package tsdb
 
 import (
+	"fmt"
 	"math"
 	"runtime"
 	"sort"
@@ -430,6 +431,10 @@ func (h *Head) loadWAL(r *wal.Reader) (err error) {
 					if itv.Maxt < h.minValidTime {
 						continue
 					}
+					if m := h.series.getByID(s.ref); m == nil {
+						unknownRefs++
+						continue
+					}
 					allStones.addInterval(s.ref, itv)
 				}
 			}
@@ -498,19 +503,32 @@ func (h *Head) Init(minValidTime int64) error {
 		startFrom++
 	}
 
-	// Backfill segments from the last checkpoint onwards.
-	sr, err := wal.NewSegmentsRangeReader(wal.SegmentRange{Dir: h.wal.Dir(), First: startFrom, Last: -1})
+	// Find the last segment.
+	_, last, err := h.wal.Segments()
 	if err != nil {
-		return errors.Wrap(err, "open WAL segments")
+		return errors.Wrap(err, "finding WAL segments")
 	}
-	defer func() {
+
+	// Backfill segments from the most recent checkpoint onwards.
+	for i := startFrom; i <= last; i++ {
+		s, err := wal.OpenReadSegment(wal.SegmentName(h.wal.Dir(), i))
+		if err != nil {
+			return errors.Wrap(err, fmt.Sprintf("open WAL segment: %d", i))
+		}
+
+		sr := wal.NewSegmentBufReader(s)
+		err = h.loadWAL(wal.NewReader(sr))
+
 		if err := sr.Close(); err != nil {
 			level.Warn(h.logger).Log("msg", "error while closing the wal segments reader", "err", err)
 		}
-	}()
-	err = h.loadWAL(wal.NewReader(sr))
+		if err == nil {
+			continue
+		}
+		return err
+	}
 
-	return err
+	return nil
 }
 
 // Truncate removes old data before mint from the head.
@@ -760,6 +778,9 @@ func (a *headAppender) Add(lset labels.Labels, t int64, v float64) (uint64, erro
 	if t < a.minValidTime {
 		return 0, ErrOutOfBounds
 	}
+
+	// Ensure no empty labels have gotten through.
+	lset = lset.WithoutEmpty()
 
 	s, created := a.head.getOrCreate(lset.Hash(), lset)
 	if created {
