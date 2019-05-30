@@ -251,8 +251,8 @@ type DBReadOnly struct {
 	dir    string
 }
 
-// NewDBReadOnly returns a new DB in the given directory for read only operations.
-func NewDBReadOnly(dir string, l log.Logger) (*DBReadOnly, error) {
+// OpenDBReadOnly opens DB in the given directory for read only operations.
+func OpenDBReadOnly(dir string, l log.Logger) (*DBReadOnly, error) {
 	if _, err := os.Stat(dir); err != nil {
 		return nil, err
 	}
@@ -271,20 +271,24 @@ func NewDBReadOnly(dir string, l log.Logger) (*DBReadOnly, error) {
 
 // Querier loads the wal and returns a new querier over the data partition for the given time range.
 // A goroutine must not handle more than one open Querier.
-func (dbRead *DBReadOnly) Querier(mint, maxt int64) (Querier, error) {
-	head, err := NewHead(nil, dbRead.logger, nil, 1)
+func (db *DBReadOnly) Querier(mint, maxt int64) (Querier, error) {
+	w, err := wal.NewReadOnly(db.logger, nil, filepath.Join(db.dir, "wal"))
+	if err != nil {
+		return nil, err
+	}
+	head, err := NewHead(nil, db.logger, w, 1)
 	if err != nil {
 		return nil, err
 	}
 
-	blocks, err := dbRead.Blocks()
+	blocks, err := db.Blocks()
 	if err != nil {
 		return nil, err
 	}
 
-	db := &DB{
-		dir:    dbRead.dir,
-		logger: dbRead.logger,
+	dbWritable := &DB{
+		dir:    db.dir,
+		logger: db.logger,
 		head:   head,
 		blocks: blocks,
 	}
@@ -296,16 +300,17 @@ func (dbRead *DBReadOnly) Querier(mint, maxt int64) (Querier, error) {
 		minValidTime = blocks[len(blocks)-1].Meta().MaxTime
 	}
 
-	if err := db.head.Init(minValidTime); err != nil {
+	if err := dbWritable.head.Init(minValidTime); err != nil {
 		return nil, errors.Wrap(err, "read WAL")
 	}
 
-	return db.Querier(mint, maxt)
+	return dbWritable.Querier(mint, maxt)
 }
 
-// Blocks returns the databases persisted blocks.
-func (dbRead *DBReadOnly) Blocks() ([]*Block, error) {
-	loadable, corrupted, err := openBlocks(dbRead.logger, dbRead.dir, nil, nil)
+// Blocks returns all persisted blocks.
+// It is up to the caller to close the blocks.
+func (db *DBReadOnly) Blocks() ([]*Block, error) {
+	loadable, corrupted, err := openBlocks(db.logger, db.dir, nil, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -317,6 +322,11 @@ func (dbRead *DBReadOnly) Blocks() ([]*Block, error) {
 		}
 	}
 	if len(corrupted) > 0 {
+		for _, b := range loadable {
+			if err := b.Close(); err != nil {
+				level.Warn(db.logger).Log("msg", "closing a block", err)
+			}
+		}
 		return nil, fmt.Errorf("unexpected corrupted block:%v", corrupted)
 	}
 
@@ -333,7 +343,7 @@ func (dbRead *DBReadOnly) Blocks() ([]*Block, error) {
 		blockMetas = append(blockMetas, b.Meta())
 	}
 	if overlaps := OverlappingBlocks(blockMetas); len(overlaps) > 0 {
-		level.Warn(dbRead.logger).Log("msg", "overlapping blocks found during opening", "detail", overlaps.String())
+		level.Warn(db.logger).Log("msg", "overlapping blocks found during opening", "detail", overlaps.String())
 	}
 	return loadable, nil
 }

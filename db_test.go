@@ -2191,3 +2191,90 @@ func TestBlockRanges(t *testing.T) {
 		t.Fatalf("new block overlaps  old:%v,new:%v", db.Blocks()[2].Meta(), db.Blocks()[3].Meta())
 	}
 }
+
+// TestDBReadOnly ensures that opening a DB in readonly mode doesn't modify any files on the disk.
+// It also checks that the API calls return equivalent results as a normal db.Open() mode.
+func TestDBReadOnly(t *testing.T) {
+	var (
+		dbDir     string
+		logger    = log.NewLogfmtLogger(log.NewSyncWriter(os.Stderr))
+		expBlocks []*Block
+		expSeries map[string][]tsdbutil.Sample
+		expDbSize int64
+		matchAll  = labels.NewEqualMatcher("", "")
+		err       error
+	)
+
+	// Boostrap the db.
+	{
+		dbDir, err = ioutil.TempDir("", "test")
+		testutil.Ok(t, err)
+
+		defer func() {
+			testutil.Ok(t, os.RemoveAll(dbDir))
+		}()
+
+		dbBlocks := []*BlockMeta{
+			{MinTime: 10, MaxTime: 11},
+			{MinTime: 11, MaxTime: 12},
+			{MinTime: 12, MaxTime: 13},
+		}
+
+		for _, m := range dbBlocks {
+			createBlock(t, dbDir, genSeries(1, 1, m.MinTime, m.MaxTime))
+		}
+	}
+
+	// Open a normal db to use for a comparison.
+	{
+		dbWritable, err := Open(dbDir, logger, nil, nil)
+		testutil.Ok(t, err)
+		defer func() {
+			testutil.Ok(t, dbWritable.Close())
+		}()
+		dbWritable.DisableCompactions()
+
+		dbSizeBeforeAppend, err := testutil.DirSize(dbWritable.Dir())
+		testutil.Ok(t, err)
+		app := dbWritable.Appender()
+		_, err = app.Add(labels.FromStrings("foo", "bar"), dbWritable.Head().MaxTime()+1, 0)
+		testutil.Ok(t, err)
+		testutil.Ok(t, app.Commit())
+
+		expBlocks = dbWritable.Blocks()
+		expDbSize, err = testutil.DirSize(dbWritable.Dir())
+		testutil.Ok(t, err)
+		testutil.Assert(t, expDbSize > dbSizeBeforeAppend, "db size didn't increase after an append")
+
+		q, err := dbWritable.Querier(math.MinInt64, math.MaxInt64)
+		testutil.Ok(t, err)
+		expSeries = query(t, q, matchAll)
+	}
+
+	// Open a read only db and ensure that the API returns the same result as the normal DB.
+	{
+		dbReadOnly, err := OpenDBReadOnly(dbDir, logger)
+		testutil.Ok(t, err)
+		blocks, err := dbReadOnly.Blocks()
+		testutil.Ok(t, err)
+		testutil.Equals(t, len(expBlocks), len(blocks))
+
+		for i, expBlock := range expBlocks {
+			testutil.Equals(t, expBlock.Size(), blocks[i].Size(), "block size mismatch")
+			testutil.Equals(t, expBlock.Meta(), blocks[i].Meta(), "block meta mismatch")
+			testutil.Equals(t, expBlock.Dir(), blocks[i].Dir(), "block dir mismatch")
+			testutil.Equals(t, expBlock.MinTime(), blocks[i].MinTime(), "block MinTime mismatch")
+			testutil.Equals(t, expBlock.MaxTime(), blocks[i].MaxTime(), "block MaxTime mismatch")
+		}
+
+		q, err := dbReadOnly.Querier(math.MinInt64, math.MaxInt64)
+		testutil.Ok(t, err)
+		readOnlySeries := query(t, q, matchAll)
+		readOnlyDBSize, err := testutil.DirSize(dbDir)
+		testutil.Ok(t, err)
+
+		testutil.Assert(t, len(readOnlySeries) > 0, "querier should return some series")
+		testutil.Equals(t, expSeries, readOnlySeries, "series mismatch")
+		testutil.Equals(t, expDbSize, readOnlyDBSize, "after all read operations the db size should remain the same")
+	}
+}

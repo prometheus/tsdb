@@ -71,7 +71,7 @@ func main() {
 		}
 		wb.run()
 	case listCmd.FullCommand():
-		db, err := tsdb.NewDBReadOnly(*listPath, nil)
+		db, err := tsdb.OpenDBReadOnly(*listPath, nil)
 		if err != nil {
 			exitWithError(err)
 		}
@@ -81,7 +81,7 @@ func main() {
 		}
 		printBlocks(blocks, listCmdHumanReadable)
 	case analyzeCmd.FullCommand():
-		db, err := tsdb.NewDBReadOnly(*analyzePath, nil)
+		db, err := tsdb.OpenDBReadOnly(*analyzePath, nil)
 
 		if err != nil {
 			exitWithError(err)
@@ -106,7 +106,7 @@ func main() {
 		}
 		analyzeBlock(block, *analyzeLimit)
 	case dumpCmd.FullCommand():
-		db, err := tsdb.NewDBReadOnly(*dumpPath, nil)
+		db, err := tsdb.OpenDBReadOnly(*dumpPath, nil)
 
 		if err != nil {
 			exitWithError(err)
