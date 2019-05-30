@@ -51,6 +51,7 @@ var DefaultOptions = &Options{
 	BlockRanges:            ExponentialBlockRanges(int64(2*time.Hour)/1e6, 3, 5),
 	NoLockfile:             false,
 	AllowOverlappingBlocks: false,
+	MaxHeadSeries:          -1,
 }
 
 // Options of the DB storage.
@@ -80,6 +81,10 @@ type Options struct {
 	// Overlapping blocks are allowed if AllowOverlappingBlocks is true.
 	// This in-turn enables vertical compaction and vertical query merge.
 	AllowOverlappingBlocks bool
+
+	// Maximum number of series that are allowed in the Head.
+	// No bound if MaxHeadSeries <= 0.
+	MaxHeadSeries int
 }
 
 // Appender allows appending a batch of data. It must be completed with a
@@ -312,7 +317,7 @@ func Open(dir string, l log.Logger, r prometheus.Registerer, opts *Options) (db 
 		}
 	}
 
-	db.head, err = NewHead(r, l, wlog, opts.BlockRanges[0])
+	db.head, err = NewHead(r, l, wlog, opts.BlockRanges[0], opts.MaxHeadSeries)
 	if err != nil {
 		return nil, err
 	}

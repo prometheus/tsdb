@@ -68,6 +68,8 @@ type Head struct {
 	minTime, maxTime int64 // Current min and max of the samples included in the head.
 	minValidTime     int64 // Mint allowed to be added to the head. It shouldn't be lower than the maxt of the last persisted block.
 	lastSeriesID     uint64
+	totalSeries      int
+	maxSeries        int
 
 	// All series addressable by their ID or hash.
 	series *stripeSeries
@@ -221,7 +223,7 @@ func newHeadMetrics(h *Head, r prometheus.Registerer) *headMetrics {
 }
 
 // NewHead opens the head block in dir.
-func NewHead(r prometheus.Registerer, l log.Logger, wal *wal.WAL, chunkRange int64) (*Head, error) {
+func NewHead(r prometheus.Registerer, l log.Logger, wal *wal.WAL, chunkRange int64, maxSeries int) (*Head, error) {
 	if l == nil {
 		l = log.NewNopLogger()
 	}
@@ -235,6 +237,7 @@ func NewHead(r prometheus.Registerer, l log.Logger, wal *wal.WAL, chunkRange int
 		minTime:    math.MaxInt64,
 		maxTime:    math.MinInt64,
 		series:     newStripeSeries(),
+		maxSeries:  maxSeries,
 		values:     map[string]stringset{},
 		symbols:    map[string]struct{}{},
 		postings:   index.NewUnorderedMemPostings(),
@@ -984,6 +987,7 @@ func (h *Head) gc() {
 	deleted, chunksRemoved := h.series.gc(mint)
 	seriesRemoved := len(deleted)
 
+	h.totalSeries -= seriesRemoved
 	h.metrics.seriesRemoved.Add(float64(seriesRemoved))
 	h.metrics.series.Sub(float64(seriesRemoved))
 	h.metrics.chunksRemoved.Add(float64(chunksRemoved))
@@ -1297,6 +1301,9 @@ func (h *Head) getOrCreate(hash uint64, lset labels.Labels) (*memSeries, bool) {
 }
 
 func (h *Head) getOrCreateWithID(id, hash uint64, lset labels.Labels) (*memSeries, bool) {
+	if h.maxSeries > 0 && h.totalSeries >= h.maxSeries {
+		return nil, false
+	}
 	s := newMemSeries(lset, id, h.chunkRange)
 
 	s, created := h.series.getOrSet(hash, s)
@@ -1304,6 +1311,7 @@ func (h *Head) getOrCreateWithID(id, hash uint64, lset labels.Labels) (*memSerie
 		return s, false
 	}
 
+	h.totalSeries++
 	h.metrics.series.Inc()
 	h.metrics.seriesCreated.Inc()
 
