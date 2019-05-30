@@ -2255,6 +2255,9 @@ func TestDBReadOnly(t *testing.T) {
 	{
 		dbReadOnly, err := OpenDBReadOnly(dbDir, logger)
 		testutil.Ok(t, err)
+		defer func() {
+			testutil.Ok(t, dbReadOnly.Close())
+		}()
 		blocks, err := dbReadOnly.Blocks()
 		testutil.Ok(t, err)
 		testutil.Equals(t, len(expBlocks), len(blocks))

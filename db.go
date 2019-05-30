@@ -249,6 +249,8 @@ func newDBMetrics(db *DB, r prometheus.Registerer) *dbMetrics {
 type DBReadOnly struct {
 	logger log.Logger
 	dir    string
+	blocks []*Block // Keep all open blocks in the cache to close them at db.Close.
+	closed bool
 }
 
 // OpenDBReadOnly opens DB in the given directory for read only operations.
@@ -308,7 +310,6 @@ func (db *DBReadOnly) Querier(mint, maxt int64) (Querier, error) {
 }
 
 // Blocks returns all persisted blocks.
-// It is up to the caller to close the blocks.
 func (db *DBReadOnly) Blocks() ([]*Block, error) {
 	loadable, corrupted, err := openBlocks(db.logger, db.dir, nil, nil)
 	if err != nil {
@@ -345,7 +346,28 @@ func (db *DBReadOnly) Blocks() ([]*Block, error) {
 	if overlaps := OverlappingBlocks(blockMetas); len(overlaps) > 0 {
 		level.Warn(db.logger).Log("msg", "overlapping blocks found during opening", "detail", overlaps.String())
 	}
+
+	// Close all previously open blocks and add the new ones to the catche.
+	for _, b := range db.blocks {
+		b.Close()
+	}
+	db.blocks = loadable
+
 	return loadable, nil
+}
+
+// Close all db blocks to release the locks.
+func (db *DBReadOnly) Close() error {
+	if db.closed {
+		return errors.New("db already closed")
+	}
+	var merr tsdb_errors.MultiError
+
+	for _, b := range db.blocks {
+		merr.Add(b.Close())
+	}
+	db.closed = true
+	return merr.Err()
 }
 
 // Open returns a new DB in the given directory.
