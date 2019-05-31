@@ -1,7 +1,6 @@
 dist: trusty
 language: go
 go_import_path: github.com/prometheus/tsdb
-osx_image: xcode8.3
 matrix:
   include:
   - os: linux
