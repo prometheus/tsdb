@@ -25,7 +25,6 @@ matrix:
     script:
       - brew update
       - brew install caskroom/cask/brew-cask
-      - brew install brew-cask-completion
       - brew cask install osxfuse
       - make test
   - os: windows
@@ -35,5 +34,4 @@ matrix:
     install:
        - make deps
     script:
-      - make test
 
