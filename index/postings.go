@@ -303,6 +303,11 @@ func Intersect(its ...Postings) Postings {
 	if len(its) == 1 {
 		return its[0]
 	}
+	for _, p := range its {
+		if p == EmptyPostings() {
+			return EmptyPostings()
+		}
+	}
 
 	return newIntersectPostings(its...)
 }
@@ -320,21 +325,19 @@ func (it *intersectPostings) At() uint64 {
 	return it.cur
 }
 
-func (it *intersectPostings) doNext(id uint64) bool {
+func (it *intersectPostings) doNext() bool {
+Loop:
 	for {
-		find := true
 		for _, p := range it.arr {
 			if !p.Seek(it.cur) {
 				return false
 			}
 			if p.At() > it.cur {
 				it.cur = p.At()
-				find = false
+				continue Loop
 			}
 		}
-		if find {
-			return true
-		}
+		return true
 	}
 }
 
@@ -347,19 +350,12 @@ func (it *intersectPostings) Next() bool {
 			it.cur = p.At()
 		}
 	}
-	return it.doNext(it.cur)
+	return it.doNext()
 }
 
 func (it *intersectPostings) Seek(id uint64) bool {
-	for _, p := range it.arr {
-		if !p.Seek(id) {
-			return false
-		}
-		if p.At() > it.cur {
-			it.cur = p.At()
-		}
-	}
-	return it.doNext(it.cur)
+	it.cur = id
+	return it.doNext()
 }
 
 func (it *intersectPostings) Err() error {
