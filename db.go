@@ -283,9 +283,18 @@ func (db *DBReadOnly) Querier(mint, maxt int64) (Querier, error) {
 		return nil, err
 	}
 
-	blocks, err := db.Blocks()
+	blocksReadOnly, err := db.Blocks()
 	if err != nil {
 		return nil, err
+	}
+
+	blocks := make([]*Block, len(blocksReadOnly))
+	for i, b := range blocksReadOnly {
+		b, ok := b.(*Block)
+		if !ok {
+			return nil, errors.New("unable to convert a read only block to a normal block")
+		}
+		blocks[i] = b
 	}
 
 	dbWritable := &DB{
@@ -310,7 +319,7 @@ func (db *DBReadOnly) Querier(mint, maxt int64) (Querier, error) {
 }
 
 // Blocks returns all persisted blocks.
-func (db *DBReadOnly) Blocks() ([]*Block, error) {
+func (db *DBReadOnly) Blocks() ([]BlockReadOnly, error) {
 	loadable, corrupted, err := openBlocks(db.logger, db.dir, nil, nil)
 	if err != nil {
 		return nil, err
@@ -353,7 +362,12 @@ func (db *DBReadOnly) Blocks() ([]*Block, error) {
 	}
 	db.blocks = loadable
 
-	return loadable, nil
+	blocks := make([]BlockReadOnly, len(loadable))
+	for i, b := range loadable {
+		blocks[i] = b
+	}
+
+	return blocks, nil
 }
 
 // Close all db blocks to release the locks.
@@ -742,23 +756,23 @@ func (db *DB) reload() (err error) {
 }
 
 func openBlocks(l log.Logger, dir string, loaded []*Block, chunkPool chunkenc.Pool) (blocks []*Block, corrupted map[ulid.ULID]error, err error) {
-	blockDirs, err := blockDirs(dir)
+	bDirs, err := blockDirs(dir)
 	if err != nil {
 		return nil, nil, errors.Wrap(err, "find blocks")
 	}
 
 	corrupted = make(map[ulid.ULID]error)
-	for _, blockDir := range blockDirs {
-		meta, err := readMetaFile(blockDir)
+	for _, bDir := range bDirs {
+		meta, err := readMetaFile(bDir)
 		if err != nil {
-			level.Error(l).Log("msg", "not a block dir", "dir", blockDir)
+			level.Error(l).Log("msg", "not a block dir", "dir", bDir)
 			continue
 		}
 
 		// See if we already have the block in memory or open it otherwise.
 		block := getBlock(loaded, meta.ULID)
 		if block == nil {
-			block, err = OpenBlock(l, blockDir, chunkPool)
+			block, err = OpenBlock(l, bDir, chunkPool)
 			if err != nil {
 				corrupted[meta.ULID] = err
 				continue

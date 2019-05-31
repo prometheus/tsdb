@@ -82,7 +82,6 @@ func main() {
 		printBlocks(blocks, listCmdHumanReadable)
 	case analyzeCmd.FullCommand():
 		db, err := tsdb.OpenDBReadOnly(*analyzePath, nil)
-
 		if err != nil {
 			exitWithError(err)
 		}
@@ -90,7 +89,7 @@ func main() {
 		if err != nil {
 			exitWithError(err)
 		}
-		var block *tsdb.Block
+		var block tsdb.BlockReadOnly
 		if *analyzeBlockID != "" {
 			for _, b := range blocks {
 				if b.Meta().ULID.String() == *analyzeBlockID {
@@ -107,7 +106,6 @@ func main() {
 		analyzeBlock(block, *analyzeLimit)
 	case dumpCmd.FullCommand():
 		db, err := tsdb.OpenDBReadOnly(*dumpPath, nil)
-
 		if err != nil {
 			exitWithError(err)
 		}
@@ -400,7 +398,7 @@ func exitWithError(err error) {
 	os.Exit(1)
 }
 
-func printBlocks(blocks []*tsdb.Block, humanReadable *bool) {
+func printBlocks(blocks []tsdb.BlockReadOnly, humanReadable *bool) {
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	defer tw.Flush()
 
@@ -427,7 +425,7 @@ func getFormatedTime(timestamp int64, humanReadable *bool) string {
 	return strconv.FormatInt(timestamp, 10)
 }
 
-func analyzeBlock(b *tsdb.Block, limit int) {
+func analyzeBlock(b tsdb.BlockReadOnly, limit int) {
 	fmt.Printf("Block path: %s\n", b.Dir())
 	meta := b.Meta()
 	// Presume 1ms resolution that Prometheus uses.

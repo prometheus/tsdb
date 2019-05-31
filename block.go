@@ -157,6 +157,24 @@ type SizeReader interface {
 	Size() int64
 }
 
+// BlockReadOnly is a block with a read only API.
+type BlockReadOnly interface {
+	Close() error
+	String() string
+	Dir() string
+	Meta() BlockMeta
+	MinTime() int64
+	MaxTime() int64
+	Size() int64
+	Index() (IndexReader, error)
+	Chunks() (ChunkReader, error)
+	Tombstones() (TombstoneReader, error)
+	GetSymbolTableSize() uint64
+	Snapshot(dir string) error
+	OverlapsClosedInterval(mint, maxt int64) bool
+	LabelNames() ([]string, error)
+}
+
 // BlockMeta provides meta information about a block.
 type BlockMeta struct {
 	// Unique identifier for the block and its contents. Changes on compaction.
