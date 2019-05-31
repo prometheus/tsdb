@@ -603,18 +603,23 @@ func (pb *Block) Snapshot(dir string) error {
 		return errors.Wrap(err, "create snapshot chunk dir")
 	}
 
-	// Hardlink meta, index and tombstones
+	// Hardlink meta and index.
 	for _, fname := range []string{
 		metaFilename,
 		indexFilename,
-		tombstoneFilename,
 	} {
 		if err := os.Link(filepath.Join(pb.dir, fname), filepath.Join(blockDir, fname)); err != nil {
 			return errors.Wrapf(err, "create snapshot %s", fname)
 		}
 	}
 
-	// Hardlink the chunks
+	// Hardlink tombstones.
+	if err := os.Link(filepath.Join(pb.dir, tombstoneFilename), filepath.Join(blockDir, tombstoneFilename)); err != nil {
+		// Tombstones might not exist. Ignore the error.
+		level.Warn(pb.logger).Log("msg", "error in linking tombstones to snapshot", "block", pb.meta.ULID.String(), "err", err)
+	}
+
+	// Hardlink the chunks.
 	curChunkDir := chunkDir(pb.dir)
 	files, err := ioutil.ReadDir(curChunkDir)
 	if err != nil {
