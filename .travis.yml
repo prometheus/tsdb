@@ -1,6 +1,7 @@
 dist: trusty
 language: go
 go_import_path: github.com/prometheus/tsdb
+osx_image: xcode8.3
 matrix:
   include:
   - os: linux
@@ -22,10 +23,13 @@ matrix:
   - os: osx
     go: 1.12.x
     sudo: required
+    osx_image: xcode8.3
     script:
       - brew update
       - brew tap homebrew/cask
       - brew cask install osxfuse
+      - sudo /Library/Filesystems/osxfuse.fs/Contents/Resources/load_osxfuse
+      - sudo sysctl -w vfs.generic.osxfuse.tunables.allow_other=1
       - make test
   - os: windows
     go: 1.12.x
