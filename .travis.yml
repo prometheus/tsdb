@@ -24,7 +24,8 @@ matrix:
     sudo: required
     script:
       - brew update
-      - brew install osxfuse
+      - brew tap homebrew/cask
+      - brew cask install osxfuse
       - make test
   - os: windows
     go: 1.12.x
