@@ -24,8 +24,7 @@ matrix:
     sudo: required
     script:
       - brew update
-      - brew install caskroom/cask/brew-cask
-      - brew cask install osxfuse
+      - brew install osxfuse
       - make test
   - os: windows
     go: 1.12.x
@@ -34,4 +33,5 @@ matrix:
     install:
        - make deps
     script:
+       - make test
 
