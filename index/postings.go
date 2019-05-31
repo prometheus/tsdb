@@ -341,7 +341,7 @@ func (it *intersectPostings) doNext(id uint64) bool {
 func (it *intersectPostings) Next() bool {
 	for _, p := range it.arr {
 		if !p.Next() {
-			return false 
+			return false
 		}
 		if p.At() > it.cur {
 			it.cur = p.At()
@@ -353,7 +353,7 @@ func (it *intersectPostings) Next() bool {
 func (it *intersectPostings) Seek(id uint64) bool {
 	for _, p := range it.arr {
 		if !p.Seek(id) {
-			return false 
+			return false
 		}
 		if p.At() > it.cur {
 			it.cur = p.At()
