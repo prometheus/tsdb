@@ -1105,7 +1105,7 @@ func Exist(filename string) bool {
 func newFuseServer(t *testing.T, original, mountpoint string) *fuse.Server {
 	createDirIfAbsent(original)
 	createDirIfAbsent(mountpoint)
-	fs, err := testutil.NewHookFs(original, mountpoint, &TestRenameHook{})
+	fs, err := testutil.NewHookFs(original, mountpoint, &TestRenameHook{}, t)
 	testutil.Ok(t, err)
 	server, err := fs.NewServe()
 	if err != nil {

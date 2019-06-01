@@ -29,4 +29,12 @@ matrix:
       - sudo /Library/Filesystems/osxfuse.fs/Contents/Resources/load_osxfuse
       - sudo sysctl -w vfs.generic.osxfuse.tunables.allow_other=1
       - make all
+  - os: windows
+    go: 1.12.x
+    before_install:
+      - choco install make
+    install:
+      - make deps
+    script:
+      - make test
 
