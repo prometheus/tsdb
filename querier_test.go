@@ -1546,19 +1546,7 @@ func BenchmarkQueryIterator(b *testing.B) {
 				}
 				defer sq.Close()
 
-				b.ResetTimer()
-				b.ReportAllocs()
-
-				ss, err := sq.Select(labels.NewMustRegexpMatcher("__name__", ".*"))
-				testutil.Ok(b, err)
-				for ss.Next() {
-					it := ss.At().Iterator()
-					for it.Next() {
-					}
-					testutil.Ok(b, it.Err())
-				}
-				testutil.Ok(b, ss.Err())
-				testutil.Ok(b, err)
+				benchQuery(b, c.numSeries, sq, labels.Selector{labels.NewMustRegexpMatcher("__name__", ".*")})
 			})
 		}
 	}
