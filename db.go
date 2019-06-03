@@ -249,7 +249,7 @@ func newDBMetrics(db *DB, r prometheus.Registerer) *dbMetrics {
 type DBReadOnly struct {
 	logger log.Logger
 	dir    string
-	blocks []*Block // Keep all open blocks in the cache to close them at db.Close.
+	blocks []BlockReadOnly // Keep all open blocks in the cache to close them at db.Close.
 	closed bool
 }
 
@@ -325,7 +325,7 @@ func (db *DBReadOnly) Blocks() ([]BlockReadOnly, error) {
 		return nil, err
 	}
 
-	// Corrupted blocks that have been replaced by parents can be safely ignored.
+	// Corrupted blocks that have been superseded by a loadable block can be safely ignored.
 	for _, block := range loadable {
 		for _, b := range block.Meta().Compaction.Parents {
 			delete(corrupted, b.ULID)
@@ -360,12 +360,12 @@ func (db *DBReadOnly) Blocks() ([]BlockReadOnly, error) {
 	for _, b := range db.blocks {
 		b.Close()
 	}
-	db.blocks = loadable
 
 	blocks := make([]BlockReadOnly, len(loadable))
 	for i, b := range loadable {
 		blocks[i] = b
 	}
+	db.blocks = blocks
 
 	return blocks, nil
 }
@@ -467,15 +467,17 @@ func Open(dir string, l log.Logger, r prometheus.Registerer, opts *Options) (db 
 	}
 
 	if initErr := db.head.Init(minValidTime); initErr != nil {
-		err := errors.Cause(initErr) // So that we can pick up errors even when wrapped.
-		if _, ok := err.(*wal.CorruptionErr); ok {
-			level.Warn(db.logger).Log("msg", "encountered WAL corruption error, attempting repair", "err", err)
-			db.metrics.walCorruptionsTotal.Inc()
-			if err := wlog.Repair(err); err != nil {
-				return nil, errors.Wrap(err, "repair corrupted WAL")
+		// So that we can pick up errors even when wrapped.
+		if err := errors.Cause(initErr); err != nil {
+			if _, ok := err.(*wal.CorruptionErr); ok {
+				level.Warn(db.logger).Log("msg", "encountered WAL corruption error, attempting repair", "err", err)
+				db.metrics.walCorruptionsTotal.Inc()
+				if err := wlog.Repair(err); err != nil {
+					return nil, errors.Wrap(err, "repair corrupted WAL")
+				}
+			} else {
+				return nil, errors.Wrap(initErr, "read WAL")
 			}
-		} else {
-			return nil, errors.Wrap(initErr, "read WAL")
 		}
 	}
 
@@ -674,7 +676,7 @@ func (db *DB) reload() (err error) {
 
 	deletable := db.deletableBlocks(loadable)
 
-	// Corrupted blocks that have been replaced by parents can be safely ignored and deleted.
+	// Corrupted blocks that have been superseded by a loadable block can be safely ignored.
 	// This makes it resilient against the process crashing towards the end of a compaction.
 	// Creation of a new block and deletion of its parents cannot happen atomically.
 	// By creating blocks with their parents, we can pick up the deletion where it left off during a crash.
