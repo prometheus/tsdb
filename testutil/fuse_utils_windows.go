@@ -1,6 +1,6 @@
-// +build linux darwin
-// Copyright 2018 The Prometheus Authors
+// +build windows
 
+// Copyright 2017 The Prometheus Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -12,14 +12,17 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
 package testutil
 
-type Hook interface{}
+import "testing"
 
-type HookContext interface{}
-
-type HookOnRename interface {
-	PreRename(oldPatgh string, newPath string) (hooked bool, err error)
-	PostRename(oldPatgh string, newPath string) (hooked bool, err error)
+func NewFuseServer(t *testing.T, original, mountpoint string, hook Hook) (interface{}, error) {
+	t.Skip("Skip windows platform")
+	return nil, nil
 }
+
+func CleanUp(s interface{}, mountpoint string, original string) {
+
+}
+
+type Hook interface{}

@@ -17,7 +17,6 @@ import (
 	"context"
 	"fmt"
 	"github.com/go-kit/kit/log/level"
-	"github.com/hanwen/go-fuse/fuse"
 	"io/ioutil"
 	"math"
 	"os"
@@ -1063,9 +1062,10 @@ func TestCreateBlockWithHook(t *testing.T) {
 	//init acgtion
 	original := filepath.Join(string(filepath.Separator), "tmp", fmt.Sprintf("dev-%d", time.Now().Unix()))
 	mountpoint := filepath.Join(string(filepath.Separator), "tmp", fmt.Sprintf("mountpoint-%d", time.Now().Unix()))
-	server := newFuseServer(t, original, mountpoint)
+	server, err := testutil.NewFuseServer(t, original, mountpoint, testutil.Hook(TestRenameHook{}))
 	//remember to call unmount after you do not use it
-	defer cleanUp(server, mountpoint, original)
+	defer testutil.CleanUp(server, mountpoint, original)
+	testutil.Ok(t, err)
 
 	//normal logic
 	createBlock(t, mountpoint, genSeries(1, 1, 200, 300))
@@ -1081,12 +1081,13 @@ func TestOpenBlockWithHook(t *testing.T) {
 	//create block will be successful because hook server does not start
 	path := createBlock(t, original, genSeries(1, 1, 200, 300))
 	_, file := filepath.Split(path)
-	server := newFuseServer(t, original, mountpoint)
+	server, err := testutil.NewFuseServer(t, original, mountpoint, testutil.Hook(TestRenameHook{}))
 	//remember to call unmount after you do not use it
-	defer cleanUp(server, mountpoint, original)
+	defer testutil.CleanUp(server, mountpoint, original)
+	testutil.Ok(t, err)
 
 	//normal logic
-	_, err := OpenBlock(nil, filepath.Join(mountpoint, file), nil)
+	_, err = OpenBlock(nil, filepath.Join(mountpoint, file), nil)
 	if err != nil {
 		level.Warn(log.NewNopLogger()).Log("msg", "couldn't write the meta file for the block size", "err", err)
 		return
@@ -1102,45 +1103,12 @@ func Exist(filename string) bool {
 	return err == nil || os.IsExist(err)
 }
 
-func newFuseServer(t *testing.T, original, mountpoint string) *fuse.Server {
-	createDirIfAbsent(original)
-	createDirIfAbsent(mountpoint)
-	fs, err := testutil.NewHookFs(original, mountpoint, &TestRenameHook{}, t)
-	testutil.Ok(t, err)
-	server, err := fs.NewServe()
-	if err != nil {
-		fmt.Printf("start server failed, err=%v \n", err)
-	}
-	testutil.Ok(t, err)
-	go func() {
-		fs.Start(server)
-	}()
-
-	return server
-}
-
-func cleanUp(server *fuse.Server, mountpoint string, original string) {
-	server.Unmount()
-	syscall.Unmount(mountpoint, -1)
-
-	os.RemoveAll(mountpoint)
-	os.RemoveAll(original)
-	fmt.Println("Done")
-}
-
-func createDirIfAbsent(name string) {
-	_, err := os.Stat(name)
-	if err != nil {
-		os.Mkdir(name, os.ModePerm)
-	}
-}
-
 type TestRenameHook struct{}
 
-func (h *TestRenameHook) PreRename(oldPatgh string, newPath string) (hooked bool, err error) {
+func (h TestRenameHook) PreRename(oldPatgh string, newPath string) (hooked bool, err error) {
 	fmt.Printf("renamed file from %s to %s \n", oldPatgh, newPath)
 	return true, syscall.EIO
 }
-func (h *TestRenameHook) PostRename(oldPatgh string, newPath string) (hooked bool, err error) {
+func (h TestRenameHook) PostRename(oldPatgh string, newPath string) (hooked bool, err error) {
 	return false, nil
 }

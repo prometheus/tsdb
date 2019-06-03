@@ -1,5 +1,6 @@
-// Copyright 2018 The Prometheus Authors
+// +build linux darwin
 
+// Copyright 2018 The Prometheus Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -17,8 +18,6 @@ package testutil
 import (
 	"fmt"
 	"path/filepath"
-	"runtime"
-	"testing"
 	"time"
 
 	"github.com/hanwen/go-fuse/fuse"
@@ -34,11 +33,7 @@ type HookFs struct {
 	hook       Hook
 }
 
-func NewHookFs(original string, mountpoint string, hook Hook, t *testing.T) (*HookFs, error) {
-	if runtime.GOOS == "windows" {
-		t.Skip("windows do not have fuse system")
-	}
-
+func NewHookFs(original string, mountpoint string, hook Hook) (*HookFs, error) {
 	loopbackfs := pathfs.NewLoopbackFileSystem(original)
 	hookfs := &HookFs{
 		Original:   original,
