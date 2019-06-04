@@ -28,7 +28,6 @@ import (
 	"github.com/go-kit/kit/log/level"
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/prometheus/pkg/timestamp"
 	"github.com/prometheus/tsdb/fileutil"
 	"github.com/prometheus/tsdb/record"
 )
@@ -78,6 +77,13 @@ var (
 		[]string{consumer},
 	)
 )
+
+// This function is copied from prometheus/prometheus/pkg/timestamp to avoid adding vendor to TSDB repo.
+
+// FromTime returns a new millisecond timestamp from a time.
+func FromTime(t time.Time) int64 {
+	return t.Unix()*1000 + int64(t.Nanosecond())/int64(time.Millisecond)
+}
 
 func init() {
 	prometheus.MustRegister(watcherRecordsRead)
@@ -169,7 +175,7 @@ func (w *WALWatcher) loop() {
 
 	// We may encourter failures processing the WAL; we should wait and retry.
 	for !isClosed(w.quit) {
-		w.startTime = timestamp.FromTime(time.Now())
+		w.startTime = FromTime(time.Now())
 		if err := w.run(); err != nil {
 			level.Error(w.logger).Log("msg", "error tailing WAL", "err", err)
 		}
