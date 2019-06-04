@@ -135,7 +135,7 @@ func TestTailSamples(t *testing.T) {
 	testutil.Ok(t, err)
 
 	wt := newWriteToMock()
-	watcher := NewWALWatcher(nil, "", wt, dir)
+	watcher := NewWALWatcher(nil, nil, "", wt, dir)
 	watcher.startTime = now.UnixNano()
 
 	// Set the Watcher's metrics so they're not nil pointers.
@@ -145,7 +145,7 @@ func TestTailSamples(t *testing.T) {
 		testutil.Ok(t, err)
 		defer segment.Close()
 
-		reader := NewLiveReader(nil, prometheus.DefaultRegisterer, segment)
+		reader := NewLiveReader(nil, nil, segment)
 		// Use tail true so we can ensure we got the right number of samples.
 		watcher.readSegment(reader, i, true)
 	}
@@ -210,7 +210,7 @@ func TestReadToEndNoCheckpoint(t *testing.T) {
 	testutil.Ok(t, err)
 
 	wt := newWriteToMock()
-	watcher := NewWALWatcher(nil, "", wt, dir)
+	watcher := NewWALWatcher(nil, nil, "", wt, dir)
 	go watcher.Start()
 
 	expected := seriesCount
@@ -292,7 +292,7 @@ func TestReadToEndWithCheckpoint(t *testing.T) {
 	_, _, err = w.Segments()
 	testutil.Ok(t, err)
 	wt := newWriteToMock()
-	watcher := NewWALWatcher(nil, "", wt, dir)
+	watcher := NewWALWatcher(nil, nil, "", wt, dir)
 	go watcher.Start()
 
 	expected := seriesCount * 2
@@ -353,7 +353,7 @@ func TestReadCheckpoint(t *testing.T) {
 	testutil.Ok(t, err)
 
 	wt := newWriteToMock()
-	watcher := NewWALWatcher(nil, "", wt, dir)
+	watcher := NewWALWatcher(nil, nil, "", wt, dir)
 	// watcher.
 	go watcher.Start()
 
@@ -420,7 +420,7 @@ func TestReadCheckpointMultipleSegments(t *testing.T) {
 	}
 
 	wt := newWriteToMock()
-	watcher := NewWALWatcher(nil, "", wt, dir)
+	watcher := NewWALWatcher(nil, nil, "", wt, dir)
 	watcher.maxSegment = -1
 
 	// Set the Watcher's metrics so they're not nil pointers.
@@ -480,7 +480,7 @@ func TestCheckpointSeriesReset(t *testing.T) {
 	testutil.Ok(t, err)
 
 	wt := newWriteToMock()
-	watcher := NewWALWatcher(nil, "", wt, dir)
+	watcher := NewWALWatcher(nil, nil, "", wt, dir)
 	watcher.maxSegment = -1
 	go watcher.Start()
 

@@ -105,6 +105,7 @@ type WALWatcher struct {
 	logger         log.Logger
 	walDir         string
 	lastCheckpoint string
+	reg            prometheus.Registerer
 
 	startTime int64
 
@@ -121,12 +122,21 @@ type WALWatcher struct {
 }
 
 // NewWALWatcher creates a new WAL watcher for a given WriteTo.
-func NewWALWatcher(logger log.Logger, name string, writer writeTo, walDir string) *WALWatcher {
+func NewWALWatcher(logger log.Logger, reg prometheus.Registerer, name string, writer writeTo, walDir string) *WALWatcher {
 	if logger == nil {
 		logger = log.NewNopLogger()
 	}
+	if reg != nil {
+		// We can't use MustRegister because WALWatcher's are recreated on config changes within Prometheus.
+		reg.Register(watcherRecordsRead)
+		reg.Register(watcherRecordDecodeFails)
+		reg.Register(watcherSamplesSentPreTailing)
+		reg.Register(watcherCurrentSegment)
+	}
+
 	return &WALWatcher{
 		logger: logger,
+		reg:    reg,
 		writer: writer,
 		walDir: path.Join(walDir, "wal"),
 		name:   name,
@@ -298,7 +308,11 @@ func (w *WALWatcher) watch(segmentNum int, tail bool) error {
 	}
 	defer segment.Close()
 
+<<<<<<< HEAD
 	reader := NewLiveReader(w.logger, prometheus.DefaultRegisterer, segment)
+=======
+	reader := NewLiveReader(w.logger, w.reg, segment)
+>>>>>>> WAL Watcher needs to take in and pass a Registerer to LiveReader.
 
 	readTicker := time.NewTicker(readPeriod)
 	defer readTicker.Stop()
@@ -513,7 +527,11 @@ func (w *WALWatcher) readCheckpoint(checkpointDir string) error {
 		}
 		defer sr.Close()
 
+<<<<<<< HEAD
 		r := NewLiveReader(w.logger, prometheus.DefaultRegisterer, sr)
+=======
+		r := NewLiveReader(w.logger, w.reg, sr)
+>>>>>>> WAL Watcher needs to take in and pass a Registerer to LiveReader.
 		if err := w.readSegment(r, index, false); err != io.EOF && err != nil {
 			return errors.Wrap(err, "readSegment")
 		}
