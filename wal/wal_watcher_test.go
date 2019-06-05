@@ -410,14 +410,9 @@ func TestReadCheckpointMultipleSegments(t *testing.T) {
 		}
 	}
 
-	// At this point we should have at least 6 segments, lets create a checkpoint dir of the first 5.
-	checkpointDir := dir + "/wal/checkpoint.000004"
-	err = os.Mkdir(checkpointDir, 0777)
-	testutil.Ok(t, err)
-	for i := 0; i <= 4; i++ {
-		err := os.Rename(SegmentName(dir+"/wal", i), SegmentName(checkpointDir, i))
-		testutil.Ok(t, err)
-	}
+	Checkpoint(w, 0, 4, func(id uint64) bool {
+		return true
+	}, 0)
 
 	wt := newWriteToMock()
 	watcher := NewWALWatcher(nil, nil, "", wt, dir)
