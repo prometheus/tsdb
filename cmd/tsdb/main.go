@@ -15,7 +15,6 @@ package main
 
 import (
 	"bufio"
-	"flag"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -110,9 +109,6 @@ func main() {
 			exitWithError(err)
 		}
 		dumpSamples(db, *dumpMinTime, *dumpMaxTime)
-	}
-	if err := flag.CommandLine.Set("log.level", "debug"); err != nil {
-		exitWithError(err)
 	}
 }
 
