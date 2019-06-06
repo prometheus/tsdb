@@ -34,7 +34,7 @@ func preallocFixed(f *os.File, sizeInBytes int64) error {
 		Length:  sizeInBytes}
 	p := unsafe.Pointer(fstore)
 	_, _, errno := syscall.Syscall(syscall.SYS_FCNTL, f.Fd(), uintptr(syscall.F_PREALLOCATE), uintptr(p))
-	if errno == 0 || errno == syscall.ENOTSUP || errno == syscall.EINVAL {
+	if errno == 0 || errno == syscall.ENOTSUP {
 		return nil
 	}
 	return errno

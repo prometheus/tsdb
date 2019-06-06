@@ -1802,7 +1802,11 @@ func BenchmarkSetMatcher(b *testing.B) {
 			} else {
 				generatedSeries = populateSeries(prefilledLabels, mint, maxt)
 			}
-			block, err := OpenBlock(nil, createBlock(b, dir, generatedSeries), nil)
+
+			cb, err := createBlock(b, dir, generatedSeries)
+			testutil.Ok(b, err)
+
+			block, err := OpenBlock(nil, cb, nil)
 			testutil.Ok(b, err)
 			blocks = append(blocks, block)
 			defer block.Close()
