@@ -1235,7 +1235,10 @@ func BenchmarkPersistedQueries(b *testing.B) {
 					testutil.Ok(b, os.RemoveAll(dir))
 				}()
 
-				block, err := OpenBlock(nil, createBlock(b, dir, genSeries(nSeries, 10, 1, int64(nSamples))), nil)
+				cb, err := createBlock(b, dir, genSeries(nSeries, 10, 1, int64(nSamples)))
+				testutil.Ok(b, err)
+
+				block, err := OpenBlock(nil, cb, nil)
 				testutil.Ok(b, err)
 				defer block.Close()
 
@@ -1561,7 +1564,10 @@ func BenchmarkQueryIterator(b *testing.B) {
 					} else {
 						generatedSeries = populateSeries(prefilledLabels, mint, maxt)
 					}
-					block, err := OpenBlock(nil, createBlock(b, dir, generatedSeries), nil)
+					cb, err := createBlock(b, dir, generatedSeries)
+					testutil.Ok(b, err)
+
+					block, err := OpenBlock(nil, cb, nil)
 					testutil.Ok(b, err)
 					blocks = append(blocks, block)
 					defer block.Close()
@@ -1647,7 +1653,11 @@ func BenchmarkQuerySeek(b *testing.B) {
 					} else {
 						generatedSeries = populateSeries(prefilledLabels, mint, maxt)
 					}
-					block, err := OpenBlock(nil, createBlock(b, dir, generatedSeries), nil)
+
+					cb, err := createBlock(b, dir, generatedSeries)
+					testutil.Ok(b, err)
+
+					block, err := OpenBlock(nil, cb, nil)
 					testutil.Ok(b, err)
 					blocks = append(blocks, block)
 					defer block.Close()

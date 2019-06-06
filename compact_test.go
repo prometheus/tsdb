@@ -840,7 +840,10 @@ func BenchmarkCompaction(b *testing.B) {
 			blockDirs := make([]string, 0, len(c.ranges))
 			var blocks []*Block
 			for _, r := range c.ranges {
-				block, err := OpenBlock(nil, createBlock(b, dir, genSeries(nSeries, 10, r[0], r[1])), nil)
+				cb, err := createBlock(b, dir, genSeries(nSeries, 10, r[0], r[1]))
+				testutil.Ok(b, err)
+
+				block, err := OpenBlock(nil, cb, nil)
 				testutil.Ok(b, err)
 				blocks = append(blocks, block)
 				defer func() {
@@ -1035,7 +1038,9 @@ func TestDeleteCompactionBlockAfterFailedReload(t *testing.T) {
 			expBlocks := bootStrap(db)
 
 			// Create a block that will trigger the reload to fail.
-			blockPath := createBlock(t, db.Dir(), genSeries(1, 1, 200, 300))
+			blockPath, err := createBlock(t, db.Dir(), genSeries(1, 1, 200, 300))
+			testutil.Ok(t, err)
+
 			lastBlockIndex := path.Join(blockPath, indexFilename)
 			actBlocks, err := blockDirs(db.Dir())
 			testutil.Ok(t, err)
@@ -1079,7 +1084,8 @@ func TestOpenBlockWithHook(t *testing.T) {
 	original := filepath.Join(string(filepath.Separator), "tmp", fmt.Sprintf("dev-%d", time.Now().Unix()))
 	mountpoint := filepath.Join(string(filepath.Separator), "tmp", fmt.Sprintf("mountpoint-%d", time.Now().Unix()))
 	//create block will be successful because hook server does not start
-	path := createBlock(t, original, genSeries(1, 1, 200, 300))
+	path, err := createBlock(t, original, genSeries(1, 1, 200, 300))
+	testutil.Ok(t, err)
 	_, file := filepath.Split(path)
 	server, err := testutil.NewFuseServer(t, original, mountpoint, testutil.Hook(TestRenameHook{}))
 	//remember to call unmount after you do not use it

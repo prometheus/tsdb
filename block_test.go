@@ -53,7 +53,9 @@ func TestSetCompactionFailed(t *testing.T) {
 		testutil.Ok(t, os.RemoveAll(tmpdir))
 	}()
 
-	blockDir := createBlock(t, tmpdir, genSeries(1, 1, 0, 0))
+	blockDir, err := createBlock(t, tmpdir, genSeries(1, 1, 0, 0))
+	testutil.Ok(t, err)
+
 	b, err := OpenBlock(nil, blockDir, nil)
 	testutil.Ok(t, err)
 	testutil.Equals(t, false, b.meta.Compaction.Failed)
@@ -73,7 +75,10 @@ func TestCreateBlock(t *testing.T) {
 	defer func() {
 		testutil.Ok(t, os.RemoveAll(tmpdir))
 	}()
-	b, err := OpenBlock(nil, createBlock(t, tmpdir, genSeries(1, 1, 0, 10)), nil)
+	cb, err := createBlock(t, tmpdir, genSeries(1, 1, 0, 10))
+	testutil.Ok(t, err)
+
+	b, err := OpenBlock(nil, cb, nil)
 	if err == nil {
 		testutil.Ok(t, b.Close())
 	}
@@ -130,7 +135,9 @@ func TestCorruptedChunk(t *testing.T) {
 				testutil.Ok(t, os.RemoveAll(tmpdir))
 			}()
 
-			blockDir := createBlock(t, tmpdir, genSeries(1, 1, 0, 0))
+			blockDir, err := createBlock(t, tmpdir, genSeries(1, 1, 0, 0))
+			testutil.Ok(t, err)
+
 			files, err := sequenceFiles(chunkDir(blockDir))
 			testutil.Ok(t, err)
 			testutil.Assert(t, len(files) > 0, "No chunk created.")
@@ -149,7 +156,7 @@ func TestCorruptedChunk(t *testing.T) {
 }
 
 // createBlock creates a block with given set of series and returns its dir.
-func createBlock(tb testing.TB, dir string, series []Series) string {
+func createBlock(tb testing.TB, dir string, series []Series) (string, error) {
 	head, err := NewHead(nil, nil, nil, 2*60*60*1000)
 	testutil.Ok(tb, err)
 	defer head.Close()
@@ -180,9 +187,7 @@ func createBlock(tb testing.TB, dir string, series []Series) string {
 	testutil.Ok(tb, os.MkdirAll(dir, 0777))
 
 	ulid, _ := compactor.Write(dir, head, head.MinTime(), head.MaxTime(), nil)
-	//if inject failed operation by fuse, the error is expected
-	//testutil.Ok(tb, err)
-	return filepath.Join(dir, ulid.String())
+	return filepath.Join(dir, ulid.String()), err
 }
 
 // genSeries generates series with a given number of labels and values.
