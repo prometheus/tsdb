@@ -231,7 +231,7 @@ func NewServer(t *testing.T, original, mountpoint string, hook Hook) (*Server, e
 		return nil, err
 	}
 
-	//async start fuse server
+	//async start fuse server, and it will be stopped when calling syscall.Unmount
 	go func() {
 		fs.Start(server)
 	}()
@@ -244,9 +244,7 @@ func NewServer(t *testing.T, original, mountpoint string, hook Hook) (*Server, e
 }
 
 func (s *Server) CleanUp() {
-	//server := s.(*fuse.Server)
 	s.server.Unmount()
-
 	syscall.Unmount(s.mountpoint, -1)
 
 	os.RemoveAll(s.mountpoint)
