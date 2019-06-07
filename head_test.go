@@ -32,6 +32,7 @@ import (
 	"github.com/prometheus/tsdb/labels"
 	"github.com/prometheus/tsdb/record"
 	"github.com/prometheus/tsdb/testutil"
+	"github.com/prometheus/tsdb/tombstones"
 	"github.com/prometheus/tsdb/tsdbutil"
 	"github.com/prometheus/tsdb/wal"
 )
@@ -59,7 +60,7 @@ func populateTestWAL(t testing.TB, w *wal.WAL, recs []interface{}) {
 			testutil.Ok(t, w.Log(enc.Series(v, nil)))
 		case []record.RefSample:
 			testutil.Ok(t, w.Log(enc.Samples(v, nil)))
-		case []record.Stone:
+		case []tombstones.Stone:
 			testutil.Ok(t, w.Log(enc.Tombstones(v, nil)))
 		}
 	}
@@ -372,27 +373,27 @@ func TestHeadDeleteSimple(t *testing.T) {
 	lblDefault := labels.Label{"a", "b"}
 
 	cases := []struct {
-		dranges  record.Intervals
+		dranges  tombstones.Intervals
 		smplsExp []sample
 	}{
 		{
-			dranges:  record.Intervals{{0, 3}},
+			dranges:  tombstones.Intervals{{0, 3}},
 			smplsExp: buildSmpls([]int64{4, 5, 6, 7, 8, 9}),
 		},
 		{
-			dranges:  record.Intervals{{1, 3}},
+			dranges:  tombstones.Intervals{{1, 3}},
 			smplsExp: buildSmpls([]int64{0, 4, 5, 6, 7, 8, 9}),
 		},
 		{
-			dranges:  record.Intervals{{1, 3}, {4, 7}},
+			dranges:  tombstones.Intervals{{1, 3}, {4, 7}},
 			smplsExp: buildSmpls([]int64{0, 8, 9}),
 		},
 		{
-			dranges:  record.Intervals{{1, 3}, {4, 700}},
+			dranges:  tombstones.Intervals{{1, 3}, {4, 700}},
 			smplsExp: buildSmpls([]int64{0}),
 		},
 		{ // This case is to ensure that labels and symbols are deleted.
-			dranges:  record.Intervals{{0, 9}},
+			dranges:  tombstones.Intervals{{0, 9}},
 			smplsExp: buildSmpls([]int64{}),
 		},
 	}
@@ -605,7 +606,7 @@ func TestDeletedSamplesAndSeriesStillInWALAfterCheckpoint(t *testing.T) {
 			series++
 		case []record.RefSample:
 			samples++
-		case []record.Stone:
+		case []tombstones.Stone:
 			stones++
 		default:
 			t.Fatalf("unknown record type")
@@ -693,18 +694,18 @@ func TestDelete_e2e(t *testing.T) {
 	// Delete a time-range from each-selector.
 	dels := []struct {
 		ms     []labels.Matcher
-		drange record.Intervals
+		drange tombstones.Intervals
 	}{
 		{
 			ms:     []labels.Matcher{labels.NewEqualMatcher("a", "b")},
-			drange: record.Intervals{{300, 500}, {600, 670}},
+			drange: tombstones.Intervals{{300, 500}, {600, 670}},
 		},
 		{
 			ms: []labels.Matcher{
 				labels.NewEqualMatcher("a", "b"),
 				labels.NewEqualMatcher("job", "prom-k8s"),
 			},
-			drange: record.Intervals{{300, 500}, {100, 670}},
+			drange: tombstones.Intervals{{300, 500}, {100, 670}},
 		},
 		{
 			ms: []labels.Matcher{
@@ -712,7 +713,7 @@ func TestDelete_e2e(t *testing.T) {
 				labels.NewEqualMatcher("instance", "localhost:9090"),
 				labels.NewEqualMatcher("job", "prometheus"),
 			},
-			drange: record.Intervals{{300, 400}, {100, 6700}},
+			drange: tombstones.Intervals{{300, 400}, {100, 6700}},
 		},
 		// TODO: Add Regexp Matchers.
 	}
@@ -795,7 +796,7 @@ func boundedSamples(full []tsdbutil.Sample, mint, maxt int64) []tsdbutil.Sample 
 	return full
 }
 
-func deletedSamples(full []tsdbutil.Sample, dranges record.Intervals) []tsdbutil.Sample {
+func deletedSamples(full []tsdbutil.Sample, dranges tombstones.Intervals) []tsdbutil.Sample {
 	ds := make([]tsdbutil.Sample, 0, len(full))
 Outer:
 	for _, s := range full {
@@ -1105,7 +1106,7 @@ func TestWalRepair_DecodingError(t *testing.T) {
 			func(rec []byte) []byte {
 				return rec[:3]
 			},
-			enc.Tombstones([]record.Stone{{Ref: 1, Intervals: record.Intervals{}}}, []byte{}),
+			enc.Tombstones([]tombstones.Stone{{Ref: 1, Intervals: tombstones.Intervals{}}}, []byte{}),
 			9,
 			5,
 		},

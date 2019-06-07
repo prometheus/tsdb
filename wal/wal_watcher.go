@@ -308,11 +308,7 @@ func (w *WALWatcher) watch(segmentNum int, tail bool) error {
 	}
 	defer segment.Close()
 
-<<<<<<< HEAD
-	reader := NewLiveReader(w.logger, prometheus.DefaultRegisterer, segment)
-=======
 	reader := NewLiveReader(w.logger, w.reg, segment)
->>>>>>> WAL Watcher needs to take in and pass a Registerer to LiveReader.
 
 	readTicker := time.NewTicker(readPeriod)
 	defer readTicker.Stop()
@@ -527,11 +523,7 @@ func (w *WALWatcher) readCheckpoint(checkpointDir string) error {
 		}
 		defer sr.Close()
 
-<<<<<<< HEAD
-		r := NewLiveReader(w.logger, prometheus.DefaultRegisterer, sr)
-=======
 		r := NewLiveReader(w.logger, w.reg, sr)
->>>>>>> WAL Watcher needs to take in and pass a Registerer to LiveReader.
 		if err := w.readSegment(r, index, false); err != io.EOF && err != nil {
 			return errors.Wrap(err, "readSegment")
 		}

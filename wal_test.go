@@ -31,6 +31,7 @@ import (
 	"github.com/prometheus/tsdb/labels"
 	"github.com/prometheus/tsdb/record"
 	"github.com/prometheus/tsdb/testutil"
+	"github.com/prometheus/tsdb/tombstones"
 	"github.com/prometheus/tsdb/wal"
 )
 
@@ -175,7 +176,7 @@ func TestSegmentWAL_Log_Restore(t *testing.T) {
 	var (
 		recordedSeries  [][]record.RefSeries
 		recordedSamples [][]record.RefSample
-		recordedDeletes [][]record.Stone
+		recordedDeletes [][]tombstones.Stone
 	)
 	var totalSamples int
 
@@ -193,7 +194,7 @@ func TestSegmentWAL_Log_Restore(t *testing.T) {
 		var (
 			resultSeries  [][]record.RefSeries
 			resultSamples [][]record.RefSample
-			resultDeletes [][]record.Stone
+			resultDeletes [][]tombstones.Stone
 		)
 
 		serf := func(series []record.RefSeries) {
@@ -211,9 +212,9 @@ func TestSegmentWAL_Log_Restore(t *testing.T) {
 			}
 		}
 
-		delf := func(stones []record.Stone) {
+		delf := func(stones []tombstones.Stone) {
 			if len(stones) > 0 {
-				cst := make([]record.Stone, len(stones))
+				cst := make([]tombstones.Stone, len(stones))
 				copy(cst, stones)
 				resultDeletes = append(resultDeletes, cst)
 			}
@@ -230,7 +231,7 @@ func TestSegmentWAL_Log_Restore(t *testing.T) {
 		// Insert in batches and generate different amounts of samples for each.
 		for i := 0; i < len(series); i += stepSize {
 			var samples []record.RefSample
-			var stones []record.Stone
+			var stones []tombstones.Stone
 
 			for j := 0; j < i*10; j++ {
 				samples = append(samples, record.RefSample{
@@ -242,7 +243,7 @@ func TestSegmentWAL_Log_Restore(t *testing.T) {
 
 			for j := 0; j < i*20; j++ {
 				ts := rand.Int63()
-				stones = append(stones, record.Stone{rand.Uint64(), record.Intervals{{ts, ts + rand.Int63n(10000)}}})
+				stones = append(stones, tombstones.Stone{rand.Uint64(), tombstones.Intervals{{ts, ts + rand.Int63n(10000)}}})
 			}
 
 			lbls := series[i : i+stepSize]
@@ -498,8 +499,8 @@ func TestMigrateWAL_Fuzz(t *testing.T) {
 		{Ref: 3, T: 100, V: 200},
 		{Ref: 4, T: 300, V: 400},
 	}))
-	testutil.Ok(t, oldWAL.LogDeletes([]record.Stone{
-		{Ref: 1, Intervals: []record.Interval{{100, 200}}},
+	testutil.Ok(t, oldWAL.LogDeletes([]tombstones.Stone{
+		{Ref: 1, Intervals: []tombstones.Interval{{100, 200}}},
 	}))
 
 	testutil.Ok(t, oldWAL.Close())
@@ -558,7 +559,7 @@ func TestMigrateWAL_Fuzz(t *testing.T) {
 			{Ref: 200, Labels: labels.FromStrings("xyz", "def", "foo", "bar")},
 		},
 		[]record.RefSample{{Ref: 3, T: 100, V: 200}, {Ref: 4, T: 300, V: 400}},
-		[]record.Stone{{Ref: 1, Intervals: []record.Interval{{100, 200}}}},
+		[]tombstones.Stone{{Ref: 1, Intervals: []tombstones.Interval{{100, 200}}}},
 		[]record.RefSample{{Ref: 500, T: 1, V: 1}},
 	}, res)
 

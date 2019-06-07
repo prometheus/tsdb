@@ -35,6 +35,7 @@ import (
 	"github.com/prometheus/tsdb/fileutil"
 	"github.com/prometheus/tsdb/labels"
 	"github.com/prometheus/tsdb/record"
+	"github.com/prometheus/tsdb/tombstones"
 	"github.com/prometheus/tsdb/wal"
 )
 
@@ -92,7 +93,7 @@ type WAL interface {
 	Reader() WALReader
 	LogSeries([]record.RefSeries) error
 	LogSamples([]record.RefSample) error
-	LogDeletes([]record.Stone) error
+	LogDeletes([]tombstones.Stone) error
 	Truncate(mint int64, keep func(uint64) bool) error
 	Close() error
 }
@@ -102,7 +103,7 @@ type WALReader interface {
 	Read(
 		seriesf func([]record.RefSeries),
 		samplesf func([]record.RefSample),
-		deletesf func([]record.Stone),
+		deletesf func([]tombstones.Stone),
 	) error
 }
 
@@ -228,7 +229,7 @@ type repairingWALReader struct {
 func (r *repairingWALReader) Read(
 	seriesf func([]record.RefSeries),
 	samplesf func([]record.RefSample),
-	deletesf func([]record.Stone),
+	deletesf func([]tombstones.Stone),
 ) error {
 	err := r.r.Read(seriesf, samplesf, deletesf)
 	if err == nil {
@@ -466,7 +467,7 @@ func (w *SegmentWAL) LogSamples(samples []record.RefSample) error {
 }
 
 // LogDeletes write a batch of new deletes to the log.
-func (w *SegmentWAL) LogDeletes(stones []record.Stone) error {
+func (w *SegmentWAL) LogDeletes(stones []tombstones.Stone) error {
 	buf := w.getBuffer()
 
 	flag := w.encodeDeletes(buf, stones)
@@ -811,7 +812,7 @@ func (w *SegmentWAL) encodeSamples(buf *encoding.Encbuf, samples []record.RefSam
 	return walSamplesSimple
 }
 
-func (w *SegmentWAL) encodeDeletes(buf *encoding.Encbuf, stones []record.Stone) uint8 {
+func (w *SegmentWAL) encodeDeletes(buf *encoding.Encbuf, stones []tombstones.Stone) uint8 {
 	for _, s := range stones {
 		for _, iv := range s.Intervals {
 			buf.PutBE64(s.Ref)
@@ -859,7 +860,7 @@ func (r *walReader) Err() error {
 func (r *walReader) Read(
 	seriesf func([]record.RefSeries),
 	samplesf func([]record.RefSample),
-	deletesf func([]record.Stone),
+	deletesf func([]tombstones.Stone),
 ) error {
 	// Concurrency for replaying the WAL is very limited. We at least split out decoding and
 	// processing into separate threads.
@@ -890,7 +891,7 @@ func (r *walReader) Read(
 				}
 				//lint:ignore SA6002 safe to ignore and actually fixing it has some performance penalty.
 				samplePool.Put(v[:0])
-			case []record.Stone:
+			case []tombstones.Stone:
 				if deletesf != nil {
 					deletesf(v)
 				}
@@ -954,11 +955,11 @@ func (r *walReader) Read(
 				}
 			}
 		case WALEntryDeletes:
-			var deletes []record.Stone
+			var deletes []tombstones.Stone
 			if v := deletePool.Get(); v == nil {
-				deletes = make([]record.Stone, 0, 512)
+				deletes = make([]tombstones.Stone, 0, 512)
 			} else {
-				deletes = v.([]record.Stone)
+				deletes = v.([]tombstones.Stone)
 			}
 
 			err = r.decodeDeletes(flag, b, &deletes)
@@ -1168,13 +1169,13 @@ func (r *walReader) decodeSamples(flag byte, b []byte, res *[]record.RefSample) 
 	return nil
 }
 
-func (r *walReader) decodeDeletes(flag byte, b []byte, res *[]record.Stone) error {
+func (r *walReader) decodeDeletes(flag byte, b []byte, res *[]tombstones.Stone) error {
 	dec := &encoding.Decbuf{B: b}
 
 	for dec.Len() > 0 && dec.Err() == nil {
-		*res = append(*res, record.Stone{
+		*res = append(*res, tombstones.Stone{
 			Ref: dec.Be64(),
-			Intervals: record.Intervals{
+			Intervals: tombstones.Intervals{
 				{Mint: dec.Varint64(), Maxt: dec.Varint64()},
 			},
 		})
@@ -1270,7 +1271,7 @@ func MigrateWAL(logger log.Logger, dir string) (err error) {
 			}
 			err = repl.Log(enc.Samples(s, b[:0]))
 		},
-		func(s []record.Stone) {
+		func(s []tombstones.Stone) {
 			if err != nil {
 				return
 			}

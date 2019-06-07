@@ -31,6 +31,7 @@ import (
 	"github.com/prometheus/tsdb/labels"
 	"github.com/prometheus/tsdb/record"
 	"github.com/prometheus/tsdb/testutil"
+	"github.com/prometheus/tsdb/tombstones"
 	"github.com/prometheus/tsdb/tsdbutil"
 )
 
@@ -382,7 +383,7 @@ Outer:
 		querier := &blockQuerier{
 			index:      ir,
 			chunks:     cr,
-			tombstones: record.NewMemTombstones(),
+			tombstones: tombstones.NewMemTombstones(),
 
 			mint: c.mint,
 			maxt: c.maxt,
@@ -429,7 +430,7 @@ func TestBlockQuerierDelete(t *testing.T) {
 	cases := struct {
 		data []seriesSamples
 
-		tombstones record.TombstoneReader
+		tombstones tombstones.TombstoneReader
 		queries    []query
 	}{
 		data: []seriesSamples{
@@ -474,10 +475,10 @@ func TestBlockQuerierDelete(t *testing.T) {
 				},
 			},
 		},
-		tombstones: &record.MemTombstones{IntvlGroups: map[uint64]record.Intervals{
-			1: record.Intervals{{1, 3}},
-			2: record.Intervals{{1, 3}, {6, 10}},
-			3: record.Intervals{{6, 10}},
+		tombstones: &tombstones.MemTombstones{IntvlGroups: map[uint64]tombstones.Intervals{
+			1: tombstones.Intervals{{1, 3}},
+			2: tombstones.Intervals{{1, 3}, {6, 10}},
+			3: tombstones.Intervals{{6, 10}},
 		}},
 		queries: []query{
 			{
@@ -651,7 +652,7 @@ func TestBaseChunkSeries(t *testing.T) {
 		bcs := &baseChunkSeries{
 			p:          index.NewListPostings(tc.postings),
 			index:      mi,
-			tombstones: record.NewMemTombstones(),
+			tombstones: tombstones.NewMemTombstones(),
 		}
 
 		i := 0
@@ -1173,7 +1174,7 @@ func (m *mockChunkSeriesSet) Next() bool {
 	return m.i < len(m.l)
 }
 
-func (m *mockChunkSeriesSet) At() (labels.Labels, []chunks.Meta, record.Intervals) {
+func (m *mockChunkSeriesSet) At() (labels.Labels, []chunks.Meta, tombstones.Intervals) {
 	return m.l[m.i], m.cm[m.i], nil
 }
 
@@ -1268,18 +1269,18 @@ func TestDeletedIterator(t *testing.T) {
 	}
 
 	cases := []struct {
-		r record.Intervals
+		r tombstones.Intervals
 	}{
-		{r: record.Intervals{{1, 20}}},
-		{r: record.Intervals{{1, 10}, {12, 20}, {21, 23}, {25, 30}}},
-		{r: record.Intervals{{1, 10}, {12, 20}, {20, 30}}},
-		{r: record.Intervals{{1, 10}, {12, 23}, {25, 30}}},
-		{r: record.Intervals{{1, 23}, {12, 20}, {25, 30}}},
-		{r: record.Intervals{{1, 23}, {12, 20}, {25, 3000}}},
-		{r: record.Intervals{{0, 2000}}},
-		{r: record.Intervals{{500, 2000}}},
-		{r: record.Intervals{{0, 200}}},
-		{r: record.Intervals{{1000, 20000}}},
+		{r: tombstones.Intervals{{1, 20}}},
+		{r: tombstones.Intervals{{1, 10}, {12, 20}, {21, 23}, {25, 30}}},
+		{r: tombstones.Intervals{{1, 10}, {12, 20}, {20, 30}}},
+		{r: tombstones.Intervals{{1, 10}, {12, 23}, {25, 30}}},
+		{r: tombstones.Intervals{{1, 23}, {12, 20}, {25, 30}}},
+		{r: tombstones.Intervals{{1, 23}, {12, 20}, {25, 3000}}},
+		{r: tombstones.Intervals{{0, 2000}}},
+		{r: tombstones.Intervals{{500, 2000}}},
+		{r: tombstones.Intervals{{0, 200}}},
+		{r: tombstones.Intervals{{1000, 20000}}},
 	}
 
 	for _, c := range cases {

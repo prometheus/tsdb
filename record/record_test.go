@@ -21,6 +21,7 @@ import (
 	"github.com/prometheus/tsdb/encoding"
 	"github.com/prometheus/tsdb/labels"
 	"github.com/prometheus/tsdb/testutil"
+	"github.com/prometheus/tsdb/tombstones"
 )
 
 func TestRecord_EncodeDecode(t *testing.T) {
@@ -54,23 +55,23 @@ func TestRecord_EncodeDecode(t *testing.T) {
 
 	// Intervals get split up into single entries. So we don't get back exactly
 	// what we put in.
-	tstones := []Stone{
-		{Ref: 123, Intervals: Intervals{
+	tstones := []tombstones.Stone{
+		{Ref: 123, Intervals: tombstones.Intervals{
 			{Mint: -1000, Maxt: 1231231},
 			{Mint: 5000, Maxt: 0},
 		}},
-		{Ref: 13, Intervals: Intervals{
+		{Ref: 13, Intervals: tombstones.Intervals{
 			{Mint: -1000, Maxt: -11},
 			{Mint: 5000, Maxt: 1000},
 		}},
 	}
 	decTstones, err := dec.Tombstones(enc.Tombstones(tstones, nil), nil)
 	testutil.Ok(t, err)
-	testutil.Equals(t, []Stone{
-		{Ref: 123, Intervals: Intervals{{Mint: -1000, Maxt: 1231231}}},
-		{Ref: 123, Intervals: Intervals{{Mint: 5000, Maxt: 0}}},
-		{Ref: 13, Intervals: Intervals{{Mint: -1000, Maxt: -11}}},
-		{Ref: 13, Intervals: Intervals{{Mint: 5000, Maxt: 1000}}},
+	testutil.Equals(t, []tombstones.Stone{
+		{Ref: 123, Intervals: tombstones.Intervals{{Mint: -1000, Maxt: 1231231}}},
+		{Ref: 123, Intervals: tombstones.Intervals{{Mint: 5000, Maxt: 0}}},
+		{Ref: 13, Intervals: tombstones.Intervals{{Mint: -1000, Maxt: -11}}},
+		{Ref: 13, Intervals: tombstones.Intervals{{Mint: 5000, Maxt: 1000}}},
 	}, decTstones)
 }
 
@@ -104,8 +105,8 @@ func TestRecord_Corruputed(t *testing.T) {
 	})
 
 	t.Run("Test corrupted tombstone record", func(t *testing.T) {
-		tstones := []Stone{
-			{Ref: 123, Intervals: Intervals{
+		tstones := []tombstones.Stone{
+			{Ref: 123, Intervals: tombstones.Intervals{
 				{Mint: -1000, Maxt: 1231231},
 				{Mint: 5000, Maxt: 0},
 			}},

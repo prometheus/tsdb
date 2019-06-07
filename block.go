@@ -32,7 +32,7 @@ import (
 	"github.com/prometheus/tsdb/fileutil"
 	"github.com/prometheus/tsdb/index"
 	"github.com/prometheus/tsdb/labels"
-	"github.com/prometheus/tsdb/record"
+	"github.com/prometheus/tsdb/tombstones"
 )
 
 // IndexWriter serializes the index for a block of series data.
@@ -137,7 +137,7 @@ type BlockReader interface {
 	Chunks() (ChunkReader, error)
 
 	// Tombstones returns a TombstoneReader over the block's deleted data.
-	Tombstones() (record.TombstoneReader, error)
+	Tombstones() (tombstones.TombstoneReader, error)
 
 	// Meta provides meta information about the block reader.
 	Meta() BlockMeta
@@ -279,7 +279,7 @@ type Block struct {
 
 	chunkr     ChunkReader
 	indexr     IndexReader
-	tombstones record.TombstoneReader
+	tombstones tombstones.TombstoneReader
 
 	logger log.Logger
 
@@ -321,7 +321,7 @@ func OpenBlock(logger log.Logger, dir string, pool chunkenc.Pool) (pb *Block, er
 	}
 	closers = append(closers, ir)
 
-	tr, sizeTomb, err := record.ReadTombstones(dir)
+	tr, sizeTomb, err := tombstones.ReadTombstones(dir)
 	if err != nil {
 		return nil, err
 	}
@@ -412,7 +412,7 @@ func (pb *Block) Chunks() (ChunkReader, error) {
 }
 
 // Tombstones returns a new TombstoneReader against the block data.
-func (pb *Block) Tombstones() (record.TombstoneReader, error) {
+func (pb *Block) Tombstones() (tombstones.TombstoneReader, error) {
 	if err := pb.startRead(); err != nil {
 		return nil, err
 	}
@@ -483,7 +483,7 @@ func (r blockIndexReader) Close() error {
 }
 
 type blockTombstoneReader struct {
-	record.TombstoneReader
+	tombstones.TombstoneReader
 	b *Block
 }
 
@@ -519,7 +519,7 @@ func (pb *Block) Delete(mint, maxt int64, ms ...labels.Matcher) error {
 	ir := pb.indexr
 
 	// Choose only valid postings which have chunks in the time-range.
-	stones := record.NewMemTombstones()
+	stones := tombstones.NewMemTombstones()
 
 	var lset labels.Labels
 	var chks []chunks.Meta
@@ -535,7 +535,7 @@ Outer:
 			if chk.OverlapsClosedInterval(mint, maxt) {
 				// Delete only until the current values and not beyond.
 				tmin, tmax := clampInterval(mint, maxt, chks[0].MinTime, chks[len(chks)-1].MaxTime)
-				stones.AddInterval(p.At(), record.Interval{tmin, tmax})
+				stones.AddInterval(p.At(), tombstones.Interval{tmin, tmax})
 				continue Outer
 			}
 		}
@@ -545,7 +545,7 @@ Outer:
 		return p.Err()
 	}
 
-	err = pb.tombstones.Iter(func(id uint64, ivs record.Intervals) error {
+	err = pb.tombstones.Iter(func(id uint64, ivs tombstones.Intervals) error {
 		for _, iv := range ivs {
 			stones.AddInterval(id, iv)
 		}
@@ -557,7 +557,7 @@ Outer:
 	pb.tombstones = stones
 	pb.meta.Stats.NumTombstones = pb.tombstones.Total()
 
-	n, err := record.WriteTombstoneFile(pb.logger, pb.dir, pb.tombstones)
+	n, err := tombstones.WriteTombstoneFile(pb.logger, pb.dir, pb.tombstones)
 	if err != nil {
 		return err
 	}
@@ -575,7 +575,7 @@ Outer:
 func (pb *Block) CleanTombstones(dest string, c Compactor) (*ulid.ULID, error) {
 	numStones := 0
 
-	if err := pb.tombstones.Iter(func(id uint64, ivs record.Intervals) error {
+	if err := pb.tombstones.Iter(func(id uint64, ivs tombstones.Intervals) error {
 		numStones += len(ivs)
 		return nil
 	}); err != nil {
@@ -610,7 +610,7 @@ func (pb *Block) Snapshot(dir string) error {
 	for _, fname := range []string{
 		metaFilename,
 		indexFilename,
-		record.TombstoneFilename,
+		tombstones.TombstoneFilename,
 	} {
 		if err := os.Link(filepath.Join(pb.dir, fname), filepath.Join(blockDir, fname)); err != nil {
 			return errors.Wrapf(err, "create snapshot %s", fname)

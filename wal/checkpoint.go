@@ -28,6 +28,7 @@ import (
 	tsdb_errors "github.com/prometheus/tsdb/errors"
 	"github.com/prometheus/tsdb/fileutil"
 	"github.com/prometheus/tsdb/record"
+	"github.com/prometheus/tsdb/tombstones"
 )
 
 // CheckpointStats returns stats about a created checkpoint.
@@ -151,7 +152,7 @@ func Checkpoint(w *WAL, from, to int, keep func(id uint64) bool, mint int64) (*C
 	var (
 		series  []record.RefSeries
 		samples []record.RefSample
-		tstones []record.Stone
+		tstones []tombstones.Stone
 		dec     record.RecordDecoder
 		enc     record.RecordEncoder
 		buf     []byte

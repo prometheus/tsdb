@@ -11,11 +11,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package record
+package tombstones
 
 import (
 	"encoding/binary"
 	"fmt"
+	"hash"
+	"hash/crc32"
 	"io"
 	"io/ioutil"
 	"os"
@@ -38,6 +40,21 @@ const (
 
 	tombstoneFormatV1 = 1
 )
+
+// The table gets initialized with sync.Once but may still cause a race
+// with any other use of the crc32 package anywhere. Thus we initialize it
+// before.
+var castagnoliTable *crc32.Table
+
+func init() {
+	castagnoliTable = crc32.MakeTable(crc32.Castagnoli)
+}
+
+// NewCRC32 initializes a CRC32 hash with a preconfigured polynomial, so the
+// polynomial may be easily changed in one location at a later time, if necessary.
+func NewCRC32() hash.Hash32 {
+	return crc32.New(castagnoliTable)
+}
 
 // TombstoneReader gives access to tombstone intervals by series reference.
 type TombstoneReader interface {

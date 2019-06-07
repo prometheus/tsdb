@@ -30,8 +30,8 @@ import (
 	"github.com/prometheus/tsdb/chunks"
 	"github.com/prometheus/tsdb/fileutil"
 	"github.com/prometheus/tsdb/labels"
-	"github.com/prometheus/tsdb/record"
 	"github.com/prometheus/tsdb/testutil"
+	"github.com/prometheus/tsdb/tombstones"
 )
 
 func TestSplitByRange(t *testing.T) {

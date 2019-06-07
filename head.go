@@ -34,6 +34,7 @@ import (
 	"github.com/prometheus/tsdb/index"
 	"github.com/prometheus/tsdb/labels"
 	"github.com/prometheus/tsdb/record"
+	"github.com/prometheus/tsdb/tombstones"
 	"github.com/prometheus/tsdb/wal"
 )
 
@@ -44,7 +45,7 @@ var (
 
 	// emptyTombstoneReader is a no-op Tombstone Reader.
 	// This is used by head to satisfy the Tombstones() function call.
-	emptyTombstoneReader = record.NewMemTombstones()
+	emptyTombstoneReader = tombstones.NewMemTombstones()
 )
 
 // Head handles reads and writes of time series data within a time window.
@@ -350,11 +351,20 @@ func (h *Head) loadWAL(r *wal.Reader, multiRef map[uint64]uint64) (err error) {
 	}
 
 	var (
+<<<<<<< HEAD
 		dec       RecordDecoder
 		series    []RefSeries
 		samples   []RefSample
 		tstones   []Stone
 		allStones = newMemTombstones()
+=======
+		dec       record.RecordDecoder
+		series    []record.RefSeries
+		samples   []record.RefSample
+		tstones   []tombstones.Stone
+		allStones = tombstones.NewMemTombstones()
+		err       error
+>>>>>>> Move tombstones to it's own package.
 	)
 	defer func() {
 		if err := allStones.Close(); err != nil {
@@ -381,7 +391,7 @@ func (h *Head) loadWAL(r *wal.Reader, multiRef map[uint64]uint64) (err error) {
 				if !created {
 					// There's already a different ref for this series.
 					multiRefLock.Lock()
-					multiRef[s.Ref] = series.ref
+					multiRef[s.Ref] = series.Ref
 					multiRefLock.Unlock()
 				}
 
@@ -468,11 +478,15 @@ func (h *Head) loadWAL(r *wal.Reader, multiRef map[uint64]uint64) (err error) {
 	}
 	wg.Wait()
 
+<<<<<<< HEAD
 	if r.Err() != nil {
 		return errors.Wrap(r.Err(), "read records")
 	}
 
 	if err := allStones.Iter(func(ref uint64, dranges Intervals) error {
+=======
+	if err := allStones.Iter(func(ref uint64, dranges tombstones.Intervals) error {
+>>>>>>> Move tombstones to it's own package.
 		return h.chunkRewrite(ref, dranges)
 	}); err != nil {
 		return errors.Wrap(r.Err(), "deleting samples from tombstones")
@@ -683,7 +697,7 @@ func (h *rangeHead) Chunks() (ChunkReader, error) {
 	return h.head.chunksRange(h.mint, h.maxt), nil
 }
 
-func (h *rangeHead) Tombstones() (record.TombstoneReader, error) {
+func (h *rangeHead) Tombstones() (tombstones.TombstoneReader, error) {
 	return emptyTombstoneReader, nil
 }
 
@@ -954,7 +968,7 @@ func (h *Head) Delete(mint, maxt int64, ms ...labels.Matcher) error {
 		return errors.Wrap(err, "select series")
 	}
 
-	var stones []record.Stone
+	var stones []tombstones.Stone
 	dirty := false
 	for p.Next() {
 		series := h.series.getByID(p.At())
@@ -966,9 +980,9 @@ func (h *Head) Delete(mint, maxt int64, ms ...labels.Matcher) error {
 		// Delete only until the current values and not beyond.
 		t0, t1 = clampInterval(mint, maxt, t0, t1)
 		if h.wal != nil {
-			stones = append(stones, record.Stone{p.At(), record.Intervals{{t0, t1}}})
+			stones = append(stones, tombstones.Stone{p.At(), tombstones.Intervals{{t0, t1}}})
 		}
-		if err := h.chunkRewrite(p.At(), record.Intervals{{t0, t1}}); err != nil {
+		if err := h.chunkRewrite(p.At(), tombstones.Intervals{{t0, t1}}); err != nil {
 			return errors.Wrap(err, "delete samples")
 		}
 		dirty = true
@@ -995,7 +1009,7 @@ func (h *Head) Delete(mint, maxt int64, ms ...labels.Matcher) error {
 // chunkRewrite re-writes the chunks which overlaps with deleted ranges
 // and removes the samples in the deleted ranges.
 // Chunks is deleted if no samples are left at the end.
-func (h *Head) chunkRewrite(ref uint64, dranges record.Intervals) (err error) {
+func (h *Head) chunkRewrite(ref uint64, dranges tombstones.Intervals) (err error) {
 	if len(dranges) == 0 {
 		return nil
 	}
@@ -1087,7 +1101,7 @@ func (h *Head) gc() {
 }
 
 // Tombstones returns a new reader over the head's tombstones
-func (h *Head) Tombstones() (record.TombstoneReader, error) {
+func (h *Head) Tombstones() (tombstones.TombstoneReader, error) {
 	return emptyTombstoneReader, nil
 }
 

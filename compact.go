@@ -35,7 +35,7 @@ import (
 	"github.com/prometheus/tsdb/fileutil"
 	"github.com/prometheus/tsdb/index"
 	"github.com/prometheus/tsdb/labels"
-	"github.com/prometheus/tsdb/record"
+	"github.com/prometheus/tsdb/tombstones"
 )
 
 // ExponentialBlockRanges returns the time ranges based on the stepSize.
@@ -608,7 +608,7 @@ func (c *LeveledCompactor) write(dest string, meta *BlockMeta, blocks ...BlockRe
 	}
 
 	// Create an empty tombstones file.
-	if _, err := record.WriteTombstoneFile(c.logger, tmp, record.NewMemTombstones()); err != nil {
+	if _, err := tombstones.WriteTombstoneFile(c.logger, tmp, record.NewMemTombstones()); err != nil {
 		return errors.Wrap(err, "write new tombstones file")
 	}
 
@@ -877,15 +877,15 @@ type compactionSeriesSet struct {
 	p          index.Postings
 	index      IndexReader
 	chunks     ChunkReader
-	tombstones record.TombstoneReader
+	tombstones tombstones.TombstoneReader
 
 	l         labels.Labels
 	c         []chunks.Meta
-	intervals record.Intervals
+	intervals tombstones.Intervals
 	err       error
 }
 
-func newCompactionSeriesSet(i IndexReader, c ChunkReader, t record.TombstoneReader, p index.Postings) *compactionSeriesSet {
+func newCompactionSeriesSet(i IndexReader, c ChunkReader, t tombstones.TombstoneReader, p index.Postings) *compactionSeriesSet {
 	return &compactionSeriesSet{
 		index:      i,
 		chunks:     c,
@@ -915,7 +915,7 @@ func (c *compactionSeriesSet) Next() bool {
 	if len(c.intervals) > 0 {
 		chks := make([]chunks.Meta, 0, len(c.c))
 		for _, chk := range c.c {
-			if !(record.Interval{chk.MinTime, chk.MaxTime}.IsSubrange(c.intervals)) {
+			if !(tombstones.Interval{chk.MinTime, chk.MaxTime}.IsSubrange(c.intervals)) {
 				chks = append(chks, chk)
 			}
 		}
@@ -943,7 +943,7 @@ func (c *compactionSeriesSet) Err() error {
 	return c.p.Err()
 }
 
-func (c *compactionSeriesSet) At() (labels.Labels, []chunks.Meta, record.Intervals) {
+func (c *compactionSeriesSet) At() (labels.Labels, []chunks.Meta, tombstones.Intervals) {
 	return c.l, c.c, c.intervals
 }
 
@@ -953,7 +953,7 @@ type compactionMerger struct {
 	aok, bok  bool
 	l         labels.Labels
 	c         []chunks.Meta
-	intervals record.Intervals
+	intervals tombstones.Intervals
 }
 
 func newCompactionMerger(a, b ChunkSeriesSet) (*compactionMerger, error) {
@@ -1030,6 +1030,6 @@ func (c *compactionMerger) Err() error {
 	return c.b.Err()
 }
 
-func (c *compactionMerger) At() (labels.Labels, []chunks.Meta, record.Intervals) {
+func (c *compactionMerger) At() (labels.Labels, []chunks.Meta, tombstones.Intervals) {
 	return c.l, c.c, c.intervals
 }

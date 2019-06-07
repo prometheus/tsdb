@@ -14,8 +14,6 @@ package record
 
 import (
 	"errors"
-	"hash"
-	"hash/crc32"
 	"math"
 	"os"
 	"path/filepath"
@@ -40,21 +38,6 @@ var (
 	ErrAmendSample = errors.New("amending sample")
 )
 
-// The table gets initialized with sync.Once but may still cause a race
-// with any other use of the crc32 package anywhere. Thus we initialize it
-// before.
-var castagnoliTable *crc32.Table
-
-func init() {
-	castagnoliTable = crc32.MakeTable(crc32.Castagnoli)
-}
-
-// NewCRC32 initializes a CRC32 hash with a preconfigured polynomial, so the
-// polynomial may be easily changed in one location at a later time, if necessary.
-func NewCRC32() hash.Hash32 {
-	return crc32.New(castagnoliTable)
-}
-
 type sample struct {
 	t int64
 	v float64
@@ -66,12 +49,6 @@ func (s sample) T() int64 {
 
 func (s sample) V() float64 {
 	return s.v
-}
-
-// SizeReader returns the size of the object in bytes.
-type SizeReader interface {
-	// Size returns the size in bytes.
-	Size() int64
 }
 
 // RefSeries is the series labels with the series ID.

@@ -21,6 +21,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/prometheus/tsdb/encoding"
 	"github.com/prometheus/tsdb/labels"
+	"github.com/prometheus/tsdb/tombstones"
 )
 
 // RecordType represents the data type of a record.
@@ -123,16 +124,16 @@ func (d *RecordDecoder) Samples(rec []byte, samples []RefSample) ([]RefSample, e
 }
 
 // Tombstones appends tombstones in rec to the given slice.
-func (d *RecordDecoder) Tombstones(rec []byte, tstones []Stone) ([]Stone, error) {
+func (d *RecordDecoder) Tombstones(rec []byte, tstones []tombstones.Stone) ([]tombstones.Stone, error) {
 	dec := encoding.Decbuf{B: rec}
 
 	if RecordType(dec.Byte()) != RecordTombstones {
 		return nil, errors.New("invalid record type")
 	}
 	for dec.Len() > 0 && dec.Err() == nil {
-		tstones = append(tstones, Stone{
+		tstones = append(tstones, tombstones.Stone{
 			Ref: dec.Be64(),
-			Intervals: Intervals{
+			Intervals: tombstones.Intervals{
 				{Mint: dec.Varint64(), Maxt: dec.Varint64()},
 			},
 		})
@@ -193,7 +194,7 @@ func (e *RecordEncoder) Samples(samples []RefSample, b []byte) []byte {
 }
 
 // Tombstones appends the encoded tombstones to b and returns the resulting slice.
-func (e *RecordEncoder) Tombstones(tstones []Stone, b []byte) []byte {
+func (e *RecordEncoder) Tombstones(tstones []tombstones.Stone, b []byte) []byte {
 	buf := encoding.Encbuf{B: b}
 	buf.PutByte(byte(RecordTombstones))
 
