@@ -1074,10 +1074,12 @@ func TestOpenBlockWithHook(t *testing.T) {
 	path, err := createBlock(t, original, genSeries(1, 1, 200, 300))
 	testutil.Ok(t, err)
 	_, file := filepath.Split(path)
-	server, err := testutil.NewFuseServer(t, original, mountpoint, testutil.Hook(TestRenameHook{}))
-	//remember to call unmount after you do not use it
-	defer testutil.CleanUp(server, mountpoint, original)
+	server, err := testutil.NewServer(t, original, mountpoint, testutil.Hook(TestRenameHook{}))
 	testutil.Ok(t, err)
+	//remember to call unmount after you do not use it
+	defer func() {
+		server.CleanUp()
+	}()
 
 	//normal logic
 	_, err = OpenBlock(nil, filepath.Join(mountpoint, file), nil)
