@@ -16,13 +16,15 @@ package testutil
 
 import "testing"
 
-func NewFuseServer(t *testing.T, original, mountpoint string, hook Hook) (interface{}, error) {
+func NewServer(t *testing.T, original, mountpoint string, hook Hook) (*Server, error) {
 	t.Skip("Skip windows platform")
 	return nil, nil
 }
 
-func CleanUp(s interface{}, mountpoint string, original string) {
+func (s *Server) CleanUp() {
 
 }
 
 type Hook interface{}
+
+type Server struct{}

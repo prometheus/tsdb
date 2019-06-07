@@ -212,9 +212,15 @@ func newHookServer(hookfs *HookFs) (*fuse.Server, error) {
 	return server, nil
 }
 
-func NewFuseServer(t *testing.T, original, mountpoint string, hook Hook) (interface{}, error) {
-	createDirIfAbsent(original)
-	createDirIfAbsent(mountpoint)
+type Server struct {
+	server     *fuse.Server
+	original   string
+	mountpoint string
+}
+
+func NewServer(t *testing.T, original, mountpoint string, hook Hook) (*Server, error) {
+	os.Mkdir(original, os.ModePerm)
+	os.Mkdir(mountpoint, os.ModePerm)
 	fs, err := NewHookFs(original, mountpoint, hook)
 	if err != nil {
 		return nil, err
@@ -230,21 +236,28 @@ func NewFuseServer(t *testing.T, original, mountpoint string, hook Hook) (interf
 		fs.Start(server)
 	}()
 
-	return server, nil
+	return &Server{
+		server:     server,
+		original:   original,
+		mountpoint: mountpoint,
+	}, nil
 }
 
-func CleanUp(s interface{}, mountpoint string, original string) {
-	server := s.(*fuse.Server)
-	server.Unmount()
-	syscall.Unmount(mountpoint, -1)
+func (s *Server) CleanUp() {
+	//server := s.(*fuse.Server)
+	s.server.Unmount()
 
-	os.RemoveAll(mountpoint)
-	os.RemoveAll(original)
+	syscall.Unmount(s.mountpoint, -1)
+
+	os.RemoveAll(s.mountpoint)
+	os.RemoveAll(s.original)
 }
 
-func createDirIfAbsent(name string) {
-	_, err := os.Stat(name)
-	if err != nil {
-		os.Mkdir(name, os.ModePerm)
-	}
+type Hook interface{}
+
+type HookContext interface{}
+
+type HookOnRename interface {
+	PreRename(oldPatgh string, newPath string) (hooked bool, err error)
+	PostRename(oldPatgh string, newPath string) (hooked bool, err error)
 }
