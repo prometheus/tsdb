@@ -13,7 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package testutil
+package fuse
 
 import (
 	"fmt"
@@ -94,28 +94,22 @@ func (h *HookFs) Mknod(name string, mode uint32, dev uint32, context *fuse.Conte
 }
 
 func (h *HookFs) Rename(oldName string, newName string, context *fuse.Context) fuse.Status {
-	hook, hookEnabled := h.hook.(HookOnRename)
-	if hookEnabled {
-		preHooked, err := hook.PreRename(oldName, newName)
-		if preHooked {
-			if err != nil {
+	preHooked, err := h.hook.PreRename(oldName, newName)
+	if preHooked {
+		if err != nil {
 
-				return fuse.ToStatus(err)
-			}
+			return fuse.ToStatus(err)
 		}
 	}
 
 	status := h.fs.Rename(oldName, newName, context)
 
-	if hookEnabled {
-		postHooked, err := hook.PostRename(oldName, newName)
-		if postHooked {
-			if err != nil {
-				return fuse.ToStatus(err)
-			}
+	postHooked, err := h.hook.PostRename(oldName, newName)
+	if postHooked {
+		if err != nil {
+			return fuse.ToStatus(err)
 		}
 	}
-
 	return status
 }
 
@@ -251,11 +245,29 @@ func (s *Server) CleanUp() {
 	os.RemoveAll(s.original)
 }
 
-type Hook interface{}
-
-type HookContext interface{}
-
-type HookOnRename interface {
+type Hook interface {
 	PreRename(oldPatgh string, newPath string) (hooked bool, err error)
 	PostRename(oldPatgh string, newPath string) (hooked bool, err error)
+}
+
+type TestRenameHook struct {
+	EmptyHook // Add the Empty hook so the that this struct implements the hook interface.
+}
+
+// These will take precedence over the `testutil.EmptyHook`
+func (h TestRenameHook) PreRename(oldPatgh string, newPath string) (hooked bool, err error) {
+	fmt.Printf("renamed file from %s to %s \n", oldPatgh, newPath)
+	return true, syscall.EIO
+}
+func (h TestRenameHook) PostRename(oldPatgh string, newPath string) (hooked bool, err error) {
+	return false, nil
+}
+
+type EmptyHook struct{}
+
+func (h EmptyHook) PreRename(oldPatgh string, newPath string) (hooked bool, err error) {
+	return false, nil
+}
+func (h EmptyHook) PostRename(oldPatgh string, newPath string) (hooked bool, err error) {
+	return false, nil
 }

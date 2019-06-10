@@ -17,12 +17,12 @@ import (
 	"context"
 	"fmt"
 	"github.com/go-kit/kit/log/level"
+	"github.com/prometheus/tsdb/testutil/fuse"
 	"io/ioutil"
 	"math"
 	"os"
 	"path"
 	"path/filepath"
-	"syscall"
 	"testing"
 	"time"
 
@@ -1074,7 +1074,7 @@ func TestOpenBlockWithHook(t *testing.T) {
 	path, err := createBlock(t, original, genSeries(1, 1, 200, 300))
 	testutil.Ok(t, err)
 	_, file := filepath.Split(path)
-	server, err := testutil.NewServer(t, original, mountpoint, testutil.Hook(TestRenameHook{}))
+	server, err := fuse.NewServer(t, original, mountpoint, fuse.Hook(fuse.TestRenameHook{}))
 	testutil.Ok(t, err)
 	//remember to call unmount after you do not use it
 	defer func() {
@@ -1096,14 +1096,4 @@ func TestOpenBlockWithHook(t *testing.T) {
 func Exist(filename string) bool {
 	_, err := os.Stat(filename)
 	return err == nil || os.IsExist(err)
-}
-
-type TestRenameHook struct{}
-
-func (h TestRenameHook) PreRename(oldPatgh string, newPath string) (hooked bool, err error) {
-	fmt.Printf("renamed file from %s to %s \n", oldPatgh, newPath)
-	return true, syscall.EIO
-}
-func (h TestRenameHook) PostRename(oldPatgh string, newPath string) (hooked bool, err error) {
-	return false, nil
 }
