@@ -2196,13 +2196,14 @@ func TestBlockRanges(t *testing.T) {
 // It also checks that the API calls return equivalent results as a normal db.Open() mode.
 func TestDBReadOnly(t *testing.T) {
 	var (
-		dbDir     string
-		logger    = log.NewLogfmtLogger(log.NewSyncWriter(os.Stderr))
-		expBlocks []*Block
-		expSeries map[string][]tsdbutil.Sample
-		expDbSize int64
-		matchAll  = labels.NewEqualMatcher("", "")
-		err       error
+		dbDir          string
+		logger         = log.NewLogfmtLogger(log.NewSyncWriter(os.Stderr))
+		expBlocks      []*Block
+		expSeries      map[string][]tsdbutil.Sample
+		expSeriesCount int
+		expDbSize      int64
+		matchAll       = labels.NewEqualMatcher("", "")
+		err            error
 	)
 
 	// Boostrap the db.
@@ -2223,6 +2224,7 @@ func TestDBReadOnly(t *testing.T) {
 		for _, m := range dbBlocks {
 			createBlock(t, dbDir, genSeries(1, 1, m.MinTime, m.MaxTime))
 		}
+		expSeriesCount++
 	}
 
 	// Open a normal db to use for a comparison.
@@ -2240,6 +2242,7 @@ func TestDBReadOnly(t *testing.T) {
 		_, err = app.Add(labels.FromStrings("foo", "bar"), dbWritable.Head().MaxTime()+1, 0)
 		testutil.Ok(t, err)
 		testutil.Ok(t, app.Commit())
+		expSeriesCount++
 
 		expBlocks = dbWritable.Blocks()
 		expDbSize, err = testutil.DirSize(dbWritable.Dir())
@@ -2277,7 +2280,7 @@ func TestDBReadOnly(t *testing.T) {
 		readOnlyDBSize, err := testutil.DirSize(dbDir)
 		testutil.Ok(t, err)
 
-		testutil.Assert(t, len(readOnlySeries) > 0, "querier should return some series")
+		testutil.Equals(t, expSeriesCount, len(readOnlySeries), "total series mismatch")
 		testutil.Equals(t, expSeries, readOnlySeries, "series mismatch")
 		testutil.Equals(t, expDbSize, readOnlyDBSize, "after all read operations the db size should remain the same")
 	}

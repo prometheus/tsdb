@@ -256,6 +256,7 @@ type DBReadOnly struct {
 	logger log.Logger
 	dir    string
 	blocks []BlockReadOnly // Keep all open blocks in the cache to close them at db.Close.
+	mtx    sync.Mutex
 	closed bool
 }
 
@@ -362,6 +363,8 @@ func (db *DBReadOnly) Blocks() ([]BlockReadOnly, error) {
 		level.Warn(db.logger).Log("msg", "overlapping blocks found during opening", "detail", overlaps.String())
 	}
 
+	db.mtx.Lock()
+	defer db.mtx.Unlock()
 	// Close all previously open blocks and add the new ones to the catche.
 	for _, b := range db.blocks {
 		b.Close()
@@ -383,6 +386,8 @@ func (db *DBReadOnly) Close() error {
 	}
 	var merr tsdb_errors.MultiError
 
+	db.mtx.Lock()
+	defer db.mtx.Unlock()
 	for _, b := range db.blocks {
 		merr.Add(b.Close())
 	}
@@ -473,17 +478,9 @@ func Open(dir string, l log.Logger, r prometheus.Registerer, opts *Options) (db 
 	}
 
 	if initErr := db.head.Init(minValidTime); initErr != nil {
-		// So that we can pick up errors even when wrapped.
-		if err := errors.Cause(initErr); err != nil {
-			if _, ok := err.(*wal.CorruptionErr); ok {
-				level.Warn(db.logger).Log("msg", "encountered WAL corruption error, attempting repair", "err", err)
-				db.metrics.walCorruptionsTotal.Inc()
-				if err := wlog.Repair(err); err != nil {
-					return nil, errors.Wrap(err, "repair corrupted WAL")
-				}
-			} else {
-				return nil, errors.Wrap(initErr, "read WAL")
-			}
+		level.Warn(db.logger).Log("msg", "encountered WAL read error, attempting repair", "err", err)
+		if err := wlog.Repair(err); err != nil {
+			return nil, errors.Wrap(err, "repair corrupted WAL")
 		}
 	}
 
