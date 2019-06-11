@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/go-kit/kit/log"
@@ -646,10 +647,11 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 	}
 
 	var (
-		sets        = make([]ChunkSeriesSet, 0, len(blocks))
-		allSymbols  = make(map[string]struct{}, 1<<16)
-		closers     = []io.Closer{}
-		overlapping bool
+		sets         = make([]ChunkSeriesSet, 0, len(blocks))
+		allSymbols   = make(map[string]struct{}, 1<<16)
+		closers      = []io.Closer{}
+		indexReaders = make([]IndexReader, 0, len(blocks))
+		overlapping  bool
 	)
 	defer func() {
 		var merr tsdb_errors.MultiError
@@ -684,6 +686,7 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 			return errors.Wrapf(err, "open index reader for block %s", b)
 		}
 		closers = append(closers, indexr)
+		indexReaders = append(indexReaders, indexr)
 
 		chunkr, err := b.Chunks()
 		if err != nil {
@@ -719,11 +722,7 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 		return err
 	}
 
-	// We fully rebuild the postings list index from merged series.
-	var (
-		postings = index.NewMemPostings()
-		values   = map[string]stringset{}
-	)
+	var values = map[string]stringset{}
 
 	if err := indexw.AddSymbols(allSymbols); err != nil {
 		return errors.Wrap(err, "add symbols")
@@ -811,29 +810,70 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 			}
 			valset.set(l.Value)
 		}
-		postings.Add(ref, lset)
 	}
 	if set.Err() != nil {
 		return errors.Wrap(set.Err(), "iterate compaction set")
 	}
 
+	if meta.Stats.NumSamples == 0 {
+		// No postings to write, exit early.
+		return nil
+	}
+
 	s := make([]string, 0, 256)
+
+	var numLabelValues int
+	for _, v := range values {
+		numLabelValues += len(v)
+	}
+
+	keys := make([]labels.Label, 0, numLabelValues+1)
+	apkName, apkValue := index.AllPostingsKey()
+	keys = append(keys, labels.Label{Name: apkName, Value: apkValue})
 	for n, v := range values {
 		s = s[:0]
 
 		for x := range v {
 			s = append(s, x)
+			keys = append(keys, labels.Label{Name: n, Value: x})
 		}
 		if err := indexw.WriteLabelIndex([]string{n}, s); err != nil {
 			return errors.Wrap(err, "write label index")
 		}
 	}
 
-	for _, l := range postings.SortedKeys() {
-		if err := indexw.WritePostings(l.Name, l.Value, postings.Get(l.Name, l.Value)); err != nil {
+	sort.Slice(keys, func(i, j int) bool {
+		if d := strings.Compare(keys[i].Name, keys[j].Name); d != 0 {
+			return d < 0
+		}
+		return keys[i].Value < keys[j].Value
+	})
+
+	// TODO: Decide initial size.
+	postingBuf := make([]uint64, 0, 1<<16)
+	seriesMap := set.SeriesMap()
+	for _, k := range keys {
+		postingMap := make(map[uint64]struct{}) // TODO: can the map be reused?
+		for i, ir := range indexReaders {
+			p, err := ir.Postings(k.Name, k.Value)
+			if err != nil {
+				return errors.Wrap(err, "read postings")
+			}
+			for p.Next() {
+				if newVal, ok := seriesMap[i][p.At()]; ok {
+					postingMap[newVal] = struct{}{}
+				}
+			}
+		}
+		postingBuf = postingBuf[:0]
+		for p := range postingMap {
+			postingBuf = append(postingBuf, p)
+		}
+		if err := indexw.WritePostings(k.Name, k.Value, index.NewListPostings(postingBuf)); err != nil {
 			return errors.Wrap(err, "write postings")
 		}
 	}
+
 	return nil
 }
 
