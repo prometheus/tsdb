@@ -435,7 +435,7 @@ Outer:
 			// Getting the actual samples.
 			actSamples := make([]sample, 0)
 			for css.Next() {
-				lblsAct, chkMetas, intv := css.At()
+				_, lblsAct, chkMetas, intv := css.At()
 				testutil.Equals(t, labels.Labels{lblDefault}, lblsAct)
 				testutil.Equals(t, 0, len(intv))
 

@@ -670,7 +670,7 @@ func (s *mergedVerticalSeriesSet) Next() bool {
 // actual series itself.
 type ChunkSeriesSet interface {
 	Next() bool
-	At() (labels.Labels, []chunks.Meta, Intervals)
+	At() (uint64, labels.Labels, []chunks.Meta, Intervals)
 	Err() error
 }
 
@@ -704,8 +704,8 @@ func LookupChunkSeries(ir IndexReader, tr TombstoneReader, ms ...labels.Matcher)
 	}, nil
 }
 
-func (s *baseChunkSeries) At() (labels.Labels, []chunks.Meta, Intervals) {
-	return s.lset, s.chks, s.intervals
+func (s *baseChunkSeries) At() (uint64, labels.Labels, []chunks.Meta, Intervals) {
+	return s.p.At(), s.lset, s.chks, s.intervals
 }
 
 func (s *baseChunkSeries) Err() error { return s.err }
@@ -765,20 +765,21 @@ type populatedChunkSeries struct {
 	mint, maxt int64
 
 	err       error
+	ref       uint64
 	chks      []chunks.Meta
 	lset      labels.Labels
 	intervals Intervals
 }
 
-func (s *populatedChunkSeries) At() (labels.Labels, []chunks.Meta, Intervals) {
-	return s.lset, s.chks, s.intervals
+func (s *populatedChunkSeries) At() (uint64, labels.Labels, []chunks.Meta, Intervals) {
+	return s.ref, s.lset, s.chks, s.intervals
 }
 
 func (s *populatedChunkSeries) Err() error { return s.err }
 
 func (s *populatedChunkSeries) Next() bool {
 	for s.set.Next() {
-		lset, chks, dranges := s.set.At()
+		ref, lset, chks, dranges := s.set.At()
 
 		for len(chks) > 0 {
 			if chks[0].MaxTime >= s.mint {
@@ -814,6 +815,7 @@ func (s *populatedChunkSeries) Next() bool {
 			continue
 		}
 
+		s.ref = ref
 		s.lset = lset
 		s.chks = chks
 		s.intervals = dranges
@@ -837,7 +839,7 @@ type blockSeriesSet struct {
 
 func (s *blockSeriesSet) Next() bool {
 	for s.set.Next() {
-		lset, chunks, dranges := s.set.At()
+		_, lset, chunks, dranges := s.set.At()
 		s.cur = &chunkSeries{
 			labels: lset,
 			chunks: chunks,

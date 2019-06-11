@@ -642,7 +642,7 @@ func TestBaseChunkSeries(t *testing.T) {
 
 		i := 0
 		for bcs.Next() {
-			lset, chks, _ := bcs.At()
+			_, lset, chks, _ := bcs.At()
 
 			idx := tc.expIdxs[i]
 
@@ -1159,8 +1159,8 @@ func (m *mockChunkSeriesSet) Next() bool {
 	return m.i < len(m.l)
 }
 
-func (m *mockChunkSeriesSet) At() (labels.Labels, []chunks.Meta, Intervals) {
-	return m.l[m.i], m.cm[m.i], nil
+func (m *mockChunkSeriesSet) At() (uint64, labels.Labels, []chunks.Meta, Intervals) {
+	return uint64(m.i), m.l[m.i], m.cm[m.i], nil
 }
 
 func (m *mockChunkSeriesSet) Err() error {
