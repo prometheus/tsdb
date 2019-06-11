@@ -54,8 +54,7 @@ func TestSetCompactionFailed(t *testing.T) {
 		testutil.Ok(t, os.RemoveAll(tmpdir))
 	}()
 
-	blockDir, err := createBlock(t, tmpdir, genSeries(1, 1, 0, 0))
-	testutil.Ok(t, err)
+	blockDir := createBlock(t, tmpdir, genSeries(1, 1, 0, 0))
 
 	b, err := OpenBlock(nil, blockDir, nil)
 	testutil.Ok(t, err)
@@ -76,10 +75,8 @@ func TestCreateBlock(t *testing.T) {
 	defer func() {
 		testutil.Ok(t, os.RemoveAll(tmpdir))
 	}()
-	cb, err := createBlock(t, tmpdir, genSeries(1, 1, 0, 10))
-	testutil.Ok(t, err)
 
-	b, err := OpenBlock(nil, cb, nil)
+	b, err := OpenBlock(nil, createBlock(t, tmpdir, genSeries(1, 1, 0, 10)), nil)
 	if err == nil {
 		testutil.Ok(t, b.Close())
 	}
@@ -136,8 +133,7 @@ func TestCorruptedChunk(t *testing.T) {
 				testutil.Ok(t, os.RemoveAll(tmpdir))
 			}()
 
-			blockDir, err := createBlock(t, tmpdir, genSeries(1, 1, 0, 0))
-			testutil.Ok(t, err)
+			blockDir := createBlock(t, tmpdir, genSeries(1, 1, 0, 0))
 
 			files, err := sequenceFiles(chunkDir(blockDir))
 			testutil.Ok(t, err)
@@ -157,7 +153,7 @@ func TestCorruptedChunk(t *testing.T) {
 }
 
 // createBlock creates a block with given set of series and returns its dir.
-func createBlock(tb testing.TB, dir string, series []Series) (string, error) {
+func createBlock(tb testing.TB, dir string, series []Series) string {
 	head := createHead(tb, series)
 	compactor, err := NewLeveledCompactor(context.Background(), nil, log.NewNopLogger(), []int64{1000000}, nil)
 	testutil.Ok(tb, err)
@@ -165,7 +161,7 @@ func createBlock(tb testing.TB, dir string, series []Series) (string, error) {
 	testutil.Ok(tb, os.MkdirAll(dir, 0777))
 
 	ulid, err := compactor.Write(dir, head, head.MinTime(), head.MaxTime(), nil)
-	return filepath.Join(dir, ulid.String()), err
+	return filepath.Join(dir, ulid.String())
 }
 
 func createHead(tb testing.TB, series []Series) *Head {

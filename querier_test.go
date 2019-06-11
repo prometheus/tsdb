@@ -1523,10 +1523,8 @@ func BenchmarkQueryIterator(b *testing.B) {
 					} else {
 						generatedSeries = populateSeries(prefilledLabels, mint, maxt)
 					}
-					cb, err := createBlock(b, dir, generatedSeries)
-					testutil.Ok(b, err)
 
-					block, err := OpenBlock(nil, cb, nil)
+					block, err := OpenBlock(nil, createBlock(b, dir, generatedSeries), nil)
 					testutil.Ok(b, err)
 					blocks = append(blocks, block)
 					defer block.Close()
@@ -1601,10 +1599,7 @@ func BenchmarkQuerySeek(b *testing.B) {
 						generatedSeries = populateSeries(prefilledLabels, mint, maxt)
 					}
 
-					cb, err := createBlock(b, dir, generatedSeries)
-					testutil.Ok(b, err)
-
-					block, err := OpenBlock(nil, cb, nil)
+					block, err := OpenBlock(nil, createBlock(b, dir, generatedSeries), nil)
 					testutil.Ok(b, err)
 					blocks = append(blocks, block)
 					defer block.Close()
@@ -1750,10 +1745,7 @@ func BenchmarkSetMatcher(b *testing.B) {
 				generatedSeries = populateSeries(prefilledLabels, mint, maxt)
 			}
 
-			cb, err := createBlock(b, dir, generatedSeries)
-			testutil.Ok(b, err)
-
-			block, err := OpenBlock(nil, cb, nil)
+			block, err := OpenBlock(nil, createBlock(b, dir, generatedSeries), nil)
 			testutil.Ok(b, err)
 			blocks = append(blocks, block)
 			defer block.Close()
@@ -2192,10 +2184,7 @@ func BenchmarkQueries(b *testing.B) {
 
 				qs := []Querier{}
 				for x := 0; x <= 10; x++ {
-					cb, err := createBlock(b, dir, series)
-					testutil.Ok(b, err)
-
-					block, err := OpenBlock(nil, cb, nil)
+					block, err := OpenBlock(nil, createBlock(b, dir, series), nil)
 					testutil.Ok(b, err)
 					q, err := NewBlockQuerier(block, 1, int64(nSamples))
 					testutil.Ok(b, err)

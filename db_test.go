@@ -933,9 +933,7 @@ func TestTombstoneCleanFail(t *testing.T) {
 	// totalBlocks should be >=2 so we have enough blocks to trigger compaction failure.
 	totalBlocks := 2
 	for i := 0; i < totalBlocks; i++ {
-		blockDir, err := createBlock(t, db.Dir(), genSeries(1, 1, 0, 0))
-		testutil.Ok(t, err)
-
+		blockDir := createBlock(t, db.Dir(), genSeries(1, 1, 0, 0))
 		block, err := OpenBlock(nil, blockDir, nil)
 		testutil.Ok(t, err)
 		// Add some some fake tombstones to trigger the compaction.
@@ -979,10 +977,7 @@ func (c *mockCompactorFailing) Write(dest string, b BlockReader, mint, maxt int6
 		return ulid.ULID{}, fmt.Errorf("the compactor already did the maximum allowed blocks so it is time to fail")
 	}
 
-	cb, err := createBlock(c.t, dest, genSeries(1, 1, 0, 0))
-	testutil.Ok(c.t, err)
-
-	block, err := OpenBlock(nil, cb, nil)
+	block, err := OpenBlock(nil, createBlock(c.t, dest, genSeries(1, 1, 0, 0)), nil)
 
 	testutil.Ok(c.t, err)
 	testutil.Ok(c.t, block.Close()) // Close block as we won't be using anywhere.
