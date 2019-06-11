@@ -16,10 +16,12 @@ package index
 import (
 	"encoding/binary"
 	"fmt"
+	"math/bits"
 	"math/rand"
 	"sort"
 	"testing"
 
+	"github.com/prometheus/tsdb/encoding"
 	"github.com/prometheus/tsdb/testutil"
 )
 
@@ -714,6 +716,304 @@ func TestBigEndian(t *testing.T) {
 			testutil.Equals(t, v.found, bep.Seek(uint64(v.seek)))
 			testutil.Equals(t, uint64(v.val), bep.At())
 			testutil.Assert(t, bep.Err() == nil, "")
+		}
+	})
+}
+
+func TestBaseDeltaPostings(t *testing.T) {
+	num := 1000
+	// mock a list as postings
+	ls := make([]uint32, num)
+	ls[0] = 2
+	for i := 1; i < num; i++ {
+		ls[i] = ls[i-1] + uint32(rand.Int31n(25)) + 2
+	}
+
+	width := bits.Len32(ls[len(ls)-1]-ls[0])
+	buf := encoding.Encbuf{}
+	for i := 0; i < num; i++ {
+		buf.PutBits(uint64(ls[i]-ls[0]), width)
+	}
+	// t.Log("(baseDeltaPostings) len of 1000 number = ", len(buf.Get()))
+
+	t.Run("Iteration", func(t *testing.T) {
+		bdp := newBaseDeltaPostings(buf.Get(), ls[0], width, len(ls))
+		for i := 0; i < num; i++ {
+			testutil.Assert(t, bdp.Next() == true, "")
+			testutil.Equals(t, uint64(ls[i]), bdp.At())
+		}
+
+		testutil.Assert(t, bdp.Next() == false, "")
+		testutil.Assert(t, bdp.Err() == nil, "")
+	})
+
+	t.Run("Seek", func(t *testing.T) {
+		table := []struct {
+			seek  uint32
+			val   uint32
+			found bool
+		}{
+			{
+				ls[0] - 1, ls[0], true,
+			},
+			{
+				ls[4], ls[4], true,
+			},
+			{
+				ls[500] - 1, ls[500], true,
+			},
+			{
+				ls[600] + 1, ls[601], true,
+			},
+			{
+				ls[600] + 1, ls[601], true,
+			},
+			{
+				ls[600] + 1, ls[601], true,
+			},
+			{
+				ls[0], ls[601], true,
+			},
+			{
+				ls[600], ls[601], true,
+			},
+			{
+				ls[999], ls[999], true,
+			},
+			{
+				ls[999] + 10, ls[999], false,
+			},
+		}
+
+		bdp := newBaseDeltaPostings(buf.Get(), ls[0], width, len(ls))
+
+		for _, v := range table {
+			testutil.Equals(t, v.found, bdp.Seek(uint64(v.seek)))
+			testutil.Equals(t, uint64(v.val), bdp.At())
+			testutil.Assert(t, bdp.Err() == nil, "")
+		}
+	})
+}
+
+func TestDeltaBlockPostings(t *testing.T) {
+	num := 1000
+	// mock a list as postings
+	ls := make([]uint32, num)
+	ls[0] = 2
+	for i := 1; i < num; i++ {
+		ls[i] = ls[i-1] + uint32(rand.Int31n(25)) + 2
+	}
+
+	buf := encoding.Encbuf{}
+	writeDeltaBlockPostings(&buf, ls)
+	// t.Log("(deltaBlockPostings) len of 1000 number = ", len(buf.Get()))
+
+	t.Run("Iteration", func(t *testing.T) {
+		dbp := newDeltaBlockPostings(buf.Get(), len(ls))
+		for i := 0; i < num; i++ {
+			testutil.Assert(t, dbp.Next() == true, "")
+			if uint64(ls[i]) != dbp.At() {
+				t.Log(i, dbp.GetOff(), "width=", dbp.GetWidth())
+			}
+			testutil.Equals(t, uint64(ls[i]), dbp.At())
+		}
+
+		testutil.Assert(t, dbp.Next() == false, "")
+		testutil.Assert(t, dbp.Err() == nil, "")
+	})
+
+	t.Run("Seek", func(t *testing.T) {
+		table := []struct {
+			seek  uint32
+			val   uint32
+			found bool
+		}{
+			{
+				ls[0] - 1, ls[0], true,
+			},
+			{
+				ls[4], ls[4], true,
+			},
+			{
+				ls[500] - 1, ls[500], true,
+			},
+			{
+				ls[600] + 1, ls[601], true,
+			},
+			{
+				ls[600] + 1, ls[601], true,
+			},
+			{
+				ls[600] + 1, ls[601], true,
+			},
+			{
+				ls[0], ls[601], true,
+			},
+			{
+				ls[600], ls[601], true,
+			},
+			{
+				ls[999], ls[999], true,
+			},
+			{
+				ls[999] + 10, ls[999], false,
+			},
+		}
+
+		dbp := newDeltaBlockPostings(buf.Get(), len(ls))
+
+		for _, v := range table {
+			testutil.Equals(t, v.found, dbp.Seek(uint64(v.seek)))
+			testutil.Equals(t, uint64(v.val), dbp.At())
+			testutil.Assert(t, dbp.Err() == nil, "")
+		}
+	})
+}
+
+func BenchmarkPostings(b *testing.B) {
+	num := 100000
+	// mock a list as postings
+	ls := make([]uint32, num)
+	ls[0] = 2
+	for i := 1; i < num; i++ {
+		ls[i] = ls[i-1] + uint32(rand.Int31n(25)) + 2
+	}
+
+	// bigEndianPostings.
+	bufBE := make([]byte, num*4)
+	for i := 0; i < num; i++ {
+		b := bufBE[i*4 : i*4+4]
+		binary.BigEndian.PutUint32(b, ls[i])
+	}
+
+	// baseDeltaPostings.
+	width := bits.Len32(ls[len(ls)-1]-ls[0])
+	bufBD := encoding.Encbuf{}
+	for i := 0; i < num; i++ {
+		bufBD.PutBits(uint64(ls[i]-ls[0]), width)
+	}
+
+	// deltaBlockPostings.
+	bufDB := encoding.Encbuf{}
+	writeDeltaBlockPostings(&bufDB, ls)
+
+	table := []struct {
+		seek  uint32
+		val   uint32
+		found bool
+	}{
+		{
+			ls[0] - 1, ls[0], true,
+		},
+		{
+			ls[4], ls[4], true,
+		},
+		{
+			ls[5000] - 1, ls[5000], true,
+		},
+		{
+			ls[6000] + 1, ls[6001], true,
+		},
+		{
+			ls[6000] + 1, ls[6001], true,
+		},
+		{
+			ls[6000] + 1, ls[6001], true,
+		},
+		{
+			ls[0], ls[6001], true,
+		},
+		{
+			ls[6000], ls[6001], true,
+		},
+		{
+			ls[99999], ls[99999], true,
+		},
+		{
+			ls[99999] + 10, ls[99999], false,
+		},
+	}
+
+	b.Run("bigEndianIteration", func(bench *testing.B) {
+		bench.ResetTimer()
+		bench.ReportAllocs()
+		for j := 0; j < bench.N; j++ {
+			bep := newBigEndianPostings(bufBE)
+			
+			for i := 0; i < num; i++ {
+				testutil.Assert(bench, bep.Next() == true, "")
+				testutil.Equals(bench, uint64(ls[i]), bep.At())
+			}
+			testutil.Assert(bench, bep.Next() == false, "")
+			testutil.Assert(bench, bep.Err() == nil, "")
+		}
+	})
+	b.Run("baseDeltaIteration", func(bench *testing.B) {
+		bench.ResetTimer()
+		bench.ReportAllocs()
+		for j := 0; j < bench.N; j++ {
+			bdp := newBaseDeltaPostings(bufBD.Get(), ls[0], width, len(ls))
+			
+			for i := 0; i < num; i++ {
+				testutil.Assert(bench, bdp.Next() == true, "")
+				testutil.Equals(bench, uint64(ls[i]), bdp.At())
+			}
+			testutil.Assert(bench, bdp.Next() == false, "")
+			testutil.Assert(bench, bdp.Err() == nil, "")
+		}
+	})
+	b.Run("deltaBlockIteration", func(bench *testing.B) {
+		bench.ResetTimer()
+		bench.ReportAllocs()
+		for j := 0; j < bench.N; j++ {
+			dbp := newDeltaBlockPostings(bufDB.Get(), len(ls))
+			
+			for i := 0; i < num; i++ {
+				testutil.Assert(bench, dbp.Next() == true, "")
+				testutil.Equals(bench, uint64(ls[i]), dbp.At())
+			}
+			testutil.Assert(bench, dbp.Next() == false, "")
+			testutil.Assert(bench, dbp.Err() == nil, "")
+		}
+	})
+
+	b.Run("bigEndianSeek", func(bench *testing.B) {
+		bench.ResetTimer()
+		bench.ReportAllocs()
+		for j := 0; j < bench.N; j++ {
+			bep := newBigEndianPostings(bufBE)
+			
+			for _, v := range table {
+				testutil.Equals(bench, v.found, bep.Seek(uint64(v.seek)))
+				testutil.Equals(bench, uint64(v.val), bep.At())
+				testutil.Assert(bench, bep.Err() == nil, "")
+			}
+		}
+	})
+	b.Run("baseDeltaSeek", func(bench *testing.B) {
+		bench.ResetTimer()
+		bench.ReportAllocs()
+		for j := 0; j < bench.N; j++ {
+			bdp := newBaseDeltaPostings(bufBD.Get(), ls[0], width, len(ls))
+			
+			for _, v := range table {
+				testutil.Equals(bench, v.found, bdp.Seek(uint64(v.seek)))
+				testutil.Equals(bench, uint64(v.val), bdp.At())
+				testutil.Assert(bench, bdp.Err() == nil, "")
+			}
+		}
+	})
+	b.Run("deltaBlockSeek", func(bench *testing.B) {
+		bench.ResetTimer()
+		bench.ReportAllocs()
+		for j := 0; j < bench.N; j++ {
+			dbp := newDeltaBlockPostings(bufDB.Get(), len(ls))
+			
+			for _, v := range table {
+				testutil.Equals(bench, v.found, dbp.Seek(uint64(v.seek)))
+				testutil.Equals(bench, uint64(v.val), dbp.At())
+				testutil.Assert(bench, dbp.Err() == nil, "")
+			}
 		}
 	})
 }

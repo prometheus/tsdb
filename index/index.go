@@ -21,6 +21,7 @@ import (
 	"io"
 	"io/ioutil"
 	"math"
+	"math/bits"
 	"os"
 	"path/filepath"
 	"sort"
@@ -522,9 +523,24 @@ func (w *Writer) WritePostings(name, value string, it Postings) error {
 	w.buf2.Reset()
 	w.buf2.PutBE32int(len(refs))
 
-	for _, r := range refs {
-		w.buf2.PutBE32(r)
+	switch postingsType {
+	case 1:
+		for _, r := range refs {
+			w.buf2.PutBE32(r)
+		}
+	case 2:
+		// The base.
+		w.buf2.PutUvarint32(refs[0])
+		// The width.
+		width := bits.Len32(uint32(refs[len(refs)-1]-refs[0]))
+		w.buf2.PutByte(byte(width))
+		for _, r := range refs {
+			w.buf2.PutBits(uint64(r-refs[0]), width)
+		}
+	case 3:
+		writeDeltaBlockPostings(&w.buf2, refs)
 	}
+
 	w.uint32s = refs
 
 	w.buf1.Reset()
@@ -1028,8 +1044,21 @@ type Decoder struct {
 func (dec *Decoder) Postings(b []byte) (int, Postings, error) {
 	d := encoding.Decbuf{B: b}
 	n := d.Be32int()
-	l := d.Get()
-	return n, newBigEndianPostings(l), d.Err()
+	switch postingsType {
+	case 1:
+		l := d.Get()
+		return n, newBigEndianPostings(l), d.Err()
+	case 2:
+		base := uint32(d.Uvarint())
+		width := int(d.Byte())
+		l := d.Get()
+		return n, newBaseDeltaPostings(l, base, width, n), d.Err()
+	case 3:
+		l := d.Get()
+		return n, newDeltaBlockPostings(l, n), d.Err()
+	default:
+		return n, EmptyPostings(), d.Err()
+	}
 }
 
 // Series decodes a series entry from the given byte slice into lset and chks.
