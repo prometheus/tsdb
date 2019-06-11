@@ -646,7 +646,7 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 	}
 
 	var (
-		set         ChunkSeriesSet
+		sets        = make([]ChunkSeriesSet, 0, len(blocks))
 		allSymbols  = make(map[string]struct{}, 1<<16)
 		closers     = []io.Closer{}
 		overlapping bool
@@ -711,16 +711,12 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 		}
 		all = indexr.SortedPostings(all)
 
-		s := newCompactionSeriesSet(indexr, chunkr, tombsr, all)
+		sets = append(sets, newCompactionSeriesSet(indexr, chunkr, tombsr, all))
+	}
 
-		if i == 0 {
-			set = s
-			continue
-		}
-		set, err = newCompactionMerger(set, s)
-		if err != nil {
-			return err
-		}
+	set, err := newCompactionMerger(sets...)
+	if err != nil {
+		return err
 	}
 
 	// We fully rebuild the postings list index from merged series.
@@ -916,90 +912,104 @@ func (c *compactionSeriesSet) At() (uint64, labels.Labels, []chunks.Meta, Interv
 }
 
 type compactionMerger struct {
-	a, b ChunkSeriesSet
+	sets  []ChunkSeriesSet
+	first bool
+	oks   []bool
+	// TODO(enhancement): If we can know number of series in each block, we can
+	// replace `map[uint64]uint64` with a slice.
+	seriesMap []map[uint64]uint64
 
-	aok, bok  bool
 	l         labels.Labels
 	c         []chunks.Meta
 	intervals Intervals
 	ref       uint64 // This is 1 based ref. Should return ref-1 for 0 based ref.
 }
 
-func newCompactionMerger(a, b ChunkSeriesSet) (*compactionMerger, error) {
+func newCompactionMerger(sets ...ChunkSeriesSet) (*compactionMerger, error) {
+	seriesMap := make([]map[uint64]uint64, len(sets))
+	for i := range seriesMap {
+		seriesMap[i] = make(map[uint64]uint64)
+	}
+
 	c := &compactionMerger{
-		a: a,
-		b: b,
+		sets:      sets,
+		oks:       make([]bool, len(sets)),
+		seriesMap: seriesMap,
+		first:     true,
 	}
-	// Initialize first elements of both sets as Next() needs
-	// one element look-ahead.
-	c.aok = c.a.Next()
-	c.bok = c.b.Next()
-
-	return c, c.Err()
-}
-
-func (c *compactionMerger) compare() int {
-	if !c.aok {
-		return 1
-	}
-	if !c.bok {
-		return -1
-	}
-	_, a, _, _ := c.a.At()
-	_, b, _, _ := c.b.At()
-	return labels.Compare(a, b)
+	return c, nil
 }
 
 func (c *compactionMerger) Next() bool {
-	if !c.aok && !c.bok || c.Err() != nil {
+	if c.first {
+		for i, s := range c.sets {
+			c.oks[i] = s.Next()
+		}
+		c.first = false
+	}
+	if c.Err() != nil {
 		return false
 	}
-	// While advancing child iterators the memory used for labels and chunks
-	// may be reused. When picking a series we have to store the result.
-	var lset labels.Labels
-	var chks []chunks.Meta
 
-	d := c.compare()
-	if d > 0 {
-		_, lset, chks, c.intervals = c.b.At()
-		c.l = append(c.l[:0], lset...)
-		c.c = append(c.c[:0], chks...)
-
-		c.bok = c.b.Next()
-	} else if d < 0 {
-		_, lset, chks, c.intervals = c.a.At()
-		c.l = append(c.l[:0], lset...)
-		c.c = append(c.c[:0], chks...)
-
-		c.aok = c.a.Next()
-	} else {
-		// Both sets contain the current series. Chain them into a single one.
-		_, l, ca, ra := c.a.At()
-		_, _, cb, rb := c.b.At()
-
-		for _, r := range rb {
-			ra = ra.add(r)
-		}
-
-		c.l = append(c.l[:0], l...)
-		c.c = append(append(c.c[:0], ca...), cb...)
-		c.intervals = ra
-
-		c.aok = c.a.Next()
-		c.bok = c.b.Next()
+	var nextExists bool
+	for _, ok := range c.oks {
+		nextExists = nextExists || ok
 	}
+	if !nextExists {
+		return false
+	}
+
+	ref, lset, chks, intervals := c.sets[0].At()
+	idx := 0
+
+	for i, s := range c.sets[1:] {
+		if !c.oks[1+i] {
+			continue
+		}
+		rf, lb, ch, itv := s.At()
+		if labels.Compare(lset, lb) > 0 {
+			ref, lset, chks, intervals = rf, lb, ch, itv
+			idx = i + 1
+		}
+	}
+
+	c.l = append(c.l[:0], lset...)
+	c.c = append(c.c[:0], chks...)
+	c.seriesMap[idx][ref] = c.ref
+	c.oks[idx] = c.sets[idx].Next()
+	for i, s := range c.sets[idx+1:] {
+		if !c.oks[idx+1+i] {
+			continue
+		}
+		rf, lb, ch, itv := s.At()
+		if labels.Compare(c.l, lb) == 0 {
+			c.seriesMap[idx+1+i][rf] = c.ref
+			c.c = append(c.c, ch...)
+			for _, r := range itv {
+				intervals.add(r)
+			}
+			c.oks[idx+1+i] = c.sets[idx+1+i].Next()
+		}
+	}
+	c.intervals = intervals
 
 	c.ref++
 	return true
 }
 
 func (c *compactionMerger) Err() error {
-	if c.a.Err() != nil {
-		return c.a.Err()
+	for _, s := range c.sets {
+		if s.Err() != nil {
+			return s.Err()
+		}
 	}
-	return c.b.Err()
+	return nil
 }
 
 func (c *compactionMerger) At() (uint64, labels.Labels, []chunks.Meta, Intervals) {
 	return c.ref - 1, c.l, c.c, c.intervals
+}
+
+func (c *compactionMerger) SeriesMap() []map[uint64]uint64 {
+	return c.seriesMap
 }
