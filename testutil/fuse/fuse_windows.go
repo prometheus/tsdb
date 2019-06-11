@@ -23,6 +23,4 @@ func (s *Server) CleanUp() {
 
 }
 
-type Hook interface{}
-
 type Server struct{}
