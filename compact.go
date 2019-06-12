@@ -853,7 +853,7 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 	postingBuf := make([]uint64, 0, 1<<16)
 	seriesMap := set.SeriesMap()
 	for _, k := range keys {
-		postingMap := make(map[uint64]struct{}) // TODO: can the map be reused?
+		postingBuf = postingBuf[:0]
 		for i, ir := range indexReaders {
 			p, err := ir.Postings(k.Name, k.Value)
 			if err != nil {
@@ -861,13 +861,15 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 			}
 			for p.Next() {
 				if newVal, ok := seriesMap[i][p.At()]; ok {
-					postingMap[newVal] = struct{}{}
+					// idx is the index at which newVal exists or index at which we need to insert.
+					idx := sort.Search(len(postingBuf), func(i int) bool { return postingBuf[i] >= newVal })
+					if idx == len(postingBuf) {
+						postingBuf = append(postingBuf, newVal)
+					} else if postingBuf[idx] != newVal {
+						postingBuf = append(postingBuf[:idx], append([]uint64{newVal}, postingBuf[idx:]...)...)
+					}
 				}
 			}
-		}
-		postingBuf = postingBuf[:0]
-		for p := range postingMap {
-			postingBuf = append(postingBuf, p)
 		}
 		if err := indexw.WritePostings(k.Name, k.Value, index.NewListPostings(postingBuf)); err != nil {
 			return errors.Wrap(err, "write postings")
