@@ -717,7 +717,7 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 		sets = append(sets, newCompactionSeriesSet(indexr, chunkr, tombsr, all))
 	}
 
-	set, err := newCompactionMerger(sets...)
+	set, err := newCompactionMerger(sets, blocks)
 	if err != nil {
 		return err
 	}
@@ -954,11 +954,9 @@ func (c *compactionSeriesSet) At() (uint64, labels.Labels, []chunks.Meta, Interv
 }
 
 type compactionMerger struct {
-	sets  []ChunkSeriesSet
-	first bool
-	oks   []bool
-	// TODO(enhancement): If we can know number of series in each block, we can
-	// replace `map[uint64]uint64` with a slice.
+	sets      []ChunkSeriesSet
+	first     bool
+	oks       []bool
 	seriesMap []map[uint64]uint64
 
 	l         labels.Labels
@@ -967,17 +965,19 @@ type compactionMerger struct {
 	ref       uint64 // This is 1 based ref. Should return ref-1 for 0 based ref.
 }
 
-func newCompactionMerger(sets ...ChunkSeriesSet) (*compactionMerger, error) {
-	seriesMap := make([]map[uint64]uint64, len(sets))
-	for i := range seriesMap {
-		seriesMap[i] = make(map[uint64]uint64)
-	}
-
+// newCompactionMerger returns a new compactionMerger.
+// i'th ChunkSeriesSet in 'sets' refer to i'th BlockReader in 'blocks'.
+// BlockReader is used to get number of series in each block for efficient
+// allocation of memory.
+func newCompactionMerger(sets []ChunkSeriesSet, blocks []BlockReader) (*compactionMerger, error) {
 	c := &compactionMerger{
-		sets:      sets,
-		oks:       make([]bool, len(sets)),
-		seriesMap: seriesMap,
-		first:     true,
+		sets:  sets,
+		oks:   make([]bool, len(sets)),
+		first: true,
+	}
+	c.seriesMap = make([]map[uint64]uint64, len(sets))
+	for i := range c.seriesMap {
+		c.seriesMap[i] = make(map[uint64]uint64, blocks[i].NumSeries())
 	}
 	return c, nil
 }
