@@ -1036,7 +1036,6 @@ func TestDeleteCompactionBlockAfterFailedReload(t *testing.T) {
 
 			// Create a block that will trigger the reload to fail.
 			blockPath := createBlock(t, db.Dir(), genSeries(1, 1, 200, 300))
-
 			lastBlockIndex := path.Join(blockPath, indexFilename)
 			actBlocks, err := blockDirs(db.Dir())
 			testutil.Ok(t, err)
