@@ -24,7 +24,6 @@ import (
 	"testing"
 
 	"github.com/pkg/errors"
-	prom_testutil "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/prometheus/tsdb/chunkenc"
 	"github.com/prometheus/tsdb/chunks"
 	"github.com/prometheus/tsdb/index"
@@ -1121,15 +1120,12 @@ func TestWalRepair(t *testing.T) {
 			}
 
 			// Open the db to trigger a repair.
-			// Also test the wal corruption metric is working as expected.
 			{
 				db, err := Open(dir, nil, nil, DefaultOptions)
 				testutil.Ok(t, err)
 				defer func() {
 					testutil.Ok(t, db.Close())
 				}()
-
-				testutil.Equals(t, 1.0, prom_testutil.ToFloat64(db.metrics.walCorruptionsTotal))
 			}
 
 			// Read the wal content after the repair.

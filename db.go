@@ -154,7 +154,6 @@ type dbMetrics struct {
 	tombCleanTimer       prometheus.Histogram
 	blocksBytes          prometheus.Gauge
 	sizeRetentionCount   prometheus.Counter
-	walCorruptionsTotal  prometheus.Counter
 }
 
 func newDBMetrics(db *DB, r prometheus.Registerer) *dbMetrics {
@@ -227,10 +226,6 @@ func newDBMetrics(db *DB, r prometheus.Registerer) *dbMetrics {
 	m.sizeRetentionCount = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "prometheus_tsdb_size_retentions_total",
 		Help: "The number of times that blocks were deleted because the maximum number of bytes was exceeded.",
-	})
-	m.walCorruptionsTotal = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "prometheus_tsdb_wal_corruptions_total",
-		Help: "Total number of WAL corruptions.",
 	})
 
 	if r != nil {
@@ -479,7 +474,7 @@ func Open(dir string, l log.Logger, r prometheus.Registerer, opts *Options) (db 
 
 	if initErr := db.head.Init(minValidTime); initErr != nil {
 		level.Warn(db.logger).Log("msg", "encountered WAL read error, attempting repair", "err", err)
-		if err := wlog.Repair(err); err != nil {
+		if err := wlog.Repair(initErr); err != nil {
 			return nil, errors.Wrap(err, "repair corrupted WAL")
 		}
 	}
