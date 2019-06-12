@@ -55,7 +55,6 @@ func TestSetCompactionFailed(t *testing.T) {
 	}()
 
 	blockDir := createBlock(t, tmpdir, genSeries(1, 1, 0, 0))
-
 	b, err := OpenBlock(nil, blockDir, nil)
 	testutil.Ok(t, err)
 	testutil.Equals(t, false, b.meta.Compaction.Failed)
@@ -75,7 +74,6 @@ func TestCreateBlock(t *testing.T) {
 	defer func() {
 		testutil.Ok(t, os.RemoveAll(tmpdir))
 	}()
-
 	b, err := OpenBlock(nil, createBlock(t, tmpdir, genSeries(1, 1, 0, 10)), nil)
 	if err == nil {
 		testutil.Ok(t, b.Close())
@@ -134,7 +132,6 @@ func TestCorruptedChunk(t *testing.T) {
 			}()
 
 			blockDir := createBlock(t, tmpdir, genSeries(1, 1, 0, 0))
-
 			files, err := sequenceFiles(chunkDir(blockDir))
 			testutil.Ok(t, err)
 			testutil.Assert(t, len(files) > 0, "No chunk created.")
