@@ -1523,7 +1523,6 @@ func BenchmarkQueryIterator(b *testing.B) {
 					} else {
 						generatedSeries = populateSeries(prefilledLabels, mint, maxt)
 					}
-
 					block, err := OpenBlock(nil, createBlock(b, dir, generatedSeries), nil)
 					testutil.Ok(b, err)
 					blocks = append(blocks, block)
@@ -1598,7 +1597,6 @@ func BenchmarkQuerySeek(b *testing.B) {
 					} else {
 						generatedSeries = populateSeries(prefilledLabels, mint, maxt)
 					}
-
 					block, err := OpenBlock(nil, createBlock(b, dir, generatedSeries), nil)
 					testutil.Ok(b, err)
 					blocks = append(blocks, block)
@@ -1744,7 +1742,6 @@ func BenchmarkSetMatcher(b *testing.B) {
 			} else {
 				generatedSeries = populateSeries(prefilledLabels, mint, maxt)
 			}
-
 			block, err := OpenBlock(nil, createBlock(b, dir, generatedSeries), nil)
 			testutil.Ok(b, err)
 			blocks = append(blocks, block)

@@ -213,8 +213,6 @@ type Server struct {
 }
 
 func NewServer(t *testing.T, original, mountpoint string, hook Hook) (*Server, error) {
-	os.Mkdir(original, os.ModePerm)
-	os.Mkdir(mountpoint, os.ModePerm)
 	fs, err := NewHookFs(original, mountpoint, hook)
 	if err != nil {
 		return nil, err

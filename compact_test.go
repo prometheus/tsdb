@@ -1064,8 +1064,11 @@ func TestDeleteCompactionBlockAfterFailedReload(t *testing.T) {
 
 func TestOpenBlockWithHook(t *testing.T) {
 	//init action
-	original := filepath.Join(string(filepath.Separator), "tmp", fmt.Sprintf("dev-%d", time.Now().Unix()))
-	mountpoint := filepath.Join(string(filepath.Separator), "tmp", fmt.Sprintf("mountpoint-%d", time.Now().Unix()))
+	original, err := ioutil.TempDir("", fmt.Sprintf("dev-%d", time.Now().Unix()))
+	testutil.Ok(t, err)
+	mountpoint, err := ioutil.TempDir("", fmt.Sprintf("mountpoint-%d", time.Now().Unix()))
+	testutil.Ok(t, err)
+
 	//create block will be successful because hook server does not start
 	_, file := filepath.Split(createBlock(t, original, genSeries(1, 1, 200, 300)))
 	server, err := fuse.NewServer(t, original, mountpoint, fuse.Hook(fuse.TestRenameHook{}))
