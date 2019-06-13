@@ -1,6 +1,6 @@
 ## master / unreleased
  - [FEATURE] Added `DBReadOnly` to allow opening a database in read only mode.
-    - As part if this also added the `BlockReadOnly` interface to implement this new feature.
+    - `BlockReader` interface is refactored to return the full block meta instead of just MinTime/MaxTime.
 
 ## 0.8.0
  - [BUGFIX] Calling `Close` more than once on a querier returns an error instead of a panic.

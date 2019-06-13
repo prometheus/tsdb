@@ -25,6 +25,7 @@ import (
 
 	"github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/log/level"
+	"github.com/oklog/ulid"
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/tsdb/chunkenc"
@@ -533,10 +534,9 @@ func (h *Head) Init(minValidTime int64) error {
 		if err := sr.Close(); err != nil {
 			level.Warn(h.logger).Log("msg", "error while closing the wal segments reader", "err", err)
 		}
-		if err == nil {
-			continue
+		if err != nil {
+			return err
 		}
-		return err
 	}
 
 	return nil
@@ -685,6 +685,14 @@ func (h *rangeHead) MinTime() int64 {
 
 func (h *rangeHead) MaxTime() int64 {
 	return h.maxt
+}
+
+func (h *rangeHead) Meta() BlockMeta {
+	return BlockMeta{
+		MinTime: h.MinTime(),
+		MaxTime: h.MaxTime(),
+		ULID:    h.head.Meta().ULID,
+	}
 }
 
 // initAppender is a helper to initialize the time bounds of the head
@@ -1088,6 +1096,17 @@ func (h *Head) chunksRange(mint, maxt int64) *headChunkReader {
 		mint = hmin
 	}
 	return &headChunkReader{head: h, mint: mint, maxt: maxt}
+}
+
+// Meta returns meta information about the head.
+func (h *Head) Meta() BlockMeta {
+	var id [16]byte
+	copy(id[:], "______head______")
+	return BlockMeta{
+		MinTime: h.MinTime(),
+		MaxTime: h.MaxTime(),
+		ULID:    ulid.ULID(id),
+	}
 }
 
 // MinTime returns the lowest time bound on visible data in the head.

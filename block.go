@@ -138,11 +138,8 @@ type BlockReader interface {
 	// Tombstones returns a TombstoneReader over the block's deleted data.
 	Tombstones() (TombstoneReader, error)
 
-	// MinTime returns the min time of the block.
-	MinTime() int64
-
-	// MaxTime returns the max time of the block.
-	MaxTime() int64
+	// Meta provides meta information about the block reader.
+	Meta() BlockMeta
 }
 
 // Appendable defines an entity to which data can be appended.
@@ -155,24 +152,6 @@ type Appendable interface {
 type SizeReader interface {
 	// Size returns the size in bytes.
 	Size() int64
-}
-
-// BlockReadOnly is a block with a read only API.
-type BlockReadOnly interface {
-	Close() error
-	String() string
-	Dir() string
-	Meta() BlockMeta
-	MinTime() int64
-	MaxTime() int64
-	Size() int64
-	Index() (IndexReader, error)
-	Chunks() (ChunkReader, error)
-	Tombstones() (TombstoneReader, error)
-	GetSymbolTableSize() uint64
-	Snapshot(dir string) error
-	OverlapsClosedInterval(mint, maxt int64) bool
-	LabelNames() ([]string, error)
 }
 
 // BlockMeta provides meta information about a block.

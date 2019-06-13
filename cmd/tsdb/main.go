@@ -74,6 +74,12 @@ func main() {
 		if err != nil {
 			exitWithError(err)
 		}
+		defer func() {
+			err := db.Close()
+			if err != nil {
+				exitWithError(err)
+			}
+		}()
 		blocks, err := db.Blocks()
 		if err != nil {
 			exitWithError(err)
@@ -84,11 +90,17 @@ func main() {
 		if err != nil {
 			exitWithError(err)
 		}
+		defer func() {
+			err := db.Close()
+			if err != nil {
+				exitWithError(err)
+			}
+		}()
 		blocks, err := db.Blocks()
 		if err != nil {
 			exitWithError(err)
 		}
-		var block tsdb.BlockReadOnly
+		var block tsdb.BlockReader
 		if *analyzeBlockID != "" {
 			for _, b := range blocks {
 				if b.Meta().ULID.String() == *analyzeBlockID {
@@ -108,6 +120,12 @@ func main() {
 		if err != nil {
 			exitWithError(err)
 		}
+		defer func() {
+			err := db.Close()
+			if err != nil {
+				exitWithError(err)
+			}
+		}()
 		dumpSamples(db, *dumpMinTime, *dumpMaxTime)
 	}
 }
@@ -394,7 +412,7 @@ func exitWithError(err error) {
 	os.Exit(1)
 }
 
-func printBlocks(blocks []tsdb.BlockReadOnly, humanReadable *bool) {
+func printBlocks(blocks []tsdb.BlockReader, humanReadable *bool) {
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	defer tw.Flush()
 
@@ -421,9 +439,9 @@ func getFormatedTime(timestamp int64, humanReadable *bool) string {
 	return strconv.FormatInt(timestamp, 10)
 }
 
-func analyzeBlock(b tsdb.BlockReadOnly, limit int) {
-	fmt.Printf("Block path: %s\n", b.Dir())
+func analyzeBlock(b tsdb.BlockReader, limit int) {
 	meta := b.Meta()
+	fmt.Printf("Block ID: %s\n", meta.ULID)
 	// Presume 1ms resolution that Prometheus uses.
 	fmt.Printf("Duration: %s\n", (time.Duration(meta.MaxTime-meta.MinTime) * 1e6).String())
 	fmt.Printf("Series: %d\n", meta.Stats.NumSeries)
@@ -555,6 +573,12 @@ func dumpSamples(db *tsdb.DBReadOnly, mint, maxt int64) {
 	if err != nil {
 		exitWithError(err)
 	}
+	defer func() {
+		err := q.Close()
+		if err != nil {
+			exitWithError(err)
+		}
+	}()
 
 	ss, err := q.Select(labels.NewMustRegexpMatcher("", ".*"))
 	if err != nil {

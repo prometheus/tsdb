@@ -2266,12 +2266,7 @@ func TestDBReadOnly(t *testing.T) {
 		testutil.Equals(t, len(expBlocks), len(blocks))
 
 		for i, expBlock := range expBlocks {
-			testutil.Equals(t, expBlock.String(), blocks[i].String(), "block string mismatch")
-			testutil.Equals(t, expBlock.Size(), blocks[i].Size(), "block size mismatch")
 			testutil.Equals(t, expBlock.Meta(), blocks[i].Meta(), "block meta mismatch")
-			testutil.Equals(t, expBlock.Dir(), blocks[i].Dir(), "block dir mismatch")
-			testutil.Equals(t, expBlock.MinTime(), blocks[i].MinTime(), "block MinTime mismatch")
-			testutil.Equals(t, expBlock.MaxTime(), blocks[i].MaxTime(), "block MaxTime mismatch")
 		}
 
 		q, err := dbReadOnly.Querier(math.MinInt64, math.MaxInt64)

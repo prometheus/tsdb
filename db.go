@@ -248,11 +248,11 @@ func newDBMetrics(db *DB, r prometheus.Registerer) *dbMetrics {
 
 // DBReadOnly provides APIs for read only operations on a database.
 type DBReadOnly struct {
-	logger log.Logger
-	dir    string
-	blocks []BlockReadOnly // Keep all open blocks in the cache to close them at db.Close.
-	mtx    sync.Mutex
-	closed bool
+	logger  log.Logger
+	dir     string
+	closers []io.Closer
+	mtx     sync.Mutex
+	closed  bool
 }
 
 // OpenDBReadOnly opens DB in the given directory for read only operations.
@@ -276,22 +276,12 @@ func OpenDBReadOnly(dir string, l log.Logger) (*DBReadOnly, error) {
 // Querier loads the wal and returns a new querier over the data partition for the given time range.
 // A goroutine must not handle more than one open Querier.
 func (db *DBReadOnly) Querier(mint, maxt int64) (Querier, error) {
-	w, err := wal.NewReadOnly(db.logger, nil, filepath.Join(db.dir, "wal"))
+	blocksReaders, err := db.Blocks()
 	if err != nil {
 		return nil, err
 	}
-	head, err := NewHead(nil, db.logger, w, 1)
-	if err != nil {
-		return nil, err
-	}
-
-	blocksReadOnly, err := db.Blocks()
-	if err != nil {
-		return nil, err
-	}
-
-	blocks := make([]*Block, len(blocksReadOnly))
-	for i, b := range blocksReadOnly {
+	blocks := make([]*Block, len(blocksReaders))
+	for i, b := range blocksReaders {
 		b, ok := b.(*Block)
 		if !ok {
 			return nil, errors.New("unable to convert a read only block to a normal block")
@@ -299,29 +289,45 @@ func (db *DBReadOnly) Querier(mint, maxt int64) (Querier, error) {
 		blocks[i] = b
 	}
 
+	var head *Head
+	maxBlockTime := int64(math.MinInt64)
+	if len(blocks) > 0 {
+		maxBlockTime = blocks[len(blocks)-1].Meta().MaxTime
+	}
+
+	// Also add the WAL if the current blocks don't cover the requestes time range.
+	if maxBlockTime <= maxt {
+		w, err := wal.NewReadOnly(db.logger, nil, filepath.Join(db.dir, "wal"))
+		if err != nil {
+			return nil, err
+		}
+		head, err = NewHead(nil, db.logger, w, 1)
+		if err != nil {
+			return nil, err
+		}
+		// Set the min valid time for the ingested wal samples
+		// to be no lower than the maxt of the last block.
+		if err := head.Init(maxBlockTime); err != nil {
+			return nil, errors.Wrap(err, "read WAL")
+		}
+
+		db.mtx.Lock()
+		db.closers = append(db.closers, head)
+		db.mtx.Unlock()
+	}
+
 	dbWritable := &DB{
 		dir:    db.dir,
 		logger: db.logger,
-		head:   head,
 		blocks: blocks,
-	}
-
-	// Set the min valid time for the ingested wal samples
-	// to be no lower than the maxt of the last block.
-	minValidTime := int64(math.MinInt64)
-	if len(blocks) > 0 {
-		minValidTime = blocks[len(blocks)-1].Meta().MaxTime
-	}
-
-	if err := dbWritable.head.Init(minValidTime); err != nil {
-		return nil, errors.Wrap(err, "read WAL")
+		head:   head,
 	}
 
 	return dbWritable.Querier(mint, maxt)
 }
 
 // Blocks returns all persisted blocks.
-func (db *DBReadOnly) Blocks() ([]BlockReadOnly, error) {
+func (db *DBReadOnly) Blocks() ([]BlockReader, error) {
 	loadable, corrupted, err := openBlocks(db.logger, db.dir, nil, nil)
 	if err != nil {
 		return nil, err
@@ -360,18 +366,20 @@ func (db *DBReadOnly) Blocks() ([]BlockReadOnly, error) {
 
 	db.mtx.Lock()
 	defer db.mtx.Unlock()
-	// Close all previously open blocks and add the new ones to the catche.
-	for _, b := range db.blocks {
-		b.Close()
+	// Close all previously open readers and add the new ones to the cache.
+	for _, closer := range db.closers {
+		closer.Close()
 	}
 
-	blocks := make([]BlockReadOnly, len(loadable))
+	blockClosers := make([]io.Closer, len(loadable))
+	blockReaders := make([]BlockReader, len(loadable))
 	for i, b := range loadable {
-		blocks[i] = b
+		blockClosers[i] = b
+		blockReaders[i] = b
 	}
-	db.blocks = blocks
+	db.closers = blockClosers
 
-	return blocks, nil
+	return blockReaders, nil
 }
 
 // Close all db blocks to release the locks.
@@ -383,7 +391,7 @@ func (db *DBReadOnly) Close() error {
 
 	db.mtx.Lock()
 	defer db.mtx.Unlock()
-	for _, b := range db.blocks {
+	for _, b := range db.closers {
 		merr.Add(b.Close())
 	}
 	db.closed = true
