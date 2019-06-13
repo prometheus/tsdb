@@ -267,11 +267,11 @@ func (s *Server) forceMount() (err error) {
 }
 
 var (
-	flag = getFalgByPlaform()
+	flag = getFlagByPlaform()
 )
 
 // Unmount has different arguments for different platform
-func getFalgByPlaform() int{
+func getFlagByPlaform() int{
 	if runtime.GOOS == "darwin" {
 		return -1;
 	}
