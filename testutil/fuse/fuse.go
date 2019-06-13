@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"syscall"
 	"testing"
 	"time"
@@ -223,6 +224,7 @@ func NewServer(t *testing.T, original, mountpoint string, hook Hook) (*Server, e
 		return nil, err
 	}
 
+	server.KernelSettings().Unique = 17
 	//async start fuse server, and it will be stopped when calling syscall.Unmount
 	go func() {
 		fs.Start(server)
@@ -246,11 +248,10 @@ func (s *Server) CleanUp() {
 	os.RemoveAll(s.original)
 }
 
-// forceMount calls unmount -f on the mount.
 func (s *Server) forceMount() (err error) {
 	delay := time.Duration(0)
 	for try := 0; try < 5; try++ {
-		err = syscall.Unmount(s.mountpoint, 0x1)
+		err = syscall.Unmount(s.mountpoint,  flag)
 		if err == nil {
 			break
 		}
@@ -258,9 +259,22 @@ func (s *Server) forceMount() (err error) {
 		// Sleep for a bit. This is not pretty, but there is
 		// no way we can be certain that the kernel thinks all
 		// open files have already been closed.
-		delay = 2*delay + 5*time.Millisecond
+		delay = 2*delay + 10*time.Millisecond
 		time.Sleep(delay)
 	}
 
 	return err
+}
+
+var (
+	flag = getFalgByPlaform()
+)
+
+// Unmount has different arguments for different platform
+func getFalgByPlaform() int{
+	if runtime.GOOS == "darwin" {
+		return -1;
+	}
+
+	return 0x1
 }
