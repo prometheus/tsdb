@@ -692,8 +692,8 @@ func (it *bigEndianPostings) Err() error {
 	return nil
 }
 
-// 1 is bigEndian, 2 is baseDelta, 3 is deltaBlock.
-const postingsType = 3
+// 1 is bigEndian, 2 is baseDelta, 3 is deltaBlock, 4 is baseDeltaBlock.
+const postingsType = 4
 
 type bitSlice struct {
 	bstream []byte
@@ -778,8 +778,9 @@ func (it *baseDeltaPostings) Seek(x uint64) bool {
 
 	num := it.size - it.idx
 	// Do binary search between current position and end.
+	x -= uint64(it.base)
 	i := sort.Search(num, func(i int) bool {
-		return it.bs.readBits((i+it.idx)*it.bs.width) + uint64(it.base) >= x
+		return it.bs.readBits((i+it.idx)*it.bs.width) >= x
 	})
 	if i < num {
 		it.cur = it.bs.readBits((i+it.idx)*it.bs.width) + uint64(it.base)
@@ -794,14 +795,14 @@ func (it *baseDeltaPostings) Err() error {
 	return nil
 }
 
-const deltaBlockSize = 256
+const deltaBlockSize = 128
 
 // Block format(delta is to the previous value).
-// ┌────────────────┬───────────────┬────────────┬────────────────┬─────┬────────────────┐
-// │ base <uvarint> │ idx <uvarint> │ width <1b> │ delta 1 <bits> │ ... │ delta n <bits> │
-// └────────────────┴───────────────┴────────────┴────────────────┴─────┴────────────────┘
+// ┌────────────────┬───────────────┬─────────────────┬────────────┬────────────────┬─────┬────────────────┐
+// │ base <uvarint> │ idx <uvarint> │ count <uvarint> │ width <1b> │ delta 1 <bits> │ ... │ delta n <bits> │
+// └────────────────┴───────────────┴─────────────────┴────────────┴────────────────┴─────┴────────────────┘
 type deltaBlockPostings struct {
-	bs bitSlice
+	bs       bitSlice
 	size     int
 	count    int // count in current block.
 	idxBlock int
@@ -826,29 +827,29 @@ func (it *deltaBlockPostings) At() uint64 {
 }
 
 func (it *deltaBlockPostings) Next() bool {
-	if it.offset >= len(it.bs.bstream) * 8 || it.idx >= it.size {
+	if it.offset >= len(it.bs.bstream) << 3 || it.idx >= it.size {
 		return false
 	}
-	if it.offset % (deltaBlockSize * 8) == 0 {
-		val, n := binary.Uvarint(it.bs.bstream[it.offset/8:])
+	if it.offset % (deltaBlockSize << 3) == 0 {
+		val, n := binary.Uvarint(it.bs.bstream[it.offset>>3:])
 		if n < 1 {
 			return false
 		}
 		it.cur = val
-		it.offset += n * 8
-		val, n = binary.Uvarint(it.bs.bstream[it.offset/8:])
+		it.offset += n << 3
+		val, n = binary.Uvarint(it.bs.bstream[it.offset>>3:])
 		if n < 1 {
 			return false
 		}
 		it.idx = int(val) + 1
-		it.offset += n * 8
-		val, n = binary.Uvarint(it.bs.bstream[it.offset/8:])
+		it.offset += n << 3
+		val, n = binary.Uvarint(it.bs.bstream[it.offset>>3:])
 		if n < 1 {
 			return false
 		}
 		it.count = int(val)
-		it.offset += n * 8
-		it.bs.width = int(it.bs.bstream[it.offset/8])
+		it.offset += n << 3
+		it.bs.width = int(it.bs.bstream[it.offset>>3])
 		it.offset += 8
 		it.idxBlock = 1
 		return true
@@ -859,7 +860,7 @@ func (it *deltaBlockPostings) Next() bool {
 	it.idx += 1
 	it.idxBlock += 1
 	if it.idxBlock == it.count {
-		it.offset = ((it.offset-1) / (deltaBlockSize * 8) + 1) * deltaBlockSize * 8
+		it.offset = ((it.offset-1) / (deltaBlockSize << 3) + 1) * deltaBlockSize << 3
 	}
 	return true
 }
@@ -869,8 +870,8 @@ func (it *deltaBlockPostings) Seek(x uint64) bool {
 		return true
 	}
 
-	startOff := it.offset / (deltaBlockSize * 8) * deltaBlockSize
-	num := len(it.bs.bstream) / deltaBlockSize - it.offset / (deltaBlockSize * 8)
+	startOff := (it.offset - 1) / (deltaBlockSize << 3) * deltaBlockSize
+	num := (len(it.bs.bstream) - 1) / deltaBlockSize - (it.offset - 1) / (deltaBlockSize << 3) + 1
 	// Do binary search between current position and end.
 	i := sort.Search(num, func(i int) bool {
 		val, _ := binary.Uvarint(it.bs.bstream[startOff+i*deltaBlockSize:])
@@ -881,7 +882,7 @@ func (it *deltaBlockPostings) Seek(x uint64) bool {
 		// may contain the first value >= x.
 		i -= 1
 	}
-	it.offset = (startOff + i * deltaBlockSize) * 8
+	it.offset = (startOff + i * deltaBlockSize) << 3
 	for it.Next() {
 		if it.At() >= x {
 			return true
@@ -897,21 +898,25 @@ func (it *deltaBlockPostings) Err() error {
 func writeDeltaBlockPostings(e *encoding.Encbuf, arr []uint32) {
 	i := 0
 	startLen := len(e.B)
+	deltas := []uint32{}
+	var remaining int
+	var preVal uint32
+	var max int
 	for i < len(arr) {
 		e.PutUvarint32(arr[i]) // Put base.
 		e.PutUvarint64(uint64(i)) // Put idx.
-		remaining := (deltaBlockSize - (len(e.B) - startLen) % deltaBlockSize - 1) * 8
-		deltas := []uint64{}
-		preVal := arr[i]
-		max := -1
+		remaining = (deltaBlockSize - (len(e.B) - startLen) % deltaBlockSize - 1) << 3
+		deltas = deltas[:0]
+		preVal = arr[i]
+		max = -1
 		i += 1
 		for i < len(arr) {
-			delta := uint64(arr[i] - preVal)
-			cur := bits.Len64(delta)
+			delta := arr[i] - preVal
+			cur := bits.Len32(delta)
 			if cur <= max {
 				cur = max
 			}
-			if remaining - cur * (len(deltas) + 1) - (bits.Len(uint(len(deltas))) / 8 + 1) * 8 >= 0 {
+			if remaining - cur * (len(deltas) + 1) - (((bits.Len(uint(len(deltas))) >> 3) + 1) << 3) >= 0 {
 				deltas = append(deltas, delta)
 				max = cur
 				preVal = arr[i]
@@ -922,9 +927,182 @@ func writeDeltaBlockPostings(e *encoding.Encbuf, arr []uint32) {
 		}
 		e.PutUvarint64(uint64(len(deltas) + 1))
 		e.PutByte(byte(max))
-		remaining -= (bits.Len(uint(len(deltas))) / 8 + 1) * 8
+		remaining -= ((bits.Len(uint(len(deltas))) >> 3) + 1) << 3
 		for _, delta := range deltas {
-			e.PutBits(delta, max)
+			e.PutBits(uint64(delta), max)
+			remaining -= max
+		}
+
+		if i == len(arr) {
+			break
+		}
+
+		for remaining >= 64 {
+			e.PutBits(uint64(0), 64)
+			remaining -= 64
+		}
+
+		if remaining > 0 {
+			e.PutBits(uint64(0), remaining)
+		}
+		e.Count = 0
+		
+		// There can be one more extra 0.
+		e.B = e.B[:len(e.B)-(len(e.B)-startLen)%deltaBlockSize]
+	}
+}
+
+// Block format(delta is to the base).
+// ┌────────────────┬───────────────┬─────────────────┬────────────┬────────────────┬─────┬────────────────┐
+// │ base <uvarint> │ idx <uvarint> │ count <uvarint> │ width <1b> │ delta 1 <bits> │ ... │ delta n <bits> │
+// └────────────────┴───────────────┴─────────────────┴────────────┴────────────────┴─────┴────────────────┘
+type baseDeltaBlockPostings struct {
+	bs       bitSlice
+	size     int
+	count    int // count in current block.
+	idxBlock int
+	idx      int
+	offset   int // offset in bit.
+	cur      uint64
+	base     uint64
+}
+
+func newBaseDeltaBlockPostings(bstream []byte, size int) *baseDeltaBlockPostings {
+	return &baseDeltaBlockPostings{bs: bitSlice{bstream: bstream}, size: size}
+}
+
+func (it *baseDeltaBlockPostings) GetOff() int {
+	return it.offset
+}
+func (it *baseDeltaBlockPostings) GetWidth() int {
+	return it.bs.width
+}
+
+func (it *baseDeltaBlockPostings) At() uint64 {
+	return it.cur
+}
+
+func (it *baseDeltaBlockPostings) Next() bool {
+	if it.offset >= len(it.bs.bstream) << 3 || it.idx >= it.size {
+		return false
+	}
+	if it.offset % (deltaBlockSize << 3) == 0 {
+		val, n := binary.Uvarint(it.bs.bstream[it.offset>>3:])
+		if n < 1 {
+			return false
+		}
+		it.cur = val
+		it.base = val
+		it.offset += n << 3
+		val, n = binary.Uvarint(it.bs.bstream[it.offset>>3:])
+		if n < 1 {
+			return false
+		}
+		it.idx = int(val) + 1
+		it.offset += n << 3
+		val, n = binary.Uvarint(it.bs.bstream[it.offset>>3:])
+		if n < 1 {
+			return false
+		}
+		it.count = int(val)
+		it.offset += n << 3
+		it.bs.width = int(it.bs.bstream[it.offset>>3])
+		it.offset += 8
+		it.idxBlock = 1
+		return true
+	}
+	
+	it.cur = it.bs.readBits(it.offset) + it.base
+	it.offset += it.bs.width
+	it.idx += 1
+	it.idxBlock += 1
+	if it.idxBlock == it.count {
+		it.offset = ((it.offset-1) / (deltaBlockSize << 3) + 1) * deltaBlockSize << 3
+	}
+	return true
+}
+
+func (it *baseDeltaBlockPostings) Seek(x uint64) bool {
+	if it.cur >= x {
+		return true
+	}
+
+	startOff := (it.offset - 1) / (deltaBlockSize << 3) * deltaBlockSize
+	num := (len(it.bs.bstream) - 1) / deltaBlockSize - (it.offset - 1) / (deltaBlockSize << 3) + 1
+	// Do binary search between current position and end.
+	i := sort.Search(num, func(i int) bool {
+		val, _ := binary.Uvarint(it.bs.bstream[startOff+i*deltaBlockSize:])
+		return val > x
+	})
+	if i > 0 {
+		// Go to the previous block because the previous block 
+		// may contain the first value >= x.
+		i -= 1
+	}
+	it.offset = (startOff + i * deltaBlockSize) << 3
+	
+	// Read base, idx, and width.
+	it.Next()
+	if x <= it.base {
+		return true
+	} else {
+		temp := x - it.base
+		j := sort.Search(it.count - it.idxBlock, func(i int) bool {
+			return it.bs.readBits(it.offset + i * it.bs.width) >= temp
+		})
+
+		if j < it.count - it.idxBlock {
+			it.offset += j * it.bs.width
+			it.cur = it.bs.readBits(it.offset) + it.base
+			it.offset += it.bs.width
+			it.idxBlock += j + 1
+			it.idx += j + 1
+			if it.idxBlock == it.count {
+				it.offset = ((it.offset-1) / (deltaBlockSize << 3) + 1) * deltaBlockSize << 3
+			}
+		} else {
+			it.offset = (startOff + (i + 1) * deltaBlockSize) << 3
+			return it.Next()
+		}
+		return true
+	}
+}
+
+func (it *baseDeltaBlockPostings) Err() error {
+	return nil
+}
+
+func writeBaseDeltaBlockPostings(e *encoding.Encbuf, arr []uint32) {
+	i := 0
+	startLen := len(e.B)
+	deltas := []uint32{}
+	var remaining int
+	var base uint32
+	var max int
+	for i < len(arr) {
+		e.PutUvarint32(arr[i]) // Put base.
+		e.PutUvarint64(uint64(i)) // Put idx.
+		remaining = (deltaBlockSize - (len(e.B) - startLen) % deltaBlockSize - 1) << 3
+		deltas = deltas[:0]
+		base = arr[i]
+		max = -1
+		i += 1
+		for i < len(arr) {
+			delta := arr[i] - base
+			cur := bits.Len32(delta)
+			if remaining - cur * (len(deltas) + 1) - (((bits.Len(uint(len(deltas))) >> 3) + 1) << 3) >= 0 {
+				deltas = append(deltas, delta)
+				max = cur
+			} else {
+				break
+			}
+			i += 1
+		}
+		e.PutUvarint64(uint64(len(deltas) + 1))
+		e.PutByte(byte(max))
+		remaining -= ((bits.Len(uint(len(deltas))) >> 3) + 1) << 3
+		for _, delta := range deltas {
+			e.PutBits(uint64(delta), max)
 			remaining -= max
 		}
 

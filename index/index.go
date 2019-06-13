@@ -539,6 +539,8 @@ func (w *Writer) WritePostings(name, value string, it Postings) error {
 		}
 	case 3:
 		writeDeltaBlockPostings(&w.buf2, refs)
+	case 4:
+		writeBaseDeltaBlockPostings(&w.buf2, refs)
 	}
 
 	w.uint32s = refs
@@ -1056,6 +1058,9 @@ func (dec *Decoder) Postings(b []byte) (int, Postings, error) {
 	case 3:
 		l := d.Get()
 		return n, newDeltaBlockPostings(l, n), d.Err()
+	case 4:
+		l := d.Get()
+		return n, newBaseDeltaBlockPostings(l, n), d.Err()
 	default:
 		return n, EmptyPostings(), d.Err()
 	}
