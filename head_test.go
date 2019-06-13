@@ -34,7 +34,11 @@ import (
 )
 
 func BenchmarkCreateSeries(b *testing.B) {
-	lbls, err := labels.ReadLabels(filepath.Join("testdata", "20kseries.json"), b.N)
+	n := b.N
+	if n > 20000 {
+		n = 20000
+	}
+	lbls, err := labels.ReadLabels(filepath.Join("testdata", "20kseries.json"), n)
 	testutil.Ok(b, err)
 
 	h, err := NewHead(nil, nil, nil, 10000)
