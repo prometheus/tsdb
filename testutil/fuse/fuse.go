@@ -224,7 +224,6 @@ func NewServer(t *testing.T, original, mountpoint string, hook Hook) (*Server, e
 		return nil, err
 	}
 
-	server.KernelSettings().Unique = 17
 	//async start fuse server, and it will be stopped when calling syscall.Unmount
 	go func() {
 		fs.Start(server)
@@ -251,7 +250,7 @@ func (s *Server) CleanUp() {
 func (s *Server) forceMount() (err error) {
 	delay := time.Duration(0)
 	for try := 0; try < 5; try++ {
-		err = syscall.Unmount(s.mountpoint,  flag)
+		err = syscall.Unmount(s.mountpoint, flag)
 		if err == nil {
 			break
 		}
@@ -271,9 +270,9 @@ var (
 )
 
 // Unmount has different arguments for different platform
-func getFlagByPlaform() int{
+func getFlagByPlaform() int {
 	if runtime.GOOS == "darwin" {
-		return -1;
+		return -1
 	}
 
 	return 0x1
