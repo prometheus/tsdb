@@ -236,9 +236,31 @@ func NewServer(t *testing.T, original, mountpoint string, hook Hook) (*Server, e
 }
 
 func (s *Server) CleanUp() {
-	s.server.Unmount()
-	syscall.Unmount(s.mountpoint, -1)
+	if err := s.server.Unmount(); err != nil {
+		if err = s.forceMount(); err != nil {
+			fmt.Println("Umount failed", fmt.Sprintf("mountpoint=%s, err=%v", s.mountpoint, err))
+		}
+	}
 
 	os.RemoveAll(s.mountpoint)
 	os.RemoveAll(s.original)
+}
+
+// forceMount calls unmount -f on the mount.
+func (s *Server) forceMount() (err error) {
+	delay := time.Duration(0)
+	for try := 0; try < 5; try++ {
+		err = syscall.Unmount(s.mountpoint, 0x1)
+		if err == nil {
+			break
+		}
+
+		// Sleep for a bit. This is not pretty, but there is
+		// no way we can be certain that the kernel thinks all
+		// open files have already been closed.
+		delay = 2*delay + 5*time.Millisecond
+		time.Sleep(delay)
+	}
+
+	return err
 }
