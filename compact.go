@@ -22,7 +22,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/go-kit/kit/log"
@@ -827,51 +826,59 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 		numLabelValues += len(v)
 	}
 
-	keys := make([]labels.Label, 0, numLabelValues+1)
 	apkName, apkValue := index.AllPostingsKey()
-	keys = append(keys, labels.Label{Name: apkName, Value: apkValue})
+	names := make([]string, 0, len(values)+1)
+	names = append(names, apkName)
+
 	for n, v := range values {
 		s = s[:0]
+		names = append(names, n)
 
 		for x := range v {
 			s = append(s, x)
-			keys = append(keys, labels.Label{Name: n, Value: x})
 		}
 		if err := indexw.WriteLabelIndex([]string{n}, s); err != nil {
 			return errors.Wrap(err, "write label index")
 		}
 	}
 
-	sort.Slice(keys, func(i, j int) bool {
-		if d := strings.Compare(keys[i].Name, keys[j].Name); d != 0 {
-			return d < 0
-		}
-		return keys[i].Value < keys[j].Value
-	})
+	sort.Strings(names)
 
 	postingBuf := make([]uint64, 0, 1000000)
 	seriesMap := set.SeriesMap()
-	for _, k := range keys {
-		postingBuf = postingBuf[:0]
-		for i, ir := range indexReaders {
-			p, err := ir.Postings(k.Name, k.Value)
-			if err != nil {
-				return errors.Wrap(err, "read postings")
+	for _, n := range names {
+		s = s[:0]
+		if n == apkName {
+			s = append(s, apkValue)
+		} else {
+			for v := range values[n] {
+				s = append(s, v)
 			}
-			for p.Next() {
-				if newVal, ok := seriesMap[i][p.At()]; ok {
-					// idx is the index at which newVal exists or index at which we need to insert.
-					idx := sort.Search(len(postingBuf), func(i int) bool { return postingBuf[i] >= newVal })
-					if idx == len(postingBuf) {
-						postingBuf = append(postingBuf, newVal)
-					} else if postingBuf[idx] != newVal {
-						postingBuf = append(postingBuf[:idx], append([]uint64{newVal}, postingBuf[idx:]...)...)
+			sort.Strings(s)
+		}
+
+		for _, v := range s {
+			postingBuf = postingBuf[:0]
+			for i, ir := range indexReaders {
+				p, err := ir.Postings(n, v)
+				if err != nil {
+					return errors.Wrap(err, "read postings")
+				}
+				for p.Next() {
+					if newVal, ok := seriesMap[i][p.At()]; ok {
+						// idx is the index at which newVal exists or index at which we need to insert.
+						idx := sort.Search(len(postingBuf), func(i int) bool { return postingBuf[i] >= newVal })
+						if idx == len(postingBuf) {
+							postingBuf = append(postingBuf, newVal)
+						} else if postingBuf[idx] != newVal {
+							postingBuf = append(postingBuf[:idx], append([]uint64{newVal}, postingBuf[idx:]...)...)
+						}
 					}
 				}
 			}
-		}
-		if err := indexw.WritePostings(k.Name, k.Value, index.NewListPostings(postingBuf)); err != nil {
-			return errors.Wrap(err, "write postings")
+			if err := indexw.WritePostings(n, v, index.NewListPostings(postingBuf)); err != nil {
+				return errors.Wrap(err, "write postings")
+			}
 		}
 	}
 
