@@ -819,14 +819,21 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 		return nil
 	}
 
-	s := make([]string, 0, 256)
-
-	apkName, apkValue := index.AllPostingsKey()
-	names := make([]string, 0, len(values)+1)
-	names = append(names, apkName)
-	var numLabelValues int
-	for n, v := range values {
+	var (
+		maxNumValues      int
+		numLabelValues    int
+		apkName, apkValue = index.AllPostingsKey()
+		names             = make([]string, 0, len(values)+1)
+	)
+	for _, v := range values {
 		numLabelValues += len(v)
+		if len(v) > maxNumValues {
+			maxNumValues = len(v)
+		}
+	}
+
+	s := make([]string, 0, maxNumValues)
+	for n, v := range values {
 		s = s[:0]
 		names = append(names, n)
 
@@ -837,6 +844,7 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 			return errors.Wrap(err, "write label index")
 		}
 	}
+	names = append(names, apkName)
 	sort.Strings(names)
 
 	if idxw, ok := indexw.(*index.Writer); ok {
