@@ -35,8 +35,7 @@ import (
 )
 
 func BenchmarkCreateSeries(b *testing.B) {
-	lbls, err := labels.ReadLabels(filepath.Join("testdata", "20kseries.json"), b.N)
-	testutil.Ok(b, err)
+	series := genSeries(b.N, 10, 0, 0)
 
 	h, err := NewHead(nil, nil, nil, 10000)
 	testutil.Ok(b, err)
@@ -45,8 +44,8 @@ func BenchmarkCreateSeries(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for _, l := range lbls {
-		h.getOrCreate(l.Hash(), l)
+	for _, s := range series {
+		h.getOrCreate(s.Labels().Hash(), s.Labels())
 	}
 }
 
@@ -1046,7 +1045,9 @@ func TestHead_LogRollback(t *testing.T) {
 	testutil.Equals(t, []RefSeries{{Ref: 1, Labels: labels.FromStrings("a", "b")}}, series)
 }
 
-func TestWalRepair(t *testing.T) {
+// TestWalRepair_DecodingError ensures that a repair is run for an error
+// when decoding a record.
+func TestWalRepair_DecodingError(t *testing.T) {
 	var enc RecordEncoder
 	for name, test := range map[string]struct {
 		corrFunc  func(rec []byte) []byte // Func that applies the corruption to a record.
@@ -1113,7 +1114,6 @@ func TestWalRepair(t *testing.T) {
 				testutil.Ok(t, err)
 				testutil.Equals(t, 0.0, prom_testutil.ToFloat64(h.metrics.walCorruptionsTotal))
 				initErr := h.Init(math.MinInt64)
-				testutil.Equals(t, 1.0, prom_testutil.ToFloat64(h.metrics.walCorruptionsTotal))
 
 				err = errors.Cause(initErr) // So that we can pick up errors even if wrapped.
 				_, corrErr := err.(*wal.CorruptionErr)
@@ -1128,6 +1128,7 @@ func TestWalRepair(t *testing.T) {
 				defer func() {
 					testutil.Ok(t, db.Close())
 				}()
+				testutil.Equals(t, 1.0, prom_testutil.ToFloat64(db.head.metrics.walCorruptionsTotal))
 			}
 
 			// Read the wal content after the repair.

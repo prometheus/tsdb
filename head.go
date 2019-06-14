@@ -141,8 +141,9 @@ func newHeadMetrics(h *Head, r prometheus.Registerer) *headMetrics {
 		Help: "Total number of chunks removed in the head",
 	})
 	m.gcDuration = prometheus.NewSummary(prometheus.SummaryOpts{
-		Name: "prometheus_tsdb_head_gc_duration_seconds",
-		Help: "Runtime of garbage collection in the head block.",
+		Name:       "prometheus_tsdb_head_gc_duration_seconds",
+		Help:       "Runtime of garbage collection in the head block.",
+		Objectives: map[float64]float64{},
 	})
 	m.maxTime = prometheus.NewGaugeFunc(prometheus.GaugeOpts{
 		Name: "prometheus_tsdb_head_max_time",
@@ -157,8 +158,9 @@ func newHeadMetrics(h *Head, r prometheus.Registerer) *headMetrics {
 		return float64(h.MinTime())
 	})
 	m.walTruncateDuration = prometheus.NewSummary(prometheus.SummaryOpts{
-		Name: "prometheus_tsdb_wal_truncate_duration_seconds",
-		Help: "Duration of WAL truncation.",
+		Name:       "prometheus_tsdb_wal_truncate_duration_seconds",
+		Help:       "Duration of WAL truncation.",
+		Objectives: map[float64]float64{},
 	})
 	m.walCorruptionsTotal = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "prometheus_tsdb_wal_corruptions_total",
@@ -511,7 +513,11 @@ func (h *Head) Init(minValidTime int64) error {
 		if err != nil {
 			return errors.Wrap(err, "open checkpoint")
 		}
-		defer sr.Close()
+		defer func() {
+			if err := sr.Close(); err != nil {
+				level.Warn(h.logger).Log("msg", "error while closing the wal segments reader", "err", err)
+			}
+		}()
 
 		// A corrupted checkpoint is a hard error for now and requires user
 		// intervention. There's likely little data that can be recovered anyway.

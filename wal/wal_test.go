@@ -296,6 +296,7 @@ func TestCorruptAndCarryOn(t *testing.T) {
 
 		w, err := NewSize(logger, nil, dir, segmentSize)
 		testutil.Ok(t, err)
+
 		err = w.Repair(corruptionErr)
 		testutil.Ok(t, err)
 
