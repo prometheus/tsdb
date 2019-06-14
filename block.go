@@ -57,6 +57,10 @@ type IndexWriter interface {
 	// The Postings here contain refs to the series that were added.
 	WritePostings(name, value string, it index.Postings) error
 
+	// Size returns the total size in bytes written by the writer.
+	// It also adds any bytes that would be written when calling the close method.
+	Size() int64
+
 	// Close writes any finalization and closes the resources associated with
 	// the underlying writer.
 	Close() error
@@ -113,6 +117,10 @@ type ChunkWriter interface {
 	// are set and can be used to retrieve the chunks from the written data.
 	WriteChunks(chunks ...chunks.Meta) error
 
+	// Size returns the total size in bytes written by the writer.
+	// It also adds any bytes that would be written when calling the close method.
+	Size() int64
+
 	// Close writes any required finalization and closes the resources
 	// associated with the underlying writer.
 	Close() error
@@ -149,12 +157,6 @@ type BlockReader interface {
 type Appendable interface {
 	// Appender returns a new Appender against an underlying store.
 	Appender() Appender
-}
-
-// SizeReader returns the size of the object in bytes.
-type SizeReader interface {
-	// Size returns the size in bytes.
-	Size() int64
 }
 
 // BlockMeta provides meta information about a block.
@@ -319,20 +321,11 @@ func OpenBlock(logger log.Logger, dir string, pool chunkenc.Pool) (pb *Block, er
 	}
 	closers = append(closers, ir)
 
-	tr, tsr, err := readTombstones(dir)
+	tr, err := readTombstones(dir)
 	if err != nil {
 		return nil, err
 	}
 	closers = append(closers, tr)
-
-	// TODO refactor to set this at block creation time as
-	// that would be the logical place for a block size to be calculated.
-	bs := blockSize(cr, ir, tsr)
-	meta.Stats.NumBytes = bs
-	err = writeMetaFile(logger, dir, meta)
-	if err != nil {
-		level.Warn(logger).Log("msg", "couldn't write the meta file for the block size", "block", dir, "err", err)
-	}
 
 	pb = &Block{
 		dir:             dir,
@@ -344,16 +337,6 @@ func OpenBlock(logger log.Logger, dir string, pool chunkenc.Pool) (pb *Block, er
 		logger:          logger,
 	}
 	return pb, nil
-}
-
-func blockSize(rr ...SizeReader) int64 {
-	var total int64
-	for _, r := range rr {
-		if r != nil {
-			total += r.Size()
-		}
-	}
-	return total
 }
 
 // Close closes the on-disk block. It blocks as long as there are readers reading from the block.
@@ -559,9 +542,8 @@ Outer:
 		return err
 	}
 	pb.tombstones = stones
-	pb.meta.Stats.NumTombstones = pb.tombstones.Total()
 
-	if err := writeTombstoneFile(pb.logger, pb.dir, pb.tombstones); err != nil {
+	if err := writeTombstoneFile(pb.logger, pb.dir, pb.tombstones, &pb.meta); err != nil {
 		return err
 	}
 	return writeMetaFile(pb.logger, pb.dir, &pb.meta)

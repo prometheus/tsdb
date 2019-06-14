@@ -600,13 +600,13 @@ func (c *LeveledCompactor) write(dest string, meta *BlockMeta, blocks ...BlockRe
 		return nil
 	}
 
-	if err = writeMetaFile(c.logger, tmp, meta); err != nil {
-		return errors.Wrap(err, "write merged meta")
+	// Create an empty tombstones file.
+	if err := writeTombstoneFile(c.logger, tmp, newMemTombstones(), meta); err != nil {
+		return errors.Wrap(err, "write new tombstones file")
 	}
 
-	// Create an empty tombstones file.
-	if err := writeTombstoneFile(c.logger, tmp, newMemTombstones()); err != nil {
-		return errors.Wrap(err, "write new tombstones file")
+	if err = writeMetaFile(c.logger, tmp, meta); err != nil {
+		return errors.Wrap(err, "write merged meta")
 	}
 
 	df, err := fileutil.OpenDir(tmp)
@@ -637,8 +637,9 @@ func (c *LeveledCompactor) write(dest string, meta *BlockMeta, blocks ...BlockRe
 	return nil
 }
 
-// populateBlock fills the index and chunk writers with new data gathered as the union
-// of the provided blocks. It returns meta information for the new block.
+// populateBlock fills the index and chunk writers with
+// new data gathered as the union of the provided blocks.
+// It populates the provided meta with the details for the new block.
 // It expects sorted blocks input by mint.
 func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, indexw IndexWriter, chunkw ChunkWriter) (err error) {
 	if len(blocks) == 0 {
@@ -841,6 +842,7 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 			return errors.Wrap(err, "write postings")
 		}
 	}
+	meta.Stats.NumBytes = chunkw.Size() + indexw.Size()
 	return nil
 }
 

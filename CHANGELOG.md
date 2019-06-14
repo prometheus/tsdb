@@ -1,5 +1,5 @@
 ## master / unreleased
-
+ - [CHANGE] Moved the `Size()` interface to the index and chunk writers.
 
 ## 0.8.0
  - [BUGFIX] Calling `Close` more than once on a querier returns an error instead of a panic.

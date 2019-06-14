@@ -47,9 +47,9 @@ func TestWriteAndReadbackTombStones(t *testing.T) {
 		stones.addInterval(ref, dranges...)
 	}
 
-	testutil.Ok(t, writeTombstoneFile(log.NewNopLogger(), tmpdir, stones))
+	testutil.Ok(t, writeTombstoneFile(log.NewNopLogger(), tmpdir, stones, &BlockMeta{}))
 
-	restr, _, err := readTombstones(tmpdir)
+	restr, err := readTombstones(tmpdir)
 	testutil.Ok(t, err)
 
 	// Compare the two readers.

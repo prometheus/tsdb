@@ -1077,7 +1077,7 @@ func TestSizeRetention(t *testing.T) {
 	actSize = dbDiskSize(db.Dir())
 
 	testutil.Equals(t, 1, actRetentCount, "metric retention count mismatch")
-	testutil.Equals(t, actSize, expSize, "metric db size doesn't match actual disk size")
+	testutil.Equals(t, expSize, actSize, "metric db size doesn't match actual disk size")
 	testutil.Assert(t, expSize <= sizeLimit, "actual size (%v) is expected to be less than or equal to limit (%v)", expSize, sizeLimit)
 	testutil.Equals(t, len(blocks)-1, len(actBlocks), "new block count should be decreased from:%v to:%v", len(blocks), len(blocks)-1)
 	testutil.Equals(t, expBlocks[0].MaxTime, actBlocks[0].meta.MaxTime, "maxT mismatch of the first block")

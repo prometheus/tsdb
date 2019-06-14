@@ -134,6 +134,8 @@ type Writer struct {
 	crc32 hash.Hash
 
 	Version int
+
+	size int64
 }
 
 // TOC represents index Table Of Content that states where each section of index starts.
@@ -225,6 +227,7 @@ func (w *Writer) write(bufs ...[]byte) error {
 		if err != nil {
 			return err
 		}
+		w.size += int64(n)
 		// For now the index file must not grow beyond 64GiB. Some of the fixed-sized
 		// offset references in v1 are only 4 bytes large.
 		// Once we move to compressed/varint representations in those areas, this limitation
@@ -449,6 +452,12 @@ func (w *Writer) WriteLabelIndex(names []string, values []string) error {
 
 // writeOffsetTable writes a sequence of readable hash entries.
 func (w *Writer) writeOffsetTable(entries []hashEntry) error {
+	w.populateBufOffsetTable(entries)
+	return w.write(w.buf1.Get(), w.buf2.Get())
+}
+
+// populateOffsetTable populates the buffer with a sequence of readable hash entries.
+func (w *Writer) populateBufOffsetTable(entries []hashEntry) {
 	w.buf2.Reset()
 	w.buf2.PutBE32int(len(entries))
 
@@ -463,13 +472,16 @@ func (w *Writer) writeOffsetTable(entries []hashEntry) error {
 	w.buf1.Reset()
 	w.buf1.PutBE32int(w.buf2.Len())
 	w.buf2.PutHash(w.crc32)
-
-	return w.write(w.buf1.Get(), w.buf2.Get())
 }
 
 const indexTOCLen = 6*8 + 4
 
 func (w *Writer) writeTOC() error {
+	w.populateBufTOC()
+	return w.write(w.buf1.Get())
+}
+
+func (w *Writer) populateBufTOC() {
 	w.buf1.Reset()
 
 	w.buf1.PutBE64(w.toc.Symbols)
@@ -480,8 +492,6 @@ func (w *Writer) writeTOC() error {
 	w.buf1.PutBE64(w.toc.PostingsTable)
 
 	w.buf1.PutHash(w.crc32)
-
-	return w.write(w.buf1.Get())
 }
 
 func (w *Writer) WritePostings(name, value string, it Postings) error {
@@ -545,6 +555,16 @@ func (s uint32slice) Less(i, j int) bool { return s[i] < s[j] }
 type hashEntry struct {
 	keys   []string
 	offset uint64
+}
+
+func (w *Writer) Size() int64 {
+	w.populateBufOffsetTable(w.labelIndexes)
+	lSize := int64(w.buf1.Len() + w.buf2.Len())
+	w.populateBufOffsetTable(w.postings)
+	pSize := int64(w.buf1.Len() + w.buf2.Len())
+	w.populateBufTOC()
+	tSize := int64(w.buf1.Len())
+	return w.size + lSize + pSize + tSize
 }
 
 func (w *Writer) Close() error {
@@ -917,11 +937,6 @@ func (r *Reader) Postings(name, value string) (Postings, error) {
 // are sorted.
 func (r *Reader) SortedPostings(p Postings) Postings {
 	return p
-}
-
-// Size returns the size of an index file.
-func (r *Reader) Size() int64 {
-	return int64(r.b.Len())
 }
 
 // LabelNames returns all the unique label names present in the index.

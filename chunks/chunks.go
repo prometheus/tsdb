@@ -335,6 +335,10 @@ func (w *Writer) seq() int {
 	return len(w.files) - 1
 }
 
+func (w *Writer) Size() int64 {
+	return w.n
+}
+
 func (w *Writer) Close() error {
 	if err := w.finalizeTail(); err != nil {
 		return err
@@ -369,13 +373,11 @@ func (b realByteSlice) Sub(start, end int) ByteSlice {
 type Reader struct {
 	bs   []ByteSlice // The underlying bytes holding the encoded series data.
 	cs   []io.Closer // Closers for resources behind the byte slices.
-	size int64       // The total size of bytes in the reader.
 	pool chunkenc.Pool
 }
 
 func newReader(bs []ByteSlice, cs []io.Closer, pool chunkenc.Pool) (*Reader, error) {
 	cr := Reader{pool: pool, bs: bs, cs: cs}
-	var totalSize int64
 
 	for i, b := range cr.bs {
 		if b.Len() < chunkHeaderSize {
@@ -390,9 +392,7 @@ func newReader(bs []ByteSlice, cs []io.Closer, pool chunkenc.Pool) (*Reader, err
 		if v := int(b.Range(MagicChunksSize, MagicChunksSize+ChunksFormatVersionSize)[0]); v != chunksFormatV1 {
 			return nil, errors.Errorf("invalid chunk format version %d", v)
 		}
-		totalSize += int64(b.Len())
 	}
-	cr.size = totalSize
 	return &cr, nil
 }
 
@@ -434,11 +434,6 @@ func NewDirReader(dir string, pool chunkenc.Pool) (*Reader, error) {
 
 func (s *Reader) Close() error {
 	return closeAll(s.cs)
-}
-
-// Size returns the size of the chunks.
-func (s *Reader) Size() int64 {
-	return s.size
 }
 
 // Chunk returns a chunk from a given reference.
