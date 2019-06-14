@@ -821,16 +821,12 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 
 	s := make([]string, 0, 256)
 
-	var numLabelValues int
-	for _, v := range values {
-		numLabelValues += len(v)
-	}
-
 	apkName, apkValue := index.AllPostingsKey()
 	names := make([]string, 0, len(values)+1)
 	names = append(names, apkName)
-
+	var numLabelValues int
 	for n, v := range values {
+		numLabelValues += len(v)
 		s = s[:0]
 		names = append(names, n)
 
@@ -841,8 +837,11 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 			return errors.Wrap(err, "write label index")
 		}
 	}
-
 	sort.Strings(names)
+
+	if idxw, ok := indexw.(*index.Writer); ok {
+		idxw.HintPostingsWriteCount(numLabelValues)
+	}
 
 	postingBuf := make([]uint64, 0, 1000000)
 	seriesMap := set.SeriesMap()

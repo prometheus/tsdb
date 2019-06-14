@@ -484,6 +484,15 @@ func (w *Writer) writeTOC() error {
 	return w.write(w.buf1.Get())
 }
 
+// HintPostingsWriteCount pre-allocates memory for w.postings
+// to reduce allocs.
+func (w *Writer) HintPostingsWriteCount(hint int) {
+	if hint <= 0 || cap(w.postings) >= hint {
+		return
+	}
+	w.postings = append(make([]hashEntry, 0, hint), w.postings...)
+}
+
 func (w *Writer) WritePostings(name, value string, it Postings) error {
 	if err := w.ensureStage(idxStagePostings); err != nil {
 		return errors.Wrap(err, "ensure stage")
