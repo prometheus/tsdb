@@ -297,7 +297,7 @@ func (db *DBReadOnly) Querier(mint, maxt int64) (Querier, error) {
 
 	// Also add the WAL if the current blocks don't cover the requestes time range.
 	if maxBlockTime <= maxt {
-		w, err := wal.NewReadOnly(db.logger, nil, filepath.Join(db.dir, "wal"))
+		w, err := wal.Open(db.logger, nil, filepath.Join(db.dir, "wal"))
 		if err != nil {
 			return nil, err
 		}
@@ -310,6 +310,9 @@ func (db *DBReadOnly) Querier(mint, maxt int64) (Querier, error) {
 		if err := head.Init(maxBlockTime); err != nil {
 			return nil, errors.Wrap(err, "read WAL")
 		}
+		// Set the wal to nil to disable all wal operations.
+		// This is mainly to avoid blocking when closing the head.
+		head.wal = nil
 
 		db.mtx.Lock()
 		db.closers = append(db.closers, head)

@@ -227,18 +227,14 @@ func NewSize(logger log.Logger, reg prometheus.Registerer, dir string, segmentSi
 	return w, nil
 }
 
-// NewReadOnly returns a WAL for read only operations.
-func NewReadOnly(logger log.Logger, reg prometheus.Registerer, dir string) (*WAL, error) {
+// Open an existing WAL.
+func Open(logger log.Logger, reg prometheus.Registerer, dir string) (*WAL, error) {
 	if logger == nil {
 		logger = log.NewNopLogger()
 	}
 	w := &WAL{
-		dir:         dir,
-		logger:      logger,
-		segmentSize: DefaultSegmentSize,
-		page:        &page{},
-		actorc:      make(chan func(), 100),
-		stopc:       make(chan chan struct{}),
+		dir:    dir,
+		logger: logger,
 	}
 
 	registerMetrics(reg, w)

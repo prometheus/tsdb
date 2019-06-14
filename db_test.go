@@ -2201,7 +2201,7 @@ func TestDBReadOnly(t *testing.T) {
 		expBlocks      []*Block
 		expSeries      map[string][]tsdbutil.Sample
 		expSeriesCount int
-		expDbSize      int64
+		expDBHash      []byte
 		matchAll       = labels.NewEqualMatcher("", "")
 		err            error
 	)
@@ -2245,7 +2245,9 @@ func TestDBReadOnly(t *testing.T) {
 		expSeriesCount++
 
 		expBlocks = dbWritable.Blocks()
-		expDbSize, err = testutil.DirSize(dbWritable.Dir())
+		expDBHash, err = testutil.DirHash(dbWritable.Dir())
+		testutil.Ok(t, err)
+		expDbSize, err := testutil.DirSize(dbWritable.Dir())
 		testutil.Ok(t, err)
 		testutil.Assert(t, expDbSize > dbSizeBeforeAppend, "db size didn't increase after an append")
 
@@ -2272,11 +2274,11 @@ func TestDBReadOnly(t *testing.T) {
 		q, err := dbReadOnly.Querier(math.MinInt64, math.MaxInt64)
 		testutil.Ok(t, err)
 		readOnlySeries := query(t, q, matchAll)
-		readOnlyDBSize, err := testutil.DirSize(dbDir)
+		readOnlyDBHash, err := testutil.DirHash(dbDir)
 		testutil.Ok(t, err)
 
 		testutil.Equals(t, expSeriesCount, len(readOnlySeries), "total series mismatch")
 		testutil.Equals(t, expSeries, readOnlySeries, "series mismatch")
-		testutil.Equals(t, expDbSize, readOnlyDBSize, "after all read operations the db size should remain the same")
+		testutil.Equals(t, expDBHash, readOnlyDBHash, "after all read operations the db hash should remain the same")
 	}
 }
