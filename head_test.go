@@ -23,7 +23,7 @@ import (
 	"sort"
 	"testing"
 
-	prom_testutil "github.com/prometheus/client_golang/prometheus/testutil"
+	"github.com/pkg/errors"
 	"github.com/prometheus/tsdb/chunkenc"
 	"github.com/prometheus/tsdb/chunks"
 	"github.com/prometheus/tsdb/index"
@@ -1045,9 +1045,7 @@ func TestHead_LogRollback(t *testing.T) {
 	testutil.Equals(t, []RefSeries{{Ref: 1, Labels: labels.FromStrings("a", "b")}}, series)
 }
 
-// TestWalRepair_DecodingError ensures that a repair is run for an error
-// when decoding a record.
-func TestWalRepair_DecodingError(t *testing.T) {
+func TestWalRepair(t *testing.T) {
 	var enc RecordEncoder
 	for name, test := range map[string]struct {
 		corrFunc  func(rec []byte) []byte // Func that applies the corruption to a record.
@@ -1090,42 +1088,60 @@ func TestWalRepair_DecodingError(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			dir, err := ioutil.TempDir("", "wal_head_repair")
+			dir, err := ioutil.TempDir("", "wal_repair")
 			testutil.Ok(t, err)
 			defer func() {
 				testutil.Ok(t, os.RemoveAll(dir))
 			}()
 
-			w, err := wal.New(nil, nil, dir)
-			testutil.Ok(t, err)
-			defer w.Close()
+			// Fill the wal and corrupt it.
+			{
+				w, err := wal.New(nil, nil, filepath.Join(dir, "wal"))
+				testutil.Ok(t, err)
 
-			for i := 1; i <= test.totalRecs; i++ {
-				// At this point insert a corrupted record.
-				if i-1 == test.expRecs {
-					testutil.Ok(t, w.Log(test.corrFunc(test.rec)))
-					continue
+				for i := 1; i <= test.totalRecs; i++ {
+					// At this point insert a corrupted record.
+					if i-1 == test.expRecs {
+						testutil.Ok(t, w.Log(test.corrFunc(test.rec)))
+						continue
+					}
+					testutil.Ok(t, w.Log(test.rec))
 				}
-				testutil.Ok(t, w.Log(test.rec))
+
+				h, err := NewHead(nil, nil, w, 1)
+				testutil.Ok(t, err)
+
+				initErr := h.Init(math.MinInt64)
+
+				err = errors.Cause(initErr) // So that we can pick up errors even if wrapped.
+				_, corrErr := err.(*wal.CorruptionErr)
+				testutil.Assert(t, corrErr, "reading the wal didn't return corruption error")
+				testutil.Ok(t, w.Close())
 			}
 
-			h, err := NewHead(nil, nil, w, 1)
-			testutil.Ok(t, err)
-			testutil.Equals(t, 0.0, prom_testutil.ToFloat64(h.metrics.walCorruptionsTotal))
-			testutil.Ok(t, h.Init(math.MinInt64))
-			testutil.Equals(t, 1.0, prom_testutil.ToFloat64(h.metrics.walCorruptionsTotal))
-
-			sr, err := wal.NewSegmentsReader(dir)
-			testutil.Ok(t, err)
-			defer sr.Close()
-			r := wal.NewReader(sr)
-
-			var actRec int
-			for r.Next() {
-				actRec++
+			// Open the db to trigger a repair.
+			{
+				db, err := Open(dir, nil, nil, DefaultOptions)
+				testutil.Ok(t, err)
+				defer func() {
+					testutil.Ok(t, db.Close())
+				}()
 			}
-			testutil.Ok(t, r.Err())
-			testutil.Equals(t, test.expRecs, actRec, "Wrong number of intact records")
+
+			// Read the wal content after the repair.
+			{
+				sr, err := wal.NewSegmentsReader(filepath.Join(dir, "wal"))
+				testutil.Ok(t, err)
+				defer sr.Close()
+				r := wal.NewReader(sr)
+
+				var actRec int
+				for r.Next() {
+					actRec++
+				}
+				testutil.Ok(t, r.Err())
+				testutil.Equals(t, test.expRecs, actRec, "Wrong number of intact records")
+			}
 		})
 	}
 

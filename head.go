@@ -96,7 +96,6 @@ type headMetrics struct {
 	maxTime                 prometheus.GaugeFunc
 	samplesAppended         prometheus.Counter
 	walTruncateDuration     prometheus.Summary
-	walCorruptionsTotal     prometheus.Counter
 	headTruncateFail        prometheus.Counter
 	headTruncateTotal       prometheus.Counter
 	checkpointDeleteFail    prometheus.Counter
@@ -160,10 +159,6 @@ func newHeadMetrics(h *Head, r prometheus.Registerer) *headMetrics {
 		Name: "prometheus_tsdb_wal_truncate_duration_seconds",
 		Help: "Duration of WAL truncation.",
 	})
-	m.walCorruptionsTotal = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "prometheus_tsdb_wal_corruptions_total",
-		Help: "Total number of WAL corruptions.",
-	})
 	m.samplesAppended = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "prometheus_tsdb_head_samples_appended_total",
 		Help: "Total number of appended samples.",
@@ -207,7 +202,6 @@ func newHeadMetrics(h *Head, r prometheus.Registerer) *headMetrics {
 			m.maxTime,
 			m.gcDuration,
 			m.walTruncateDuration,
-			m.walCorruptionsTotal,
 			m.samplesAppended,
 			m.headTruncateFail,
 			m.headTruncateTotal,
@@ -313,7 +307,7 @@ func (h *Head) updateMinMaxTime(mint, maxt int64) {
 	}
 }
 
-func (h *Head) loadWAL(r *wal.Reader, multiRef map[uint64]uint64) error {
+func (h *Head) loadWAL(r *wal.Reader, multiRef map[uint64]uint64) (err error) {
 	// Track number of samples that referenced a series we don't know about
 	// for error reporting.
 	var unknownRefs uint64
@@ -329,6 +323,18 @@ func (h *Head) loadWAL(r *wal.Reader, multiRef map[uint64]uint64) error {
 		outputs      = make([]chan []RefSample, n)
 	)
 	wg.Add(n)
+
+	defer func() {
+		// For CorruptionErr ensure to terminate all workers before exiting.
+		if _, ok := err.(*wal.CorruptionErr); ok {
+			for i := 0; i < n; i++ {
+				close(inputs[i])
+				for range outputs[i] {
+				}
+			}
+			wg.Wait()
+		}
+	}()
 
 	for i := 0; i < n; i++ {
 		outputs[i] = make(chan []RefSample, 300)
@@ -347,9 +353,12 @@ func (h *Head) loadWAL(r *wal.Reader, multiRef map[uint64]uint64) error {
 		samples   []RefSample
 		tstones   []Stone
 		allStones = newMemTombstones()
-		err       error
 	)
-	defer allStones.Close()
+	defer func() {
+		if err := allStones.Close(); err != nil {
+			level.Warn(h.logger).Log("msg", "closing  memTombstones during wal read", "err", err)
+		}
+	}()
 	for r.Next() {
 		series, samples, tstones = series[:0], samples[:0], tstones[:0]
 		rec := r.Record()
@@ -448,9 +457,6 @@ func (h *Head) loadWAL(r *wal.Reader, multiRef map[uint64]uint64) error {
 			}
 		}
 	}
-	if r.Err() != nil {
-		return errors.Wrap(r.Err(), "read records")
-	}
 
 	// Signal termination to each worker and wait for it to close its output channel.
 	for i := 0; i < n; i++ {
@@ -459,6 +465,10 @@ func (h *Head) loadWAL(r *wal.Reader, multiRef map[uint64]uint64) error {
 		}
 	}
 	wg.Wait()
+
+	if r.Err() != nil {
+		return errors.Wrap(r.Err(), "read records")
+	}
 
 	if err := allStones.Iter(func(ref uint64, dranges Intervals) error {
 		return h.chunkRewrite(ref, dranges)
@@ -520,14 +530,11 @@ func (h *Head) Init(minValidTime int64) error {
 
 		sr := wal.NewSegmentBufReader(s)
 		err = h.loadWAL(wal.NewReader(sr), multiRef)
-		sr.Close() // Close the reader so that if there was an error the repair can remove the corrupted file under Windows.
-		if err == nil {
-			continue
+		if err := sr.Close(); err != nil {
+			level.Warn(h.logger).Log("msg", "error while closing the wal segments reader", "err", err)
 		}
-		level.Warn(h.logger).Log("msg", "encountered WAL error, attempting repair", "err", err)
-		h.metrics.walCorruptionsTotal.Inc()
-		if err := h.wal.Repair(err); err != nil {
-			return errors.Wrap(err, "repair corrupted WAL")
+		if err != nil {
+			return err
 		}
 	}
 
