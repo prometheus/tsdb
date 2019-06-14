@@ -24,6 +24,7 @@ import (
 	"testing"
 
 	"github.com/pkg/errors"
+	prom_testutil "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/prometheus/tsdb/chunkenc"
 	"github.com/prometheus/tsdb/chunks"
 	"github.com/prometheus/tsdb/index"
@@ -1110,8 +1111,9 @@ func TestWalRepair(t *testing.T) {
 
 				h, err := NewHead(nil, nil, w, 1)
 				testutil.Ok(t, err)
-
+				testutil.Equals(t, 0.0, prom_testutil.ToFloat64(h.metrics.walCorruptionsTotal))
 				initErr := h.Init(math.MinInt64)
+				testutil.Equals(t, 1.0, prom_testutil.ToFloat64(h.metrics.walCorruptionsTotal))
 
 				err = errors.Cause(initErr) // So that we can pick up errors even if wrapped.
 				_, corrErr := err.(*wal.CorruptionErr)

@@ -166,13 +166,12 @@ type WAL struct {
 	actorc      chan func()
 	closed      bool // To allow calling Close() more than once without blocking.
 
-	fsyncDuration       prometheus.Summary
-	pageFlushes         prometheus.Counter
-	pageCompletions     prometheus.Counter
-	truncateFail        prometheus.Counter
-	truncateTotal       prometheus.Counter
-	currentSegment      prometheus.Gauge
-	walCorruptionsTotal prometheus.Counter
+	fsyncDuration   prometheus.Summary
+	pageFlushes     prometheus.Counter
+	pageCompletions prometheus.Counter
+	truncateFail    prometheus.Counter
+	truncateTotal   prometheus.Counter
+	currentSegment  prometheus.Gauge
 }
 
 // New returns a new WAL over the given directory.
@@ -223,10 +222,6 @@ func NewSize(logger log.Logger, reg prometheus.Registerer, dir string, segmentSi
 	w.currentSegment = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "prometheus_tsdb_wal_segment_current",
 		Help: "WAL segment index that TSDB is currently writing to.",
-	})
-	w.walCorruptionsTotal = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "prometheus_tsdb_wal_corruptions_total",
-		Help: "Total number of WAL corruptions.",
 	})
 	if reg != nil {
 		reg.MustRegister(w.fsyncDuration, w.pageFlushes, w.pageCompletions, w.truncateFail, w.truncateTotal, w.currentSegment)
@@ -294,7 +289,6 @@ func (w *WAL) Repair(origErr error) error {
 	if !ok {
 		return errors.Wrap(origErr, "cannot handle error")
 	}
-	w.walCorruptionsTotal.Inc()
 	if cerr.Segment < 0 {
 		return errors.New("corruption error does not specify position")
 	}
