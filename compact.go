@@ -849,8 +849,7 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 		return keys[i].Value < keys[j].Value
 	})
 
-	// TODO: Decide initial size.
-	postingBuf := make([]uint64, 0, 1<<16)
+	postingBuf := make([]uint64, 0, 1000000)
 	seriesMap := set.SeriesMap()
 	for _, k := range keys {
 		postingBuf = postingBuf[:0]
