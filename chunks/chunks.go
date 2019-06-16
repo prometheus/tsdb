@@ -27,12 +27,20 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/prometheus/tsdb/chunkenc"
+	tsdb_errors "github.com/prometheus/tsdb/errors"
 	"github.com/prometheus/tsdb/fileutil"
 )
 
 const (
 	// MagicChunks is 4 bytes at the head of a series file.
 	MagicChunks = 0x85BD40DD
+	// MagicChunksSize is the size in bytes of MagicChunks.
+	MagicChunksSize = 4
+
+	chunksFormatV1          = 1
+	ChunksFormatVersionSize = 1
+
+	chunkHeaderSize = MagicChunksSize + ChunksFormatVersionSize
 )
 
 // Meta holds information about a chunk of data.
@@ -57,16 +65,14 @@ func (cm *Meta) writeHash(h hash.Hash) error {
 	return nil
 }
 
-// Returns true if the chunk overlaps [mint, maxt].
+// OverlapsClosedInterval Returns true if the chunk overlaps [mint, maxt].
 func (cm *Meta) OverlapsClosedInterval(mint, maxt int64) bool {
 	// The chunk itself is a closed interval [cm.MinTime, cm.MaxTime].
 	return cm.MinTime <= maxt && mint <= cm.MaxTime
 }
 
 var (
-	errInvalidSize     = fmt.Errorf("invalid size")
-	errInvalidFlag     = fmt.Errorf("invalid flag")
-	errInvalidChecksum = fmt.Errorf("invalid checksum")
+	errInvalidSize = fmt.Errorf("invalid size")
 )
 
 var castagnoliTable *crc32.Table
@@ -95,8 +101,6 @@ type Writer struct {
 
 const (
 	defaultChunkSegmentSize = 512 * 1024 * 1024
-
-	chunksFormatV1 = 1
 )
 
 // NewWriter returns a new writer against the given directory.
@@ -135,7 +139,7 @@ func (w *Writer) finalizeTail() error {
 	if err := w.wbuf.Flush(); err != nil {
 		return err
 	}
-	if err := fileutil.Fsync(tf); err != nil {
+	if err := tf.Sync(); err != nil {
 		return err
 	}
 	// As the file was pre-allocated, we truncate any superfluous zero bytes.
@@ -172,9 +176,8 @@ func (w *Writer) cut() error {
 	}
 
 	// Write header metadata for new file.
-
 	metab := make([]byte, 8)
-	binary.BigEndian.PutUint32(metab[:4], MagicChunks)
+	binary.BigEndian.PutUint32(metab[:MagicChunksSize], MagicChunks)
 	metab[4] = chunksFormatV1
 
 	if _, err := f.Write(metab); err != nil {
@@ -196,6 +199,85 @@ func (w *Writer) write(b []byte) error {
 	n, err := w.wbuf.Write(b)
 	w.n += int64(n)
 	return err
+}
+
+// MergeOverlappingChunks removes the samples whose timestamp is overlapping.
+// The last appearing sample is retained in case there is overlapping.
+// This assumes that `chks []Meta` is sorted w.r.t. MinTime.
+func MergeOverlappingChunks(chks []Meta) ([]Meta, error) {
+	if len(chks) < 2 {
+		return chks, nil
+	}
+	newChks := make([]Meta, 0, len(chks)) // Will contain the merged chunks.
+	newChks = append(newChks, chks[0])
+	last := 0
+	for _, c := range chks[1:] {
+		// We need to check only the last chunk in newChks.
+		// Reason: (1) newChks[last-1].MaxTime < newChks[last].MinTime (non overlapping)
+		//         (2) As chks are sorted w.r.t. MinTime, newChks[last].MinTime < c.MinTime.
+		// So never overlaps with newChks[last-1] or anything before that.
+		if c.MinTime > newChks[last].MaxTime {
+			newChks = append(newChks, c)
+			last += 1
+			continue
+		}
+		nc := &newChks[last]
+		if c.MaxTime > nc.MaxTime {
+			nc.MaxTime = c.MaxTime
+		}
+		chk, err := MergeChunks(nc.Chunk, c.Chunk)
+		if err != nil {
+			return nil, err
+		}
+		nc.Chunk = chk
+	}
+
+	return newChks, nil
+}
+
+// MergeChunks vertically merges a and b, i.e., if there is any sample
+// with same timestamp in both a and b, the sample in a is discarded.
+func MergeChunks(a, b chunkenc.Chunk) (*chunkenc.XORChunk, error) {
+	newChunk := chunkenc.NewXORChunk()
+	app, err := newChunk.Appender()
+	if err != nil {
+		return nil, err
+	}
+	ait := a.Iterator()
+	bit := b.Iterator()
+	aok, bok := ait.Next(), bit.Next()
+	for aok && bok {
+		at, av := ait.At()
+		bt, bv := bit.At()
+		if at < bt {
+			app.Append(at, av)
+			aok = ait.Next()
+		} else if bt < at {
+			app.Append(bt, bv)
+			bok = bit.Next()
+		} else {
+			app.Append(bt, bv)
+			aok = ait.Next()
+			bok = bit.Next()
+		}
+	}
+	for aok {
+		at, av := ait.At()
+		app.Append(at, av)
+		aok = ait.Next()
+	}
+	for bok {
+		bt, bv := bit.At()
+		app.Append(bt, bv)
+		bok = bit.Next()
+	}
+	if ait.Err() != nil {
+		return nil, ait.Err()
+	}
+	if bit.Err() != nil {
+		return nil, bit.Err()
+	}
+	return newChunk, nil
 }
 
 func (w *Writer) WriteChunks(chks ...Meta) error {
@@ -296,25 +378,22 @@ func newReader(bs []ByteSlice, cs []io.Closer, pool chunkenc.Pool) (*Reader, err
 	var totalSize int64
 
 	for i, b := range cr.bs {
-		if b.Len() < 4 {
-			return nil, errors.Wrapf(errInvalidSize, "validate magic in segment %d", i)
+		if b.Len() < chunkHeaderSize {
+			return nil, errors.Wrapf(errInvalidSize, "invalid chunk header in segment %d", i)
 		}
 		// Verify magic number.
-		if m := binary.BigEndian.Uint32(b.Range(0, 4)); m != MagicChunks {
+		if m := binary.BigEndian.Uint32(b.Range(0, MagicChunksSize)); m != MagicChunks {
 			return nil, errors.Errorf("invalid magic number %x", m)
+		}
+
+		// Verify chunk format version.
+		if v := int(b.Range(MagicChunksSize, MagicChunksSize+ChunksFormatVersionSize)[0]); v != chunksFormatV1 {
+			return nil, errors.Errorf("invalid chunk format version %d", v)
 		}
 		totalSize += int64(b.Len())
 	}
 	cr.size = totalSize
 	return &cr, nil
-}
-
-// NewReader returns a new chunk reader against the given byte slices.
-func NewReader(bs []ByteSlice, pool chunkenc.Pool) (*Reader, error) {
-	if pool == nil {
-		pool = chunkenc.NewPool()
-	}
-	return newReader(bs, nil, pool)
 }
 
 // NewDirReader returns a new Reader against sequentially numbered files in the
@@ -329,22 +408,32 @@ func NewDirReader(dir string, pool chunkenc.Pool) (*Reader, error) {
 	}
 
 	var (
-		bs []ByteSlice
-		cs []io.Closer
+		bs   []ByteSlice
+		cs   []io.Closer
+		merr tsdb_errors.MultiError
 	)
 	for _, fn := range files {
 		f, err := fileutil.OpenMmapFile(fn)
 		if err != nil {
-			return nil, errors.Wrapf(err, "mmap files")
+			merr.Add(errors.Wrap(err, "mmap files"))
+			merr.Add(closeAll(cs))
+			return nil, merr
 		}
 		cs = append(cs, f)
 		bs = append(bs, realByteSlice(f.Bytes()))
 	}
-	return newReader(bs, cs, pool)
+
+	reader, err := newReader(bs, cs, pool)
+	if err != nil {
+		merr.Add(err)
+		merr.Add(closeAll(cs))
+		return nil, merr
+	}
+	return reader, nil
 }
 
 func (s *Reader) Close() error {
-	return closeAll(s.cs...)
+	return closeAll(s.cs)
 }
 
 // Size returns the size of the chunks.
@@ -412,7 +501,7 @@ func sequenceFiles(dir string) ([]string, error) {
 	return res, nil
 }
 
-func closeAll(cs ...io.Closer) (err error) {
+func closeAll(cs []io.Closer) (err error) {
 	for _, c := range cs {
 		if e := c.Close(); e != nil {
 			err = e

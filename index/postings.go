@@ -14,6 +14,7 @@
 package index
 
 import (
+	"container/heap"
 	"encoding/binary"
 	"runtime"
 	"sort"
@@ -91,7 +92,7 @@ func (p *MemPostings) Get(name, value string) Postings {
 	if lp == nil {
 		return EmptyPostings()
 	}
-	return newListPostings(lp)
+	return newListPostings(lp...)
 }
 
 // All returns a postings list over all documents ever added.
@@ -201,7 +202,7 @@ func (p *MemPostings) Iter(f func(labels.Label, Postings) error) error {
 
 	for n, e := range p.m {
 		for v, p := range e {
-			if err := f(labels.Label{Name: n, Value: v}, newListPostings(p)); err != nil {
+			if err := f(labels.Label{Name: n, Value: v}, newListPostings(p...)); err != nil {
 				return err
 			}
 		}
@@ -282,6 +283,8 @@ func (e errPostings) Err() error       { return e.err }
 var emptyPostings = errPostings{}
 
 // EmptyPostings returns a postings list that's always empty.
+// NOTE: Returning EmptyPostings sentinel when index.Postings struct has no postings is recommended.
+// It triggers optimized flow in other functions like Intersect, Without etc.
 func EmptyPostings() Postings {
 	return emptyPostings
 }
@@ -295,19 +298,25 @@ func ErrPostings(err error) Postings {
 // input postings.
 func Intersect(its ...Postings) Postings {
 	if len(its) == 0 {
-		return emptyPostings
+		return EmptyPostings()
 	}
 	if len(its) == 1 {
 		return its[0]
 	}
+
 	l := len(its) / 2
-	return newIntersectPostings(Intersect(its[:l]...), Intersect(its[l:]...))
+	a := Intersect(its[:l]...)
+	b := Intersect(its[l:]...)
+
+	if a == EmptyPostings() || b == EmptyPostings() {
+		return EmptyPostings()
+	}
+	return newIntersectPostings(a, b)
 }
 
 type intersectPostings struct {
-	a, b     Postings
-	aok, bok bool
-	cur      uint64
+	a, b Postings
+	cur  uint64
 }
 
 func newIntersectPostings(a, b Postings) *intersectPostings {
@@ -366,30 +375,156 @@ func Merge(its ...Postings) Postings {
 	if len(its) == 1 {
 		return its[0]
 	}
-	// All the uses of this function immediately expand it, so
-	// collect everything in a map. This is more efficient
-	// when there's 100ks of postings, compared to
-	// having a tree of merge objects.
-	pm := make(map[uint64]struct{}, len(its))
-	for _, it := range its {
-		for it.Next() {
-			pm[it.At()] = struct{}{}
-		}
-		if it.Err() != nil {
-			return ErrPostings(it.Err())
+
+	p, ok := newMergedPostings(its)
+	if !ok {
+		return EmptyPostings()
+	}
+	return p
+}
+
+type postingsHeap []Postings
+
+func (h postingsHeap) Len() int           { return len(h) }
+func (h postingsHeap) Less(i, j int) bool { return h[i].At() < h[j].At() }
+func (h *postingsHeap) Swap(i, j int)     { (*h)[i], (*h)[j] = (*h)[j], (*h)[i] }
+
+func (h *postingsHeap) Push(x interface{}) {
+	*h = append(*h, x.(Postings))
+}
+
+func (h *postingsHeap) Pop() interface{} {
+	old := *h
+	n := len(old)
+	x := old[n-1]
+	*h = old[0 : n-1]
+	return x
+}
+
+type mergedPostings struct {
+	h          postingsHeap
+	initilized bool
+	heaped     bool
+	cur        uint64
+	err        error
+}
+
+func newMergedPostings(p []Postings) (m *mergedPostings, nonEmpty bool) {
+	ph := make(postingsHeap, 0, len(p))
+
+	for _, it := range p {
+		// NOTE: mergedPostings struct requires the user to issue an initial Next.
+		if it.Next() {
+			ph = append(ph, it)
+		} else {
+			if it.Err() != nil {
+				return &mergedPostings{err: it.Err()}, true
+			}
 		}
 	}
-	pl := make([]uint64, 0, len(pm))
-	for p := range pm {
-		pl = append(pl, p)
+
+	if len(ph) == 0 {
+		return nil, false
 	}
-	sort.Slice(pl, func(i, j int) bool { return pl[i] < pl[j] })
-	return newListPostings(pl)
+	return &mergedPostings{h: ph}, true
+}
+
+func (it *mergedPostings) Next() bool {
+	if it.h.Len() == 0 || it.err != nil {
+		return false
+	}
+
+	if !it.heaped {
+		heap.Init(&it.h)
+		it.heaped = true
+	}
+	// The user must issue an initial Next.
+	if !it.initilized {
+		it.cur = it.h[0].At()
+		it.initilized = true
+		return true
+	}
+
+	for {
+		cur := it.h[0]
+		if !cur.Next() {
+			heap.Pop(&it.h)
+			if cur.Err() != nil {
+				it.err = cur.Err()
+				return false
+			}
+			if it.h.Len() == 0 {
+				return false
+			}
+		} else {
+			// Value of top of heap has changed, re-heapify.
+			heap.Fix(&it.h, 0)
+		}
+
+		if it.h[0].At() != it.cur {
+			it.cur = it.h[0].At()
+			return true
+		}
+	}
+}
+
+func (it *mergedPostings) Seek(id uint64) bool {
+	if it.h.Len() == 0 || it.err != nil {
+		return false
+	}
+	if !it.initilized {
+		if !it.Next() {
+			return false
+		}
+	}
+	if it.cur >= id {
+		return true
+	}
+	// Heapifying when there is lots of Seeks is inefficient,
+	// mark to be re-heapified on the Next() call.
+	it.heaped = false
+	lowest := ^uint64(0)
+	n := 0
+	for _, i := range it.h {
+		if i.Seek(id) {
+			it.h[n] = i
+			n++
+			if i.At() < lowest {
+				lowest = i.At()
+			}
+		} else {
+			if i.Err() != nil {
+				it.err = i.Err()
+				return false
+			}
+		}
+	}
+	it.h = it.h[:n]
+	if len(it.h) == 0 {
+		return false
+	}
+	it.cur = lowest
+	return true
+}
+
+func (it mergedPostings) At() uint64 {
+	return it.cur
+}
+
+func (it mergedPostings) Err() error {
+	return it.err
 }
 
 // Without returns a new postings list that contains all elements from the full list that
-// are not in the drop list
+// are not in the drop list.
 func Without(full, drop Postings) Postings {
+	if full == EmptyPostings() {
+		return EmptyPostings()
+	}
+
+	if drop == EmptyPostings() {
+		return full
+	}
 	return newRemovedPostings(full, drop)
 }
 
@@ -466,25 +601,25 @@ func (rp *removedPostings) Err() error {
 	return rp.remove.Err()
 }
 
-// listPostings implements the Postings interface over a plain list.
-type listPostings struct {
+// ListPostings implements the Postings interface over a plain list.
+type ListPostings struct {
 	list []uint64
 	cur  uint64
 }
 
 func NewListPostings(list []uint64) Postings {
-	return newListPostings(list)
+	return newListPostings(list...)
 }
 
-func newListPostings(list []uint64) *listPostings {
-	return &listPostings{list: list}
+func newListPostings(list ...uint64) *ListPostings {
+	return &ListPostings{list: list}
 }
 
-func (it *listPostings) At() uint64 {
+func (it *ListPostings) At() uint64 {
 	return it.cur
 }
 
-func (it *listPostings) Next() bool {
+func (it *ListPostings) Next() bool {
 	if len(it.list) > 0 {
 		it.cur = it.list[0]
 		it.list = it.list[1:]
@@ -494,10 +629,13 @@ func (it *listPostings) Next() bool {
 	return false
 }
 
-func (it *listPostings) Seek(x uint64) bool {
+func (it *ListPostings) Seek(x uint64) bool {
 	// If the current value satisfies, then return.
 	if it.cur >= x {
 		return true
+	}
+	if len(it.list) == 0 {
+		return false
 	}
 
 	// Do binary search between current position and end.
@@ -513,7 +651,7 @@ func (it *listPostings) Seek(x uint64) bool {
 	return false
 }
 
-func (it *listPostings) Err() error {
+func (it *ListPostings) Err() error {
 	return nil
 }
 

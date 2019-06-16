@@ -14,17 +14,21 @@
 package tsdb
 
 import (
+	"context"
+	"fmt"
 	"io/ioutil"
 	"math"
 	"os"
+	"path"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/go-kit/kit/log"
 	"github.com/pkg/errors"
-	dto "github.com/prometheus/client_model/go"
+	prom_testutil "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/prometheus/tsdb/chunks"
+	"github.com/prometheus/tsdb/fileutil"
 	"github.com/prometheus/tsdb/labels"
 	"github.com/prometheus/tsdb/testutil"
 )
@@ -151,7 +155,7 @@ func TestNoPanicFor0Tombstones(t *testing.T) {
 		},
 	}
 
-	c, err := NewLeveledCompactor(nil, nil, []int64{50}, nil)
+	c, err := NewLeveledCompactor(context.Background(), nil, nil, []int64{50}, nil)
 	testutil.Ok(t, err)
 
 	c.plan(metas)
@@ -159,7 +163,7 @@ func TestNoPanicFor0Tombstones(t *testing.T) {
 
 func TestLeveledCompactor_plan(t *testing.T) {
 	// This mimicks our default ExponentialBlockRanges with min block size equals to 20.
-	compactor, err := NewLeveledCompactor(nil, nil, []int64{
+	compactor, err := NewLeveledCompactor(context.Background(), nil, nil, []int64{
 		20,
 		60,
 		180,
@@ -168,27 +172,25 @@ func TestLeveledCompactor_plan(t *testing.T) {
 	}, nil)
 	testutil.Ok(t, err)
 
-	cases := []struct {
+	cases := map[string]struct {
 		metas    []dirMeta
 		expected []string
 	}{
-		{
+		"Outside Range": {
 			metas: []dirMeta{
 				metaRange("1", 0, 20, nil),
 			},
 			expected: nil,
 		},
-		// We should wait for four blocks of size 20 to appear before compacting.
-		{
+		"We should wait for four blocks of size 20 to appear before compacting.": {
 			metas: []dirMeta{
 				metaRange("1", 0, 20, nil),
 				metaRange("2", 20, 40, nil),
 			},
 			expected: nil,
 		},
-		// We should wait for a next block of size 20 to appear before compacting
-		// the existing ones. We have three, but we ignore the fresh one from WAl.
-		{
+		`We should wait for a next block of size 20 to appear before compacting
+		the existing ones. We have three, but we ignore the fresh one from WAl`: {
 			metas: []dirMeta{
 				metaRange("1", 0, 20, nil),
 				metaRange("2", 20, 40, nil),
@@ -196,8 +198,7 @@ func TestLeveledCompactor_plan(t *testing.T) {
 			},
 			expected: nil,
 		},
-		// Block to fill the entire parent range appeared – should be compacted.
-		{
+		"Block to fill the entire parent range appeared – should be compacted": {
 			metas: []dirMeta{
 				metaRange("1", 0, 20, nil),
 				metaRange("2", 20, 40, nil),
@@ -206,9 +207,8 @@ func TestLeveledCompactor_plan(t *testing.T) {
 			},
 			expected: []string{"1", "2", "3"},
 		},
-		// Block for the next parent range appeared with gap with size 20. Nothing will happen in the first one
-		// anymore but we ignore fresh one still, so no compaction.
-		{
+		`Block for the next parent range appeared with gap with size 20. Nothing will happen in the first one
+		anymore but we ignore fresh one still, so no compaction`: {
 			metas: []dirMeta{
 				metaRange("1", 0, 20, nil),
 				metaRange("2", 20, 40, nil),
@@ -216,9 +216,8 @@ func TestLeveledCompactor_plan(t *testing.T) {
 			},
 			expected: nil,
 		},
-		// Block for the next parent range appeared, and we have a gap with size 20 between second and third block.
-		// We will not get this missed gap anymore and we should compact just these two.
-		{
+		`Block for the next parent range appeared, and we have a gap with size 20 between second and third block.
+		We will not get this missed gap anymore and we should compact just these two.`: {
 			metas: []dirMeta{
 				metaRange("1", 0, 20, nil),
 				metaRange("2", 20, 40, nil),
@@ -227,8 +226,7 @@ func TestLeveledCompactor_plan(t *testing.T) {
 			},
 			expected: []string{"1", "2"},
 		},
-		{
-			// We have 20, 20, 20, 60, 60 range blocks. "5" is marked as fresh one.
+		"We have 20, 20, 20, 60, 60 range blocks. '5' is marked as fresh one": {
 			metas: []dirMeta{
 				metaRange("1", 0, 20, nil),
 				metaRange("2", 20, 40, nil),
@@ -238,8 +236,7 @@ func TestLeveledCompactor_plan(t *testing.T) {
 			},
 			expected: []string{"1", "2", "3"},
 		},
-		{
-			// We have 20, 60, 20, 60, 240 range blocks. We can compact 20 + 60 + 60.
+		"We have 20, 60, 20, 60, 240 range blocks. We can compact 20 + 60 + 60": {
 			metas: []dirMeta{
 				metaRange("2", 20, 40, nil),
 				metaRange("4", 60, 120, nil),
@@ -249,8 +246,7 @@ func TestLeveledCompactor_plan(t *testing.T) {
 			},
 			expected: []string{"2", "4", "6"},
 		},
-		// Do not select large blocks that have many tombstones when there is no fresh block.
-		{
+		"Do not select large blocks that have many tombstones when there is no fresh block": {
 			metas: []dirMeta{
 				metaRange("1", 0, 540, &BlockStats{
 					NumSeries:     10,
@@ -259,8 +255,7 @@ func TestLeveledCompactor_plan(t *testing.T) {
 			},
 			expected: nil,
 		},
-		// Select large blocks that have many tombstones when fresh appears.
-		{
+		"Select large blocks that have many tombstones when fresh appears": {
 			metas: []dirMeta{
 				metaRange("1", 0, 540, &BlockStats{
 					NumSeries:     10,
@@ -270,8 +265,7 @@ func TestLeveledCompactor_plan(t *testing.T) {
 			},
 			expected: []string{"1"},
 		},
-		// For small blocks, do not compact tombstones, even when fresh appears.
-		{
+		"For small blocks, do not compact tombstones, even when fresh appears.": {
 			metas: []dirMeta{
 				metaRange("1", 0, 60, &BlockStats{
 					NumSeries:     10,
@@ -281,9 +275,8 @@ func TestLeveledCompactor_plan(t *testing.T) {
 			},
 			expected: nil,
 		},
-		// Regression test: we were stuck in a compact loop where we always recompacted
-		// the same block when tombstones and series counts were zero.
-		{
+		`Regression test: we were stuck in a compact loop where we always recompacted
+		the same block when tombstones and series counts were zero`: {
 			metas: []dirMeta{
 				metaRange("1", 0, 540, &BlockStats{
 					NumSeries:     0,
@@ -293,12 +286,11 @@ func TestLeveledCompactor_plan(t *testing.T) {
 			},
 			expected: nil,
 		},
-		// Regression test: we were wrongly assuming that new block is fresh from WAL when its ULID is newest.
-		// We need to actually look on max time instead.
-		//
-		// With previous, wrong approach "8" block was ignored, so we were wrongly compacting 5 and 7 and introducing
-		// block overlaps.
-		{
+		`Regression test: we were wrongly assuming that new block is fresh from WAL when its ULID is newest.
+		We need to actually look on max time instead.
+		
+		With previous, wrong approach "8" block was ignored, so we were wrongly compacting 5 and 7 and introducing
+		block overlaps`: {
 			metas: []dirMeta{
 				metaRange("5", 0, 360, nil),
 				metaRange("6", 540, 560, nil), // Fresh one.
@@ -307,13 +299,71 @@ func TestLeveledCompactor_plan(t *testing.T) {
 			},
 			expected: []string{"7", "8"},
 		},
+		// |--------------|
+		//               |----------------|
+		//                                |--------------|
+		"Overlapping blocks 1": {
+			metas: []dirMeta{
+				metaRange("1", 0, 20, nil),
+				metaRange("2", 19, 40, nil),
+				metaRange("3", 40, 60, nil),
+			},
+			expected: []string{"1", "2"},
+		},
+		// |--------------|
+		//                |--------------|
+		//                        |--------------|
+		"Overlapping blocks 2": {
+			metas: []dirMeta{
+				metaRange("1", 0, 20, nil),
+				metaRange("2", 20, 40, nil),
+				metaRange("3", 30, 50, nil),
+			},
+			expected: []string{"2", "3"},
+		},
+		// |--------------|
+		//         |---------------------|
+		//                       |--------------|
+		"Overlapping blocks 3": {
+			metas: []dirMeta{
+				metaRange("1", 0, 20, nil),
+				metaRange("2", 10, 40, nil),
+				metaRange("3", 30, 50, nil),
+			},
+			expected: []string{"1", "2", "3"},
+		},
+		// |--------------|
+		//               |--------------------------------|
+		//                |--------------|
+		//                               |--------------|
+		"Overlapping blocks 4": {
+			metas: []dirMeta{
+				metaRange("5", 0, 360, nil),
+				metaRange("6", 340, 560, nil),
+				metaRange("7", 360, 420, nil),
+				metaRange("8", 420, 540, nil),
+			},
+			expected: []string{"5", "6", "7", "8"},
+		},
+		// |--------------|
+		//               |--------------|
+		//                                            |--------------|
+		//                                                          |--------------|
+		"Overlapping blocks 5": {
+			metas: []dirMeta{
+				metaRange("1", 0, 10, nil),
+				metaRange("2", 9, 20, nil),
+				metaRange("3", 30, 40, nil),
+				metaRange("4", 39, 50, nil),
+			},
+			expected: []string{"1", "2"},
+		},
 	}
 
-	for _, c := range cases {
-		if !t.Run("", func(t *testing.T) {
+	for title, c := range cases {
+		if !t.Run(title, func(t *testing.T) {
 			res, err := compactor.plan(c.metas)
 			testutil.Ok(t, err)
-
 			testutil.Equals(t, c.expected, res)
 		}) {
 			return
@@ -322,7 +372,7 @@ func TestLeveledCompactor_plan(t *testing.T) {
 }
 
 func TestRangeWithFailedCompactionWontGetSelected(t *testing.T) {
-	compactor, err := NewLeveledCompactor(nil, nil, []int64{
+	compactor, err := NewLeveledCompactor(context.Background(), nil, nil, []int64{
 		20,
 		60,
 		240,
@@ -372,7 +422,7 @@ func TestRangeWithFailedCompactionWontGetSelected(t *testing.T) {
 }
 
 func TestCompactionFailWillCleanUpTempDir(t *testing.T) {
-	compactor, err := NewLeveledCompactor(nil, log.NewNopLogger(), []int64{
+	compactor, err := NewLeveledCompactor(context.Background(), nil, log.NewNopLogger(), []int64{
 		20,
 		60,
 		240,
@@ -383,7 +433,9 @@ func TestCompactionFailWillCleanUpTempDir(t *testing.T) {
 
 	tmpdir, err := ioutil.TempDir("", "test")
 	testutil.Ok(t, err)
-	defer os.RemoveAll(tmpdir)
+	defer func() {
+		testutil.Ok(t, os.RemoveAll(tmpdir))
+	}()
 
 	testutil.NotOk(t, compactor.write(tmpdir, &BlockMeta{}, erringBReader{}))
 	_, err = os.Stat(filepath.Join(tmpdir, BlockMeta{}.ULID.String()) + ".tmp")
@@ -406,6 +458,8 @@ type erringBReader struct{}
 func (erringBReader) Index() (IndexReader, error)          { return nil, errors.New("index") }
 func (erringBReader) Chunks() (ChunkReader, error)         { return nil, errors.New("chunks") }
 func (erringBReader) Tombstones() (TombstoneReader, error) { return nil, errors.New("tombstones") }
+func (erringBReader) MinTime() int64                       { return 0 }
+func (erringBReader) MaxTime() int64                       { return 0 }
 
 type nopChunkWriter struct{}
 
@@ -418,9 +472,8 @@ func TestCompaction_populateBlock(t *testing.T) {
 		inputSeriesSamples [][]seriesSamples
 		compactMinTime     int64
 		compactMaxTime     int64 // When not defined the test runner sets a default of math.MaxInt64.
-
-		expSeriesSamples []seriesSamples
-		expErr           error
+		expSeriesSamples   []seriesSamples
+		expErr             error
 	}{
 		{
 			title:              "Populate block from empty input should return error.",
@@ -499,16 +552,6 @@ func TestCompaction_populateBlock(t *testing.T) {
 				{
 					{
 						lset:   map[string]string{"a": "b"},
-						chunks: [][]sample{{{t: 21}, {t: 30}}},
-					},
-					{
-						lset:   map[string]string{"a": "c"},
-						chunks: [][]sample{{{t: 40}, {t: 45}}},
-					},
-				},
-				{
-					{
-						lset:   map[string]string{"a": "b"},
 						chunks: [][]sample{{{t: 0}, {t: 10}}, {{t: 11}, {t: 20}}},
 					},
 					{
@@ -516,20 +559,30 @@ func TestCompaction_populateBlock(t *testing.T) {
 						chunks: [][]sample{{{t: 1}, {t: 9}}, {{t: 10}, {t: 19}}},
 					},
 				},
+				{
+					{
+						lset:   map[string]string{"a": "b"},
+						chunks: [][]sample{{{t: 21}, {t: 30}}},
+					},
+					{
+						lset:   map[string]string{"a": "c"},
+						chunks: [][]sample{{{t: 40}, {t: 45}}},
+					},
+				},
 			},
 			expSeriesSamples: []seriesSamples{
 				{
 					lset:   map[string]string{"a": "b"},
-					chunks: [][]sample{{{t: 21}, {t: 30}}, {{t: 0}, {t: 10}}, {{t: 11}, {t: 20}}},
+					chunks: [][]sample{{{t: 0}, {t: 10}}, {{t: 11}, {t: 20}}, {{t: 21}, {t: 30}}},
 				},
 				{
 					lset:   map[string]string{"a": "c"},
-					chunks: [][]sample{{{t: 40}, {t: 45}}, {{t: 1}, {t: 9}}, {{t: 10}, {t: 19}}},
+					chunks: [][]sample{{{t: 1}, {t: 9}}, {{t: 10}, {t: 19}}, {{t: 40}, {t: 45}}},
 				},
 			},
 		},
 		{
-			title: "Populate from two blocks showing that order or series is sorted.",
+			title: "Populate from two blocks showing that order of series is sorted.",
 			inputSeriesSamples: [][]seriesSamples{
 				{
 					{
@@ -614,7 +667,8 @@ func TestCompaction_populateBlock(t *testing.T) {
 			expErr:         errors.New("found chunk with minTime: 10 maxTime: 20 outside of compacted minTime: 0 maxTime: 10"),
 		},
 		{
-			// No special deduplication expected.
+			// Deduplication expected.
+			// Introduced by pull/370 and pull/539.
 			title: "Populate from two blocks containing duplicated chunk.",
 			inputSeriesSamples: [][]seriesSamples{
 				{
@@ -633,7 +687,53 @@ func TestCompaction_populateBlock(t *testing.T) {
 			expSeriesSamples: []seriesSamples{
 				{
 					lset:   map[string]string{"a": "b"},
-					chunks: [][]sample{{{t: 1}, {t: 2}}, {{t: 10}, {t: 20}}, {{t: 10}, {t: 20}}},
+					chunks: [][]sample{{{t: 1}, {t: 2}}, {{t: 10}, {t: 20}}},
+				},
+			},
+		},
+		{
+			// Introduced by https://github.com/prometheus/tsdb/pull/539.
+			title: "Populate from three blocks that the last two are overlapping.",
+			inputSeriesSamples: [][]seriesSamples{
+				{
+					{
+						lset:   map[string]string{"before": "fix"},
+						chunks: [][]sample{{{t: 0}, {t: 10}, {t: 11}, {t: 20}}},
+					},
+					{
+						lset:   map[string]string{"after": "fix"},
+						chunks: [][]sample{{{t: 0}, {t: 10}, {t: 11}, {t: 20}}},
+					},
+				},
+				{
+					{
+						lset:   map[string]string{"before": "fix"},
+						chunks: [][]sample{{{t: 19}, {t: 30}}},
+					},
+					{
+						lset:   map[string]string{"after": "fix"},
+						chunks: [][]sample{{{t: 21}, {t: 30}}},
+					},
+				},
+				{
+					{
+						lset:   map[string]string{"before": "fix"},
+						chunks: [][]sample{{{t: 27}, {t: 35}}},
+					},
+					{
+						lset:   map[string]string{"after": "fix"},
+						chunks: [][]sample{{{t: 27}, {t: 35}}},
+					},
+				},
+			},
+			expSeriesSamples: []seriesSamples{
+				{
+					lset:   map[string]string{"after": "fix"},
+					chunks: [][]sample{{{t: 0}, {t: 10}, {t: 11}, {t: 20}}, {{t: 21}, {t: 27}, {t: 30}, {t: 35}}},
+				},
+				{
+					lset:   map[string]string{"before": "fix"},
+					chunks: [][]sample{{{t: 0}, {t: 10}, {t: 11}, {t: 19}, {t: 20}, {t: 27}, {t: 30}, {t: 35}}},
 				},
 			},
 		},
@@ -643,11 +743,11 @@ func TestCompaction_populateBlock(t *testing.T) {
 		if ok := t.Run(tc.title, func(t *testing.T) {
 			blocks := make([]BlockReader, 0, len(tc.inputSeriesSamples))
 			for _, b := range tc.inputSeriesSamples {
-				ir, cr := createIdxChkReaders(b)
-				blocks = append(blocks, &mockBReader{ir: ir, cr: cr})
+				ir, cr, mint, maxt := createIdxChkReaders(t, b)
+				blocks = append(blocks, &mockBReader{ir: ir, cr: cr, mint: mint, maxt: maxt})
 			}
 
-			c, err := NewLeveledCompactor(nil, nil, []int64{0}, nil)
+			c, err := NewLeveledCompactor(context.Background(), nil, nil, []int64{0}, nil)
 			testutil.Ok(t, err)
 
 			meta := &BlockMeta{
@@ -686,14 +786,88 @@ func TestCompaction_populateBlock(t *testing.T) {
 	}
 }
 
+func BenchmarkCompaction(b *testing.B) {
+	cases := []struct {
+		ranges         [][2]int64
+		compactionType string
+	}{
+		{
+			ranges:         [][2]int64{{0, 100}, {200, 300}, {400, 500}, {600, 700}},
+			compactionType: "normal",
+		},
+		{
+			ranges:         [][2]int64{{0, 1000}, {2000, 3000}, {4000, 5000}, {6000, 7000}},
+			compactionType: "normal",
+		},
+		{
+			ranges:         [][2]int64{{0, 10000}, {20000, 30000}, {40000, 50000}, {60000, 70000}},
+			compactionType: "normal",
+		},
+		{
+			ranges:         [][2]int64{{0, 100000}, {200000, 300000}, {400000, 500000}, {600000, 700000}},
+			compactionType: "normal",
+		},
+		// 40% overlaps.
+		{
+			ranges:         [][2]int64{{0, 100}, {60, 160}, {120, 220}, {180, 280}},
+			compactionType: "vertical",
+		},
+		{
+			ranges:         [][2]int64{{0, 1000}, {600, 1600}, {1200, 2200}, {1800, 2800}},
+			compactionType: "vertical",
+		},
+		{
+			ranges:         [][2]int64{{0, 10000}, {6000, 16000}, {12000, 22000}, {18000, 28000}},
+			compactionType: "vertical",
+		},
+		{
+			ranges:         [][2]int64{{0, 100000}, {60000, 160000}, {120000, 220000}, {180000, 280000}},
+			compactionType: "vertical",
+		},
+	}
+
+	nSeries := 10000
+	for _, c := range cases {
+		nBlocks := len(c.ranges)
+		b.Run(fmt.Sprintf("type=%s,blocks=%d,series=%d,samplesPerSeriesPerBlock=%d", c.compactionType, nBlocks, nSeries, c.ranges[0][1]-c.ranges[0][0]+1), func(b *testing.B) {
+			dir, err := ioutil.TempDir("", "bench_compaction")
+			testutil.Ok(b, err)
+			defer func() {
+				testutil.Ok(b, os.RemoveAll(dir))
+			}()
+			blockDirs := make([]string, 0, len(c.ranges))
+			var blocks []*Block
+			for _, r := range c.ranges {
+				block, err := OpenBlock(nil, createBlock(b, dir, genSeries(nSeries, 10, r[0], r[1])), nil)
+				testutil.Ok(b, err)
+				blocks = append(blocks, block)
+				defer func() {
+					testutil.Ok(b, block.Close())
+				}()
+				blockDirs = append(blockDirs, block.Dir())
+			}
+
+			c, err := NewLeveledCompactor(context.Background(), nil, log.NewNopLogger(), []int64{0}, nil)
+			testutil.Ok(b, err)
+
+			b.ResetTimer()
+			b.ReportAllocs()
+			_, err = c.Compact(dir, blockDirs, blocks)
+			testutil.Ok(b, err)
+		})
+	}
+}
+
 // TestDisableAutoCompactions checks that we can
 // disable and enable the auto compaction.
 // This is needed for unit tests that rely on
 // checking state before and after a compaction.
 func TestDisableAutoCompactions(t *testing.T) {
-	db, close := openTestDB(t, nil)
-	defer close()
-	defer db.Close()
+	db, delete := openTestDB(t, nil)
+	defer func() {
+		testutil.Ok(t, db.Close())
+		delete()
+	}()
 
 	blockRange := DefaultOptions.BlockRanges[0]
 	label := labels.FromStrings("foo", "bar")
@@ -715,16 +889,14 @@ func TestDisableAutoCompactions(t *testing.T) {
 	default:
 	}
 
-	m := &dto.Metric{}
 	for x := 0; x < 10; x++ {
-		db.metrics.compactionsSkipped.Write(m)
-		if *m.Counter.Value > float64(0) {
+		if prom_testutil.ToFloat64(db.metrics.compactionsSkipped) > 0.0 {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
 
-	testutil.Assert(t, *m.Counter.Value > float64(0), "No compaction was skipped after the set timeout.")
+	testutil.Assert(t, prom_testutil.ToFloat64(db.metrics.compactionsSkipped) > 0.0, "No compaction was skipped after the set timeout.")
 	testutil.Equals(t, 0, len(db.blocks))
 
 	// Enable the compaction, trigger it and check that the block is persisted.
@@ -740,4 +912,146 @@ func TestDisableAutoCompactions(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	}
 	testutil.Assert(t, len(db.Blocks()) > 0, "No block was persisted after the set timeout.")
+}
+
+// TestCancelCompactions ensures that when the db is closed
+// any running compaction is cancelled to unblock closing the db.
+func TestCancelCompactions(t *testing.T) {
+	tmpdir, err := ioutil.TempDir("", "testCancelCompaction")
+	testutil.Ok(t, err)
+	defer func() {
+		testutil.Ok(t, os.RemoveAll(tmpdir))
+	}()
+
+	// Create some blocks to fall within the compaction range.
+	createBlock(t, tmpdir, genSeries(10, 10000, 0, 1000))
+	createBlock(t, tmpdir, genSeries(10, 10000, 1000, 2000))
+	createBlock(t, tmpdir, genSeries(1, 1, 2000, 2001)) // The most recent block is ignored so can be e small one.
+
+	// Copy the db so we have an exact copy to compare compaction times.
+	tmpdirCopy := tmpdir + "Copy"
+	err = fileutil.CopyDirs(tmpdir, tmpdirCopy)
+	testutil.Ok(t, err)
+	defer func() {
+		testutil.Ok(t, os.RemoveAll(tmpdirCopy))
+	}()
+
+	// Measure the compaction time without interupting it.
+	var timeCompactionUninterrupted time.Duration
+	{
+		db, err := Open(tmpdir, log.NewNopLogger(), nil, &Options{BlockRanges: []int64{1, 2000}})
+		testutil.Ok(t, err)
+		testutil.Equals(t, 3, len(db.Blocks()), "initial block count mismatch")
+		testutil.Equals(t, 0.0, prom_testutil.ToFloat64(db.compactor.(*LeveledCompactor).metrics.ran), "initial compaction counter mismatch")
+		db.compactc <- struct{}{} // Trigger a compaction.
+		var start time.Time
+		for prom_testutil.ToFloat64(db.compactor.(*LeveledCompactor).metrics.populatingBlocks) <= 0 {
+			time.Sleep(3 * time.Millisecond)
+		}
+		start = time.Now()
+
+		for prom_testutil.ToFloat64(db.compactor.(*LeveledCompactor).metrics.ran) != 1 {
+			time.Sleep(3 * time.Millisecond)
+		}
+		timeCompactionUninterrupted = time.Since(start)
+
+		testutil.Ok(t, db.Close())
+	}
+	// Measure the compaction time when closing the db in the middle of compaction.
+	{
+		db, err := Open(tmpdirCopy, log.NewNopLogger(), nil, &Options{BlockRanges: []int64{1, 2000}})
+		testutil.Ok(t, err)
+		testutil.Equals(t, 3, len(db.Blocks()), "initial block count mismatch")
+		testutil.Equals(t, 0.0, prom_testutil.ToFloat64(db.compactor.(*LeveledCompactor).metrics.ran), "initial compaction counter mismatch")
+		db.compactc <- struct{}{} // Trigger a compaction.
+		dbClosed := make(chan struct{})
+
+		for prom_testutil.ToFloat64(db.compactor.(*LeveledCompactor).metrics.populatingBlocks) <= 0 {
+			time.Sleep(3 * time.Millisecond)
+		}
+		go func() {
+			testutil.Ok(t, db.Close())
+			close(dbClosed)
+		}()
+
+		start := time.Now()
+		<-dbClosed
+		actT := time.Since(start)
+		expT := time.Duration(timeCompactionUninterrupted / 2) // Closing the db in the middle of compaction should less than half the time.
+		testutil.Assert(t, actT < expT, "closing the db took more than expected. exp: <%v, act: %v", expT, actT)
+	}
+}
+
+// TestDeleteCompactionBlockAfterFailedReload ensures that a failed reload immediately after a compaction
+// deletes the resulting block to avoid creatings blocks with the same time range.
+func TestDeleteCompactionBlockAfterFailedReload(t *testing.T) {
+
+	tests := map[string]func(*DB) int{
+		"Test Head Compaction": func(db *DB) int {
+			rangeToTriggerCompaction := db.opts.BlockRanges[0]/2*3 - 1
+			defaultLabel := labels.FromStrings("foo", "bar")
+
+			// Add some data to the head that is enough to trigger a compaction.
+			app := db.Appender()
+			_, err := app.Add(defaultLabel, 1, 0)
+			testutil.Ok(t, err)
+			_, err = app.Add(defaultLabel, 2, 0)
+			testutil.Ok(t, err)
+			_, err = app.Add(defaultLabel, 3+rangeToTriggerCompaction, 0)
+			testutil.Ok(t, err)
+			testutil.Ok(t, app.Commit())
+
+			return 0
+		},
+		"Test Block Compaction": func(db *DB) int {
+			blocks := []*BlockMeta{
+				{MinTime: 0, MaxTime: 100},
+				{MinTime: 100, MaxTime: 150},
+				{MinTime: 150, MaxTime: 200},
+			}
+			for _, m := range blocks {
+				createBlock(t, db.Dir(), genSeries(1, 1, m.MinTime, m.MaxTime))
+			}
+			testutil.Ok(t, db.reload())
+			testutil.Equals(t, len(blocks), len(db.Blocks()), "unexpected block count after a reload")
+
+			return len(blocks)
+		},
+	}
+
+	for title, bootStrap := range tests {
+		t.Run(title, func(t *testing.T) {
+			db, delete := openTestDB(t, &Options{
+				BlockRanges: []int64{1, 100},
+			})
+			defer func() {
+				testutil.Ok(t, db.Close())
+				delete()
+			}()
+			db.DisableCompactions()
+
+			expBlocks := bootStrap(db)
+
+			// Create a block that will trigger the reload to fail.
+			blockPath := createBlock(t, db.Dir(), genSeries(1, 1, 200, 300))
+			lastBlockIndex := path.Join(blockPath, indexFilename)
+			actBlocks, err := blockDirs(db.Dir())
+			testutil.Ok(t, err)
+			testutil.Equals(t, expBlocks, len(actBlocks)-1) // -1 to exclude the corrupted block.
+			testutil.Ok(t, os.RemoveAll(lastBlockIndex))    // Corrupt the block by removing the index file.
+
+			testutil.Equals(t, 0.0, prom_testutil.ToFloat64(db.metrics.reloadsFailed), "initial 'failed db reload' count metrics mismatch")
+			testutil.Equals(t, 0.0, prom_testutil.ToFloat64(db.compactor.(*LeveledCompactor).metrics.ran), "initial `compactions` count metric mismatch")
+
+			// Do the compaction and check the metrics.
+			// Compaction should succeed, but the reload should fail and
+			// the new block created from the compaction should be deleted.
+			testutil.NotOk(t, db.compact())
+			testutil.Equals(t, 1.0, prom_testutil.ToFloat64(db.metrics.reloadsFailed), "'failed db reload' count metrics mismatch")
+			testutil.Equals(t, 1.0, prom_testutil.ToFloat64(db.compactor.(*LeveledCompactor).metrics.ran), "`compaction` count metric mismatch")
+			actBlocks, err = blockDirs(db.Dir())
+			testutil.Ok(t, err)
+			testutil.Equals(t, expBlocks, len(actBlocks)-1, "block count should be the same as before the compaction") // -1 to exclude the corrupted block.
+		})
+	}
 }

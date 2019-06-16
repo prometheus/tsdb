@@ -21,12 +21,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-kit/kit/log"
 	"github.com/prometheus/tsdb/testutil"
 )
 
 func TestWriteAndReadbackTombStones(t *testing.T) {
 	tmpdir, _ := ioutil.TempDir("", "test")
-	defer os.RemoveAll(tmpdir)
+	defer func() {
+		testutil.Ok(t, os.RemoveAll(tmpdir))
+	}()
 
 	ref := uint64(0)
 
@@ -44,7 +47,7 @@ func TestWriteAndReadbackTombStones(t *testing.T) {
 		stones.addInterval(ref, dranges...)
 	}
 
-	testutil.Ok(t, writeTombstoneFile(tmpdir, stones))
+	testutil.Ok(t, writeTombstoneFile(log.NewNopLogger(), tmpdir, stones))
 
 	restr, _, err := readTombstones(tmpdir)
 	testutil.Ok(t, err)
@@ -120,7 +123,6 @@ func TestAddingNewIntervals(t *testing.T) {
 
 		testutil.Equals(t, c.exp, c.exist.add(c.new))
 	}
-	return
 }
 
 // TestMemTombstonesConcurrency to make sure they are safe to access from different goroutines.
@@ -138,7 +140,8 @@ func TestMemTombstonesConcurrency(t *testing.T) {
 	}()
 	go func() {
 		for x := 0; x < totalRuns; x++ {
-			tomb.Get(uint64(x))
+			_, err := tomb.Get(uint64(x))
+			testutil.Ok(t, err)
 		}
 		wg.Done()
 	}()

@@ -14,6 +14,9 @@
 package tsdb
 
 import (
+	"context"
+	"encoding/binary"
+	"errors"
 	"io/ioutil"
 	"math/rand"
 	"os"
@@ -21,6 +24,7 @@ import (
 	"testing"
 
 	"github.com/go-kit/kit/log"
+	"github.com/prometheus/tsdb/chunks"
 	"github.com/prometheus/tsdb/testutil"
 	"github.com/prometheus/tsdb/tsdbutil"
 )
@@ -31,9 +35,11 @@ import (
 func TestBlockMetaMustNeverBeVersion2(t *testing.T) {
 	dir, err := ioutil.TempDir("", "metaversion")
 	testutil.Ok(t, err)
-	defer os.RemoveAll(dir)
+	defer func() {
+		testutil.Ok(t, os.RemoveAll(dir))
+	}()
 
-	testutil.Ok(t, writeMetaFile(dir, &BlockMeta{}))
+	testutil.Ok(t, writeMetaFile(log.NewNopLogger(), dir, &BlockMeta{}))
 
 	meta, err := readMetaFile(dir)
 	testutil.Ok(t, err)
@@ -43,7 +49,9 @@ func TestBlockMetaMustNeverBeVersion2(t *testing.T) {
 func TestSetCompactionFailed(t *testing.T) {
 	tmpdir, err := ioutil.TempDir("", "test")
 	testutil.Ok(t, err)
-	defer os.RemoveAll(tmpdir)
+	defer func() {
+		testutil.Ok(t, os.RemoveAll(tmpdir))
+	}()
 
 	blockDir := createBlock(t, tmpdir, genSeries(1, 1, 0, 0))
 	b, err := OpenBlock(nil, blockDir, nil)
@@ -57,6 +65,87 @@ func TestSetCompactionFailed(t *testing.T) {
 	testutil.Ok(t, err)
 	testutil.Equals(t, true, b.meta.Compaction.Failed)
 	testutil.Ok(t, b.Close())
+}
+
+func TestCreateBlock(t *testing.T) {
+	tmpdir, err := ioutil.TempDir("", "test")
+	testutil.Ok(t, err)
+	defer func() {
+		testutil.Ok(t, os.RemoveAll(tmpdir))
+	}()
+	b, err := OpenBlock(nil, createBlock(t, tmpdir, genSeries(1, 1, 0, 10)), nil)
+	if err == nil {
+		testutil.Ok(t, b.Close())
+	}
+	testutil.Ok(t, err)
+}
+
+func TestCorruptedChunk(t *testing.T) {
+	for name, test := range map[string]struct {
+		corrFunc func(f *os.File) // Func that applies the corruption.
+		expErr   error
+	}{
+		"invalid header size": {
+			func(f *os.File) {
+				err := f.Truncate(1)
+				testutil.Ok(t, err)
+			},
+			errors.New("invalid chunk header in segment 0: invalid size"),
+		},
+		"invalid magic number": {
+			func(f *os.File) {
+				magicChunksOffset := int64(0)
+				_, err := f.Seek(magicChunksOffset, 0)
+				testutil.Ok(t, err)
+
+				// Set invalid magic number.
+				b := make([]byte, chunks.MagicChunksSize)
+				binary.BigEndian.PutUint32(b[:chunks.MagicChunksSize], 0x00000000)
+				n, err := f.Write(b)
+				testutil.Ok(t, err)
+				testutil.Equals(t, chunks.MagicChunksSize, n)
+			},
+			errors.New("invalid magic number 0"),
+		},
+		"invalid chunk format version": {
+			func(f *os.File) {
+				chunksFormatVersionOffset := int64(4)
+				_, err := f.Seek(chunksFormatVersionOffset, 0)
+				testutil.Ok(t, err)
+
+				// Set invalid chunk format version.
+				b := make([]byte, chunks.ChunksFormatVersionSize)
+				b[0] = 0
+				n, err := f.Write(b)
+				testutil.Ok(t, err)
+				testutil.Equals(t, chunks.ChunksFormatVersionSize, n)
+			},
+			errors.New("invalid chunk format version 0"),
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			tmpdir, err := ioutil.TempDir("", "test_open_block_chunk_corrupted")
+			testutil.Ok(t, err)
+			defer func() {
+				testutil.Ok(t, os.RemoveAll(tmpdir))
+			}()
+
+			blockDir := createBlock(t, tmpdir, genSeries(1, 1, 0, 0))
+			files, err := sequenceFiles(chunkDir(blockDir))
+			testutil.Ok(t, err)
+			testutil.Assert(t, len(files) > 0, "No chunk created.")
+
+			f, err := os.OpenFile(files[0], os.O_RDWR, 0666)
+			testutil.Ok(t, err)
+
+			// Apply corruption function.
+			test.corrFunc(f)
+			testutil.Ok(t, f.Close())
+
+			_, err = OpenBlock(nil, blockDir, nil)
+			testutil.Equals(t, test.expErr.Error(), err.Error())
+		})
+	}
 }
 
 // createBlock creates a block with given set of series and returns its dir.
@@ -85,7 +174,7 @@ func createBlock(tb testing.TB, dir string, series []Series) string {
 	err = app.Commit()
 	testutil.Ok(tb, err)
 
-	compactor, err := NewLeveledCompactor(nil, log.NewNopLogger(), []int64{1000000}, nil)
+	compactor, err := NewLeveledCompactor(context.Background(), nil, log.NewNopLogger(), []int64{1000000}, nil)
 	testutil.Ok(tb, err)
 
 	testutil.Ok(tb, os.MkdirAll(dir, 0777))
@@ -100,8 +189,8 @@ func genSeries(totalSeries, labelCount int, mint, maxt int64) []Series {
 	if totalSeries == 0 || labelCount == 0 {
 		return nil
 	}
-	series := make([]Series, totalSeries)
 
+	series := make([]Series, totalSeries)
 	for i := 0; i < totalSeries; i++ {
 		lbls := make(map[string]string, labelCount)
 		for len(lbls) < labelCount {
@@ -113,7 +202,26 @@ func genSeries(totalSeries, labelCount int, mint, maxt int64) []Series {
 		}
 		series[i] = newSeries(lbls, samples)
 	}
+	return series
+}
 
+// populateSeries generates series from given labels, mint and maxt.
+func populateSeries(lbls []map[string]string, mint, maxt int64) []Series {
+	if len(lbls) == 0 {
+		return nil
+	}
+
+	series := make([]Series, 0, len(lbls))
+	for _, lbl := range lbls {
+		if len(lbl) == 0 {
+			continue
+		}
+		samples := make([]tsdbutil.Sample, 0, maxt-mint+1)
+		for t := mint; t <= maxt; t++ {
+			samples = append(samples, sample{t: t, v: rand.Float64()})
+		}
+		series = append(series, newSeries(lbl, samples))
+	}
 	return series
 }
 

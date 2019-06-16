@@ -15,7 +15,7 @@
 package tsdb
 
 import (
-	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -35,7 +35,9 @@ import (
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/tsdb/chunkenc"
+	tsdb_errors "github.com/prometheus/tsdb/errors"
 	"github.com/prometheus/tsdb/fileutil"
+	_ "github.com/prometheus/tsdb/goversion"
 	"github.com/prometheus/tsdb/labels"
 	"github.com/prometheus/tsdb/wal"
 	"golang.org/x/sync/errgroup"
@@ -44,15 +46,19 @@ import (
 // DefaultOptions used for the DB. They are sane for setups using
 // millisecond precision timestamps.
 var DefaultOptions = &Options{
-	WALSegmentSize:    wal.DefaultSegmentSize,
-	RetentionDuration: 15 * 24 * 60 * 60 * 1000, // 15 days in milliseconds
-	BlockRanges:       ExponentialBlockRanges(int64(2*time.Hour)/1e6, 3, 5),
-	NoLockfile:        false,
+	WALSegmentSize:         wal.DefaultSegmentSize,
+	RetentionDuration:      15 * 24 * 60 * 60 * 1000, // 15 days in milliseconds
+	BlockRanges:            ExponentialBlockRanges(int64(2*time.Hour)/1e6, 3, 5),
+	NoLockfile:             false,
+	AllowOverlappingBlocks: false,
 }
 
 // Options of the DB storage.
 type Options struct {
-	// Segments (wal files) max size
+	// Segments (wal files) max size.
+	// WALSegmentSize = 0, segment size is default size.
+	// WALSegmentSize > 0, segment size is WALSegmentSize.
+	// WALSegmentSize < 0, wal is disabled.
 	WALSegmentSize int
 
 	// Duration of persisted data to keep.
@@ -70,6 +76,10 @@ type Options struct {
 
 	// NoLockfile disables creation and consideration of a lock file.
 	NoLockfile bool
+
+	// Overlapping blocks are allowed if AllowOverlappingBlocks is true.
+	// This in-turn enables vertical compaction and vertical query merge.
+	AllowOverlappingBlocks bool
 }
 
 // Appender allows appending a batch of data. It must be completed with a
@@ -86,8 +96,8 @@ type Appender interface {
 	// If the reference is 0 it must not be used for caching.
 	Add(l labels.Labels, t int64, v float64) (uint64, error)
 
-	// Add adds a sample pair for the referenced series. It is generally faster
-	// than adding a sample by providing its full label set.
+	// AddFast adds a sample pair for the referenced series. It is generally
+	// faster than adding a sample by providing its full label set.
 	AddFast(ref uint64, t int64, v float64) error
 
 	// Commit submits the collected samples and purges the batch.
@@ -126,6 +136,9 @@ type DB struct {
 	// changing the autoCompact var.
 	autoCompactMtx sync.Mutex
 	autoCompact    bool
+
+	// Cancel a running compaction when a shutdown is initiated.
+	compactCancel context.CancelFunc
 }
 
 type dbMetrics struct {
@@ -271,19 +284,28 @@ func Open(dir string, l log.Logger, r prometheus.Registerer, opts *Options) (db 
 		db.lockf = lockf
 	}
 
-	db.compactor, err = NewLeveledCompactor(r, l, opts.BlockRanges, db.chunkPool)
+	ctx, cancel := context.WithCancel(context.Background())
+	db.compactor, err = NewLeveledCompactor(ctx, r, l, opts.BlockRanges, db.chunkPool)
 	if err != nil {
+		cancel()
 		return nil, errors.Wrap(err, "create leveled compactor")
 	}
+	db.compactCancel = cancel
 
+	var wlog *wal.WAL
 	segmentSize := wal.DefaultSegmentSize
-	if opts.WALSegmentSize > 0 {
-		segmentSize = opts.WALSegmentSize
+	// Wal is enabled.
+	if opts.WALSegmentSize >= 0 {
+		// Wal is set to a custom size.
+		if opts.WALSegmentSize > 0 {
+			segmentSize = opts.WALSegmentSize
+		}
+		wlog, err = wal.NewSize(l, r, filepath.Join(dir, "wal"), segmentSize)
+		if err != nil {
+			return nil, err
+		}
 	}
-	wlog, err := wal.NewSize(l, r, filepath.Join(dir, "wal"), segmentSize)
-	if err != nil {
-		return nil, err
-	}
+
 	db.head, err = NewHead(r, l, wlog, opts.BlockRanges[0])
 	if err != nil {
 		return nil, err
@@ -370,7 +392,7 @@ func (a dbAppender) Commit() error {
 
 	// We could just run this check every few minutes practically. But for benchmarks
 	// and high frequency use cases this is the safer way.
-	if a.db.head.MaxTime()-a.db.head.MinTime() > a.db.head.chunkRange/2*3 {
+	if a.db.head.compactable() {
 		select {
 		case a.db.compactc <- struct{}{}:
 		default:
@@ -397,13 +419,11 @@ func (db *DB) compact() (err error) {
 			return nil
 		default:
 		}
-		// The head has a compactable range if 1.5 level 0 ranges are between the oldest
-		// and newest timestamp. The 0.5 acts as a buffer of the appendable window.
-		if db.head.MaxTime()-db.head.MinTime() <= db.opts.BlockRanges[0]/2*3 {
+		if !db.head.compactable() {
 			break
 		}
 		mint := db.head.MinTime()
-		maxt := rangeForTimestamp(mint, db.opts.BlockRanges[0])
+		maxt := rangeForTimestamp(mint, db.head.chunkRange)
 
 		// Wrap head into a range that bounds all reads to it.
 		head := &rangeHead{
@@ -425,6 +445,9 @@ func (db *DB) compact() (err error) {
 		runtime.GC()
 
 		if err := db.reload(); err != nil {
+			if err := os.RemoveAll(filepath.Join(db.dir, uid.String())); err != nil {
+				return errors.Wrapf(err, "delete persisted head block after failed db reload:%s", uid)
+			}
 			return errors.Wrap(err, "reload blocks")
 		}
 		if (uid == ulid.ULID{}) {
@@ -454,12 +477,16 @@ func (db *DB) compact() (err error) {
 		default:
 		}
 
-		if _, err := db.compactor.Compact(db.dir, plan, db.blocks); err != nil {
+		uid, err := db.compactor.Compact(db.dir, plan, db.blocks)
+		if err != nil {
 			return errors.Wrapf(err, "compact %s", plan)
 		}
 		runtime.GC()
 
 		if err := db.reload(); err != nil {
+			if err := os.RemoveAll(filepath.Join(db.dir, uid.String())); err != nil {
+				return errors.Wrapf(err, "delete compacted block after failed db reload:%s", uid)
+			}
 			return errors.Wrap(err, "reload blocks")
 		}
 		runtime.GC()
@@ -505,7 +532,13 @@ func (db *DB) reload() (err error) {
 		}
 	}
 	if len(corrupted) > 0 {
-		return errors.Wrap(err, "unexpected corrupted block")
+		// Close all new blocks to release the lock for windows.
+		for _, block := range loadable {
+			if _, loaded := db.getBlock(block.Meta().ULID); !loaded {
+				block.Close()
+			}
+		}
+		return fmt.Errorf("unexpected corrupted block:%v", corrupted)
 	}
 
 	// All deletable blocks should not be loaded.
@@ -526,10 +559,12 @@ func (db *DB) reload() (err error) {
 	db.metrics.blocksBytes.Set(float64(blocksSize))
 
 	sort.Slice(loadable, func(i, j int) bool {
-		return loadable[i].Meta().MaxTime < loadable[j].Meta().MaxTime
+		return loadable[i].Meta().MinTime < loadable[j].Meta().MinTime
 	})
-	if err := validateBlockSequence(loadable); err != nil {
-		return errors.Wrap(err, "invalid block sequence")
+	if !db.opts.AllowOverlappingBlocks {
+		if err := validateBlockSequence(loadable); err != nil {
+			return errors.Wrap(err, "invalid block sequence")
+		}
 	}
 
 	// Swap new blocks first for subsequently created readers to be seen.
@@ -537,6 +572,14 @@ func (db *DB) reload() (err error) {
 	oldBlocks := db.blocks
 	db.blocks = loadable
 	db.mtx.Unlock()
+
+	blockMetas := make([]BlockMeta, 0, len(loadable))
+	for _, b := range loadable {
+		blockMetas = append(blockMetas, b.Meta())
+	}
+	if overlaps := OverlappingBlocks(blockMetas); len(overlaps) > 0 {
+		level.Warn(db.logger).Log("msg", "overlapping blocks found during reload", "detail", overlaps.String())
+	}
 
 	for _, b := range oldBlocks {
 		if _, ok := deletable[b.Meta().ULID]; ok {
@@ -813,6 +856,7 @@ func (db *DB) Head() *Head {
 // Close the partition.
 func (db *DB) Close() error {
 	close(db.stopc)
+	db.compactCancel()
 	<-db.donec
 
 	db.mtx.Lock()
@@ -825,7 +869,7 @@ func (db *DB) Close() error {
 		g.Go(pb.Close)
 	}
 
-	var merr MultiError
+	var merr tsdb_errors.MultiError
 
 	merr.Add(g.Wait())
 
@@ -860,7 +904,7 @@ func (db *DB) Snapshot(dir string, withHead bool) error {
 	if dir == db.dir {
 		return errors.Errorf("cannot snapshot into base directory")
 	}
-	if _, err := ulid.Parse(dir); err == nil {
+	if _, err := ulid.ParseStrict(dir); err == nil {
 		return errors.Errorf("dir must not be a valid ULID")
 	}
 
@@ -888,6 +932,7 @@ func (db *DB) Snapshot(dir string, withHead bool) error {
 // A goroutine must not handle more than one open Querier.
 func (db *DB) Querier(mint, maxt int64) (Querier, error) {
 	var blocks []BlockReader
+	var blockMetas []BlockMeta
 
 	db.mtx.RLock()
 	defer db.mtx.RUnlock()
@@ -895,6 +940,7 @@ func (db *DB) Querier(mint, maxt int64) (Querier, error) {
 	for _, b := range db.blocks {
 		if b.OverlapsClosedInterval(mint, maxt) {
 			blocks = append(blocks, b)
+			blockMetas = append(blockMetas, b.Meta())
 		}
 	}
 	if maxt >= db.head.MinTime() {
@@ -905,22 +951,31 @@ func (db *DB) Querier(mint, maxt int64) (Querier, error) {
 		})
 	}
 
-	sq := &querier{
-		blocks: make([]Querier, 0, len(blocks)),
-	}
+	blockQueriers := make([]Querier, 0, len(blocks))
 	for _, b := range blocks {
 		q, err := NewBlockQuerier(b, mint, maxt)
 		if err == nil {
-			sq.blocks = append(sq.blocks, q)
+			blockQueriers = append(blockQueriers, q)
 			continue
 		}
 		// If we fail, all previously opened queriers must be closed.
-		for _, q := range sq.blocks {
+		for _, q := range blockQueriers {
 			q.Close()
 		}
 		return nil, errors.Wrapf(err, "open querier for block %s", b)
 	}
-	return sq, nil
+
+	if len(OverlappingBlocks(blockMetas)) > 0 {
+		return &verticalQuerier{
+			querier: querier{
+				blocks: blockQueriers,
+			},
+		}, nil
+	}
+
+	return &querier{
+		blocks: blockQueriers,
+	}, nil
 }
 
 func rangeForTimestamp(t int64, width int64) (maxt int64) {
@@ -990,7 +1045,7 @@ func isBlockDir(fi os.FileInfo) bool {
 	if !fi.IsDir() {
 		return false
 	}
-	_, err := ulid.Parse(fi.Name())
+	_, err := ulid.ParseStrict(fi.Name())
 	return err == nil
 }
 
@@ -1042,50 +1097,8 @@ func nextSequenceFile(dir string) (string, int, error) {
 	return filepath.Join(dir, fmt.Sprintf("%0.6d", i+1)), int(i + 1), nil
 }
 
-// The MultiError type implements the error interface, and contains the
-// Errors used to construct it.
-type MultiError []error
-
-// Returns a concatenated string of the contained errors
-func (es MultiError) Error() string {
-	var buf bytes.Buffer
-
-	if len(es) > 1 {
-		fmt.Fprintf(&buf, "%d errors: ", len(es))
-	}
-
-	for i, err := range es {
-		if i != 0 {
-			buf.WriteString("; ")
-		}
-		buf.WriteString(err.Error())
-	}
-
-	return buf.String()
-}
-
-// Add adds the error to the error list if it is not nil.
-func (es *MultiError) Add(err error) {
-	if err == nil {
-		return
-	}
-	if merr, ok := err.(MultiError); ok {
-		*es = append(*es, merr...)
-	} else {
-		*es = append(*es, err)
-	}
-}
-
-// Err returns the error list as an error or nil if it is empty.
-func (es MultiError) Err() error {
-	if len(es) == 0 {
-		return nil
-	}
-	return es
-}
-
-func closeAll(cs ...io.Closer) error {
-	var merr MultiError
+func closeAll(cs []io.Closer) error {
+	var merr tsdb_errors.MultiError
 
 	for _, c := range cs {
 		merr.Add(c.Close())

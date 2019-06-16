@@ -24,6 +24,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/prometheus/tsdb/chunkenc"
 	"github.com/prometheus/tsdb/chunks"
+	"github.com/prometheus/tsdb/encoding"
 	"github.com/prometheus/tsdb/labels"
 	"github.com/prometheus/tsdb/testutil"
 )
@@ -149,9 +150,11 @@ func (m mockIndex) LabelIndices() ([][]string, error) {
 func TestIndexRW_Create_Open(t *testing.T) {
 	dir, err := ioutil.TempDir("", "test_index_create")
 	testutil.Ok(t, err)
-	defer os.RemoveAll(dir)
+	defer func() {
+		testutil.Ok(t, os.RemoveAll(dir))
+	}()
 
-	fn := filepath.Join(dir, "index")
+	fn := filepath.Join(dir, indexFilename)
 
 	// An empty index must still result in a readable file.
 	iw, err := NewWriter(fn)
@@ -167,6 +170,7 @@ func TestIndexRW_Create_Open(t *testing.T) {
 	testutil.Ok(t, err)
 	_, err = f.WriteAt([]byte{0, 0}, 0)
 	testutil.Ok(t, err)
+	f.Close()
 
 	_, err = NewFileReader(dir)
 	testutil.NotOk(t, err)
@@ -175,9 +179,11 @@ func TestIndexRW_Create_Open(t *testing.T) {
 func TestIndexRW_Postings(t *testing.T) {
 	dir, err := ioutil.TempDir("", "test_index_postings")
 	testutil.Ok(t, err)
-	defer os.RemoveAll(dir)
+	defer func() {
+		testutil.Ok(t, os.RemoveAll(dir))
+	}()
 
-	fn := filepath.Join(dir, "index")
+	fn := filepath.Join(dir, indexFilename)
 
 	iw, err := NewWriter(fn)
 	testutil.Ok(t, err)
@@ -206,7 +212,7 @@ func TestIndexRW_Postings(t *testing.T) {
 	testutil.Ok(t, iw.AddSeries(3, series[2]))
 	testutil.Ok(t, iw.AddSeries(4, series[3]))
 
-	err = iw.WritePostings("a", "1", newListPostings([]uint64{1, 2, 3, 4}))
+	err = iw.WritePostings("a", "1", newListPostings(1, 2, 3, 4))
 	testutil.Ok(t, err)
 
 	testutil.Ok(t, iw.Close())
@@ -235,7 +241,9 @@ func TestIndexRW_Postings(t *testing.T) {
 func TestPersistence_index_e2e(t *testing.T) {
 	dir, err := ioutil.TempDir("", "test_persistence_e2e")
 	testutil.Ok(t, err)
-	defer os.RemoveAll(dir)
+	defer func() {
+		testutil.Ok(t, os.RemoveAll(dir))
+	}()
 
 	lbls, err := labels.ReadLabels(filepath.Join("..", "testdata", "20kseries.json"), 20000)
 	testutil.Ok(t, err)
@@ -271,7 +279,7 @@ func TestPersistence_index_e2e(t *testing.T) {
 		})
 	}
 
-	iw, err := NewWriter(filepath.Join(dir, "index"))
+	iw, err := NewWriter(filepath.Join(dir, indexFilename))
 	testutil.Ok(t, err)
 
 	testutil.Ok(t, iw.AddSymbols(symbols))
@@ -287,7 +295,7 @@ func TestPersistence_index_e2e(t *testing.T) {
 	for i, s := range input {
 		err = iw.AddSeries(uint64(i), s.labels, s.chunks...)
 		testutil.Ok(t, err)
-		mi.AddSeries(uint64(i), s.labels, s.chunks...)
+		testutil.Ok(t, mi.AddSeries(uint64(i), s.labels, s.chunks...))
 
 		for _, l := range s.labels {
 			valset, ok := values[l.Name]
@@ -298,7 +306,6 @@ func TestPersistence_index_e2e(t *testing.T) {
 			valset[l.Value] = struct{}{}
 		}
 		postings.Add(uint64(i), s.labels)
-		i++
 	}
 
 	for k, v := range values {
@@ -316,9 +323,9 @@ func TestPersistence_index_e2e(t *testing.T) {
 	for i := range all {
 		all[i] = uint64(i)
 	}
-	err = iw.WritePostings("", "", newListPostings(all))
+	err = iw.WritePostings("", "", newListPostings(all...))
 	testutil.Ok(t, err)
-	mi.WritePostings("", "", newListPostings(all))
+	testutil.Ok(t, mi.WritePostings("", "", newListPostings(all...)))
 
 	for n, e := range postings.m {
 		for v := range e {
@@ -331,7 +338,7 @@ func TestPersistence_index_e2e(t *testing.T) {
 	err = iw.Close()
 	testutil.Ok(t, err)
 
-	ir, err := NewFileReader(filepath.Join(dir, "index"))
+	ir, err := NewFileReader(filepath.Join(dir, indexFilename))
 	testutil.Ok(t, err)
 
 	for p := range mi.postings {
@@ -395,8 +402,8 @@ func TestPersistence_index_e2e(t *testing.T) {
 func TestDecbufUvariantWithInvalidBuffer(t *testing.T) {
 	b := realByteSlice([]byte{0x81, 0x81, 0x81, 0x81, 0x81, 0x81})
 
-	db := newDecbufUvarintAt(b, 0)
-	testutil.NotOk(t, db.err())
+	db := encoding.NewDecbufUvarintAt(b, 0, castagnoliTable)
+	testutil.NotOk(t, db.Err())
 }
 
 func TestReaderWithInvalidBuffer(t *testing.T) {
@@ -404,4 +411,19 @@ func TestReaderWithInvalidBuffer(t *testing.T) {
 
 	_, err := NewReader(b)
 	testutil.NotOk(t, err)
+}
+
+// TestNewFileReaderErrorNoOpenFiles ensures that in case of an error no file remains open.
+func TestNewFileReaderErrorNoOpenFiles(t *testing.T) {
+	dir := testutil.NewTemporaryDirectory("block", t)
+
+	idxName := filepath.Join(dir.Path(), "index")
+	err := ioutil.WriteFile(idxName, []byte("corrupted contents"), 0644)
+	testutil.Ok(t, err)
+
+	_, err = NewFileReader(idxName)
+	testutil.NotOk(t, err)
+
+	// dir.Close will fail on Win if idxName fd is not closed on error path.
+	dir.Close()
 }
