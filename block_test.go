@@ -21,6 +21,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/go-kit/kit/log"
@@ -150,6 +151,18 @@ func TestCorruptedChunk(t *testing.T) {
 
 // createBlock creates a block with given set of series and returns its dir.
 func createBlock(tb testing.TB, dir string, series []Series) string {
+	head := createHead(tb, series)
+	compactor, err := NewLeveledCompactor(context.Background(), nil, log.NewNopLogger(), []int64{1000000}, nil)
+	testutil.Ok(tb, err)
+
+	testutil.Ok(tb, os.MkdirAll(dir, 0777))
+
+	ulid, err := compactor.Write(dir, head, head.MinTime(), head.MaxTime(), nil)
+	testutil.Ok(tb, err)
+	return filepath.Join(dir, ulid.String())
+}
+
+func createHead(tb testing.TB, series []Series) *Head {
 	head, err := NewHead(nil, nil, nil, 2*60*60*1000)
 	testutil.Ok(tb, err)
 	defer head.Close()
@@ -173,16 +186,13 @@ func createBlock(tb testing.TB, dir string, series []Series) string {
 	}
 	err = app.Commit()
 	testutil.Ok(tb, err)
-
-	compactor, err := NewLeveledCompactor(context.Background(), nil, log.NewNopLogger(), []int64{1000000}, nil)
-	testutil.Ok(tb, err)
-
-	testutil.Ok(tb, os.MkdirAll(dir, 0777))
-
-	ulid, err := compactor.Write(dir, head, head.MinTime(), head.MaxTime(), nil)
-	testutil.Ok(tb, err)
-	return filepath.Join(dir, ulid.String())
+	return head
 }
+
+const (
+	defaultLabelName  = "labelName"
+	defaultLabelValue = "labelValue"
+)
 
 // genSeries generates series with a given number of labels and values.
 func genSeries(totalSeries, labelCount int, mint, maxt int64) []Series {
@@ -191,10 +201,12 @@ func genSeries(totalSeries, labelCount int, mint, maxt int64) []Series {
 	}
 
 	series := make([]Series, totalSeries)
+
 	for i := 0; i < totalSeries; i++ {
 		lbls := make(map[string]string, labelCount)
-		for len(lbls) < labelCount {
-			lbls[randString()] = randString()
+		lbls[defaultLabelName] = strconv.Itoa(i)
+		for j := 1; len(lbls) < labelCount; j++ {
+			lbls[defaultLabelName+strconv.Itoa(j)] = defaultLabelValue + strconv.Itoa(j)
 		}
 		samples := make([]tsdbutil.Sample, 0, maxt-mint+1)
 		for t := mint; t <= maxt; t++ {
@@ -223,32 +235,4 @@ func populateSeries(lbls []map[string]string, mint, maxt int64) []Series {
 		series = append(series, newSeries(lbl, samples))
 	}
 	return series
-}
-
-const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-const (
-	letterIdxBits = 6                    // 6 bits to represent a letter index
-	letterIdxMask = 1<<letterIdxBits - 1 // All 1-bits, as many as letterIdxBits
-	letterIdxMax  = 63 / letterIdxBits   // # of letter indices fitting in 63 bits
-)
-
-// randString generates random string.
-func randString() string {
-	maxLength := int32(50)
-	length := rand.Int31n(maxLength)
-	b := make([]byte, length+1)
-	// A rand.Int63() generates 63 random bits, enough for letterIdxMax characters!
-	for i, cache, remain := length, rand.Int63(), letterIdxMax; i >= 0; {
-		if remain == 0 {
-			cache, remain = rand.Int63(), letterIdxMax
-		}
-		if idx := int(cache & letterIdxMask); idx < len(letterBytes) {
-			b[i] = letterBytes[idx]
-			i--
-		}
-		cache >>= letterIdxBits
-		remain--
-	}
-
-	return string(b)
 }

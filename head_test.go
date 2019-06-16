@@ -23,6 +23,7 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/pkg/errors"
 	prom_testutil "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/prometheus/tsdb/chunkenc"
 	"github.com/prometheus/tsdb/chunks"
@@ -34,8 +35,7 @@ import (
 )
 
 func BenchmarkCreateSeries(b *testing.B) {
-	lbls, err := labels.ReadLabels(filepath.Join("testdata", "20kseries.json"), b.N)
-	testutil.Ok(b, err)
+	series := genSeries(b.N, 10, 0, 0)
 
 	h, err := NewHead(nil, nil, nil, 10000)
 	testutil.Ok(b, err)
@@ -44,8 +44,8 @@ func BenchmarkCreateSeries(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 
-	for _, l := range lbls {
-		h.getOrCreate(l.Hash(), l)
+	for _, s := range series {
+		h.getOrCreate(s.Labels().Hash(), s.Labels())
 	}
 }
 
@@ -109,10 +109,16 @@ func TestHead_ReadWAL(t *testing.T) {
 		},
 		[]RefSeries{
 			{Ref: 50, Labels: labels.FromStrings("a", "4")},
+			// This series has two refs pointing to it.
+			{Ref: 101, Labels: labels.FromStrings("a", "3")},
 		},
 		[]RefSample{
 			{Ref: 10, T: 101, V: 5},
 			{Ref: 50, T: 101, V: 6},
+			{Ref: 101, T: 101, V: 7},
+		},
+		[]Stone{
+			{ref: 0, intervals: []Interval{{Mint: 99, Maxt: 101}}},
 		},
 	}
 	dir, err := ioutil.TempDir("", "test_read_wal")
@@ -130,7 +136,7 @@ func TestHead_ReadWAL(t *testing.T) {
 	testutil.Ok(t, err)
 
 	testutil.Ok(t, head.Init(math.MinInt64))
-	testutil.Equals(t, uint64(100), head.lastSeriesID)
+	testutil.Equals(t, uint64(101), head.lastSeriesID)
 
 	s10 := head.series.getByID(10)
 	s11 := head.series.getByID(11)
@@ -153,7 +159,52 @@ func TestHead_ReadWAL(t *testing.T) {
 
 	testutil.Equals(t, []sample{{100, 2}, {101, 5}}, expandChunk(s10.iterator(0)))
 	testutil.Equals(t, []sample{{101, 6}}, expandChunk(s50.iterator(0)))
-	testutil.Equals(t, []sample{{100, 3}}, expandChunk(s100.iterator(0)))
+	testutil.Equals(t, []sample{{100, 3}, {101, 7}}, expandChunk(s100.iterator(0)))
+}
+
+func TestHead_WALMultiRef(t *testing.T) {
+	dir, err := ioutil.TempDir("", "test_wal_multi_ref")
+	testutil.Ok(t, err)
+	defer func() {
+		testutil.Ok(t, os.RemoveAll(dir))
+	}()
+
+	w, err := wal.New(nil, nil, dir)
+	testutil.Ok(t, err)
+
+	head, err := NewHead(nil, nil, w, 1000)
+	testutil.Ok(t, err)
+
+	testutil.Ok(t, head.Init(0))
+	app := head.Appender()
+	ref1, err := app.Add(labels.FromStrings("foo", "bar"), 100, 1)
+	testutil.Ok(t, err)
+	testutil.Ok(t, app.Commit())
+
+	testutil.Ok(t, head.Truncate(200))
+
+	app = head.Appender()
+	ref2, err := app.Add(labels.FromStrings("foo", "bar"), 300, 2)
+	testutil.Ok(t, err)
+	testutil.Ok(t, app.Commit())
+
+	if ref1 == ref2 {
+		t.Fatal("Refs are the same")
+	}
+	testutil.Ok(t, head.Close())
+
+	w, err = wal.New(nil, nil, dir)
+	testutil.Ok(t, err)
+
+	head, err = NewHead(nil, nil, w, 1000)
+	testutil.Ok(t, err)
+	testutil.Ok(t, head.Init(0))
+	defer head.Close()
+
+	q, err := NewBlockQuerier(head, 0, 300)
+	testutil.Ok(t, err)
+	series := query(t, q, labels.NewEqualMatcher("foo", "bar"))
+	testutil.Equals(t, map[string][]tsdbutil.Sample{`{foo="bar"}`: {sample{100, 1}, sample{300, 2}}}, series)
 }
 
 func TestHead_Truncate(t *testing.T) {
@@ -994,7 +1045,9 @@ func TestHead_LogRollback(t *testing.T) {
 	testutil.Equals(t, []RefSeries{{Ref: 1, Labels: labels.FromStrings("a", "b")}}, series)
 }
 
-func TestWalRepair(t *testing.T) {
+// TestWalRepair_DecodingError ensures that a repair is run for an error
+// when decoding a record.
+func TestWalRepair_DecodingError(t *testing.T) {
 	var enc RecordEncoder
 	for name, test := range map[string]struct {
 		corrFunc  func(rec []byte) []byte // Func that applies the corruption to a record.
@@ -1037,43 +1090,99 @@ func TestWalRepair(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			dir, err := ioutil.TempDir("", "wal_head_repair")
+			dir, err := ioutil.TempDir("", "wal_repair")
 			testutil.Ok(t, err)
 			defer func() {
 				testutil.Ok(t, os.RemoveAll(dir))
 			}()
 
-			w, err := wal.New(nil, nil, dir)
-			testutil.Ok(t, err)
-			defer w.Close()
+			// Fill the wal and corrupt it.
+			{
+				w, err := wal.New(nil, nil, filepath.Join(dir, "wal"))
+				testutil.Ok(t, err)
 
-			for i := 1; i <= test.totalRecs; i++ {
-				// At this point insert a corrupted record.
-				if i-1 == test.expRecs {
-					testutil.Ok(t, w.Log(test.corrFunc(test.rec)))
-					continue
+				for i := 1; i <= test.totalRecs; i++ {
+					// At this point insert a corrupted record.
+					if i-1 == test.expRecs {
+						testutil.Ok(t, w.Log(test.corrFunc(test.rec)))
+						continue
+					}
+					testutil.Ok(t, w.Log(test.rec))
 				}
-				testutil.Ok(t, w.Log(test.rec))
+
+				h, err := NewHead(nil, nil, w, 1)
+				testutil.Ok(t, err)
+				testutil.Equals(t, 0.0, prom_testutil.ToFloat64(h.metrics.walCorruptionsTotal))
+				initErr := h.Init(math.MinInt64)
+
+				err = errors.Cause(initErr) // So that we can pick up errors even if wrapped.
+				_, corrErr := err.(*wal.CorruptionErr)
+				testutil.Assert(t, corrErr, "reading the wal didn't return corruption error")
+				testutil.Ok(t, w.Close())
 			}
 
-			h, err := NewHead(nil, nil, w, 1)
-			testutil.Ok(t, err)
-			testutil.Equals(t, 0.0, prom_testutil.ToFloat64(h.metrics.walCorruptionsTotal))
-			testutil.Ok(t, h.Init(math.MinInt64))
-			testutil.Equals(t, 1.0, prom_testutil.ToFloat64(h.metrics.walCorruptionsTotal))
-
-			sr, err := wal.NewSegmentsReader(dir)
-			testutil.Ok(t, err)
-			defer sr.Close()
-			r := wal.NewReader(sr)
-
-			var actRec int
-			for r.Next() {
-				actRec++
+			// Open the db to trigger a repair.
+			{
+				db, err := Open(dir, nil, nil, DefaultOptions)
+				testutil.Ok(t, err)
+				defer func() {
+					testutil.Ok(t, db.Close())
+				}()
+				testutil.Equals(t, 1.0, prom_testutil.ToFloat64(db.head.metrics.walCorruptionsTotal))
 			}
-			testutil.Ok(t, r.Err())
-			testutil.Equals(t, test.expRecs, actRec, "Wrong number of intact records")
+
+			// Read the wal content after the repair.
+			{
+				sr, err := wal.NewSegmentsReader(filepath.Join(dir, "wal"))
+				testutil.Ok(t, err)
+				defer sr.Close()
+				r := wal.NewReader(sr)
+
+				var actRec int
+				for r.Next() {
+					actRec++
+				}
+				testutil.Ok(t, r.Err())
+				testutil.Equals(t, test.expRecs, actRec, "Wrong number of intact records")
+			}
 		})
 	}
 
+}
+
+func TestNewWalSegmentOnTruncate(t *testing.T) {
+	dir, err := ioutil.TempDir("", "test_wal_segemnts")
+	testutil.Ok(t, err)
+	defer func() {
+		testutil.Ok(t, os.RemoveAll(dir))
+	}()
+	wlog, err := wal.NewSize(nil, nil, dir, 32768)
+	testutil.Ok(t, err)
+
+	h, err := NewHead(nil, nil, wlog, 1000)
+	testutil.Ok(t, err)
+	defer h.Close()
+	add := func(ts int64) {
+		app := h.Appender()
+		_, err := app.Add(labels.Labels{{"a", "b"}}, ts, 0)
+		testutil.Ok(t, err)
+		testutil.Ok(t, app.Commit())
+	}
+
+	add(0)
+	_, last, err := wlog.Segments()
+	testutil.Ok(t, err)
+	testutil.Equals(t, 0, last)
+
+	add(1)
+	testutil.Ok(t, h.Truncate(1))
+	_, last, err = wlog.Segments()
+	testutil.Ok(t, err)
+	testutil.Equals(t, 1, last)
+
+	add(2)
+	testutil.Ok(t, h.Truncate(2))
+	_, last, err = wlog.Segments()
+	testutil.Ok(t, err)
+	testutil.Equals(t, 2, last)
 }

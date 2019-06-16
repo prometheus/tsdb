@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"testing"
 
 	"github.com/pkg/errors"
@@ -1294,45 +1295,6 @@ func BenchmarkMergedSeriesSet(b *testing.B) {
 	}
 }
 
-func BenchmarkPersistedQueries(b *testing.B) {
-	for _, nSeries := range []int{10, 100} {
-		for _, nSamples := range []int64{1000, 10000, 100000} {
-			b.Run(fmt.Sprintf("series=%d,samplesPerSeries=%d", nSeries, nSamples), func(b *testing.B) {
-				dir, err := ioutil.TempDir("", "bench_persisted")
-				testutil.Ok(b, err)
-				defer func() {
-					testutil.Ok(b, os.RemoveAll(dir))
-				}()
-
-				block, err := OpenBlock(nil, createBlock(b, dir, genSeries(nSeries, 10, 1, int64(nSamples))), nil)
-				testutil.Ok(b, err)
-				defer block.Close()
-
-				q, err := NewBlockQuerier(block, block.Meta().MinTime, block.Meta().MaxTime)
-				testutil.Ok(b, err)
-				defer q.Close()
-
-				b.ResetTimer()
-				b.ReportAllocs()
-
-				for i := 0; i < b.N; i++ {
-					ss, err := q.Select(labels.NewMustRegexpMatcher("__name__", ".+"))
-					for ss.Next() {
-						s := ss.At()
-						s.Labels()
-						it := s.Iterator()
-						for it.Next() {
-						}
-						testutil.Ok(b, it.Err())
-					}
-					testutil.Ok(b, ss.Err())
-					testutil.Ok(b, err)
-				}
-			})
-		}
-	}
-}
-
 type mockChunkReader map[uint64]chunkenc.Chunk
 
 func (cr mockChunkReader) Chunk(id uint64) (chunkenc.Chunk, error) {
@@ -1653,19 +1615,7 @@ func BenchmarkQueryIterator(b *testing.B) {
 				}
 				defer sq.Close()
 
-				b.ResetTimer()
-				b.ReportAllocs()
-
-				ss, err := sq.Select(labels.NewMustRegexpMatcher("__name__", ".*"))
-				testutil.Ok(b, err)
-				for ss.Next() {
-					it := ss.At().Iterator()
-					for it.Next() {
-					}
-					testutil.Ok(b, it.Err())
-				}
-				testutil.Ok(b, ss.Err())
-				testutil.Ok(b, err)
+				benchQuery(b, c.numSeries, sq, labels.Selector{labels.NewMustRegexpMatcher("__name__", ".*")})
 			})
 		}
 	}
@@ -1760,6 +1710,192 @@ func BenchmarkQuerySeek(b *testing.B) {
 	}
 }
 
+// Refer to https://github.com/prometheus/prometheus/issues/2651.
+func BenchmarkSetMatcher(b *testing.B) {
+	cases := []struct {
+		numBlocks                   int
+		numSeries                   int
+		numSamplesPerSeriesPerBlock int
+		cardinality                 int
+		pattern                     string
+	}{
+		// The first three cases are to find out whether the set
+		// matcher is always faster than regex matcher.
+		{
+			numBlocks:                   1,
+			numSeries:                   1,
+			numSamplesPerSeriesPerBlock: 10,
+			cardinality:                 100,
+			pattern:                     "^(?:1|2|3|4|5|6|7|8|9|10)$",
+		},
+		{
+			numBlocks:                   1,
+			numSeries:                   15,
+			numSamplesPerSeriesPerBlock: 10,
+			cardinality:                 100,
+			pattern:                     "^(?:1|2|3|4|5|6|7|8|9|10)$",
+		},
+		{
+			numBlocks:                   1,
+			numSeries:                   15,
+			numSamplesPerSeriesPerBlock: 10,
+			cardinality:                 100,
+			pattern:                     "^(?:1|2|3)$",
+		},
+		// Big data sizes benchmarks.
+		{
+			numBlocks:                   20,
+			numSeries:                   1000,
+			numSamplesPerSeriesPerBlock: 10,
+			cardinality:                 100,
+			pattern:                     "^(?:1|2|3)$",
+		},
+		{
+			numBlocks:                   20,
+			numSeries:                   1000,
+			numSamplesPerSeriesPerBlock: 10,
+			cardinality:                 100,
+			pattern:                     "^(?:1|2|3|4|5|6|7|8|9|10)$",
+		},
+		// Increase cardinality.
+		{
+			numBlocks:                   1,
+			numSeries:                   100000,
+			numSamplesPerSeriesPerBlock: 10,
+			cardinality:                 100000,
+			pattern:                     "^(?:1|2|3|4|5|6|7|8|9|10)$",
+		},
+		{
+			numBlocks:                   1,
+			numSeries:                   500000,
+			numSamplesPerSeriesPerBlock: 10,
+			cardinality:                 500000,
+			pattern:                     "^(?:1|2|3|4|5|6|7|8|9|10)$",
+		},
+		{
+			numBlocks:                   10,
+			numSeries:                   500000,
+			numSamplesPerSeriesPerBlock: 10,
+			cardinality:                 500000,
+			pattern:                     "^(?:1|2|3|4|5|6|7|8|9|10)$",
+		},
+		{
+			numBlocks:                   1,
+			numSeries:                   1000000,
+			numSamplesPerSeriesPerBlock: 10,
+			cardinality:                 1000000,
+			pattern:                     "^(?:1|2|3|4|5|6|7|8|9|10)$",
+		},
+	}
+
+	for _, c := range cases {
+		dir, err := ioutil.TempDir("", "bench_postings_for_matchers")
+		testutil.Ok(b, err)
+		defer func() {
+			testutil.Ok(b, os.RemoveAll(dir))
+		}()
+
+		var (
+			blocks          []*Block
+			prefilledLabels []map[string]string
+			generatedSeries []Series
+		)
+		for i := int64(0); i < int64(c.numBlocks); i++ {
+			mint := i * int64(c.numSamplesPerSeriesPerBlock)
+			maxt := mint + int64(c.numSamplesPerSeriesPerBlock) - 1
+			if len(prefilledLabels) == 0 {
+				generatedSeries = genSeries(c.numSeries, 10, mint, maxt)
+				for _, s := range generatedSeries {
+					prefilledLabels = append(prefilledLabels, s.Labels().Map())
+				}
+			} else {
+				generatedSeries = populateSeries(prefilledLabels, mint, maxt)
+			}
+			block, err := OpenBlock(nil, createBlock(b, dir, generatedSeries), nil)
+			testutil.Ok(b, err)
+			blocks = append(blocks, block)
+			defer block.Close()
+		}
+
+		que := &querier{
+			blocks: make([]Querier, 0, len(blocks)),
+		}
+		for _, blk := range blocks {
+			q, err := NewBlockQuerier(blk, math.MinInt64, math.MaxInt64)
+			testutil.Ok(b, err)
+			que.blocks = append(que.blocks, q)
+		}
+		defer que.Close()
+
+		benchMsg := fmt.Sprintf("nSeries=%d,nBlocks=%d,cardinality=%d,pattern=\"%s\"", c.numSeries, c.numBlocks, c.cardinality, c.pattern)
+		b.Run(benchMsg, func(b *testing.B) {
+			b.ResetTimer()
+			b.ReportAllocs()
+			for n := 0; n < b.N; n++ {
+				_, err := que.Select(labels.NewMustRegexpMatcher("test", c.pattern))
+				testutil.Ok(b, err)
+
+			}
+		})
+	}
+}
+
+// Refer to https://github.com/prometheus/prometheus/issues/2651.
+func TestFindSetMatches(t *testing.T) {
+	cases := []struct {
+		pattern string
+		exp     []string
+	}{
+		// Simple sets.
+		{
+			pattern: "^(?:foo|bar|baz)$",
+			exp: []string{
+				"foo",
+				"bar",
+				"baz",
+			},
+		},
+		// Simple sets containing escaped characters.
+		{
+			pattern: "^(?:fo\\.o|bar\\?|\\^baz)$",
+			exp: []string{
+				"fo.o",
+				"bar?",
+				"^baz",
+			},
+		},
+		// Simple sets containing special characters without escaping.
+		{
+			pattern: "^(?:fo.o|bar?|^baz)$",
+			exp:     nil,
+		},
+		// Missing wrapper.
+		{
+			pattern: "foo|bar|baz",
+			exp:     nil,
+		},
+	}
+
+	for _, c := range cases {
+		matches := findSetMatches(c.pattern)
+		if len(c.exp) == 0 {
+			if len(matches) != 0 {
+				t.Errorf("Evaluating %s, unexpected result %v", c.pattern, matches)
+			}
+		} else {
+			if len(matches) != len(c.exp) {
+				t.Errorf("Evaluating %s, length of result not equal to exp", c.pattern)
+			} else {
+				for i := 0; i < len(c.exp); i++ {
+					if c.exp[i] != matches[i] {
+						t.Errorf("Evaluating %s, unexpected result %s", c.pattern, matches[i])
+					}
+				}
+			}
+		}
+	}
+}
+
 func TestPostingsForMatchers(t *testing.T) {
 	h, err := NewHead(nil, nil, nil, 1000)
 	testutil.Ok(t, err)
@@ -1772,6 +1908,7 @@ func TestPostingsForMatchers(t *testing.T) {
 	app.Add(labels.FromStrings("n", "1", "i", "a"), 0, 0)
 	app.Add(labels.FromStrings("n", "1", "i", "b"), 0, 0)
 	app.Add(labels.FromStrings("n", "2"), 0, 0)
+	app.Add(labels.FromStrings("n", "2.5"), 0, 0)
 	testutil.Ok(t, app.Commit())
 
 	cases := []struct {
@@ -1804,6 +1941,7 @@ func TestPostingsForMatchers(t *testing.T) {
 				labels.FromStrings("n", "1", "i", "a"),
 				labels.FromStrings("n", "1", "i", "b"),
 				labels.FromStrings("n", "2"),
+				labels.FromStrings("n", "2.5"),
 			},
 		},
 		// Not equals.
@@ -1811,6 +1949,7 @@ func TestPostingsForMatchers(t *testing.T) {
 			matchers: []labels.Matcher{labels.Not(labels.NewEqualMatcher("n", "1"))},
 			exp: []labels.Labels{
 				labels.FromStrings("n", "2"),
+				labels.FromStrings("n", "2.5"),
 			},
 		},
 		{
@@ -1865,6 +2004,7 @@ func TestPostingsForMatchers(t *testing.T) {
 			exp: []labels.Labels{
 				labels.FromStrings("n", "1"),
 				labels.FromStrings("n", "2"),
+				labels.FromStrings("n", "2.5"),
 			},
 		},
 		{
@@ -1893,6 +2033,7 @@ func TestPostingsForMatchers(t *testing.T) {
 			matchers: []labels.Matcher{labels.Not(labels.NewMustRegexpMatcher("n", "^1$"))},
 			exp: []labels.Labels{
 				labels.FromStrings("n", "2"),
+				labels.FromStrings("n", "2.5"),
 			},
 		},
 		{
@@ -1936,6 +2077,46 @@ func TestPostingsForMatchers(t *testing.T) {
 			matchers: []labels.Matcher{labels.NewEqualMatcher("n", "1"), labels.Not(labels.NewEqualMatcher("i", "b")), labels.NewMustRegexpMatcher("i", "^(b|a).*$")},
 			exp: []labels.Labels{
 				labels.FromStrings("n", "1", "i", "a"),
+			},
+		},
+		// Set optimization for Regex.
+		// Refer to https://github.com/prometheus/prometheus/issues/2651.
+		{
+			matchers: []labels.Matcher{labels.NewMustRegexpMatcher("n", "^(?:1|2)$")},
+			exp: []labels.Labels{
+				labels.FromStrings("n", "1"),
+				labels.FromStrings("n", "1", "i", "a"),
+				labels.FromStrings("n", "1", "i", "b"),
+				labels.FromStrings("n", "2"),
+			},
+		},
+		{
+			matchers: []labels.Matcher{labels.NewMustRegexpMatcher("i", "^(?:a|b)$")},
+			exp: []labels.Labels{
+				labels.FromStrings("n", "1", "i", "a"),
+				labels.FromStrings("n", "1", "i", "b"),
+			},
+		},
+		{
+			matchers: []labels.Matcher{labels.NewMustRegexpMatcher("n", "^(?:x1|2)$")},
+			exp: []labels.Labels{
+				labels.FromStrings("n", "2"),
+			},
+		},
+		{
+			matchers: []labels.Matcher{labels.NewMustRegexpMatcher("n", "^(?:2|2\\.5)$")},
+			exp: []labels.Labels{
+				labels.FromStrings("n", "2"),
+				labels.FromStrings("n", "2.5"),
+			},
+		},
+		// Empty value.
+		{
+			matchers: []labels.Matcher{labels.NewMustRegexpMatcher("i", "^(?:c||d)$")},
+			exp: []labels.Labels{
+				labels.FromStrings("n", "1"),
+				labels.FromStrings("n", "2"),
+				labels.FromStrings("n", "2.5"),
 			},
 		},
 	}
@@ -1993,4 +2174,125 @@ func TestClose(t *testing.T) {
 	testutil.Ok(t, err)
 	testutil.Ok(t, q.Close())
 	testutil.NotOk(t, q.Close())
+}
+
+func BenchmarkQueries(b *testing.B) {
+	cases := map[string]labels.Selector{
+		"Eq Matcher: Expansion - 1": labels.Selector{
+			labels.NewEqualMatcher("la", "va"),
+		},
+		"Eq Matcher: Expansion - 2": labels.Selector{
+			labels.NewEqualMatcher("la", "va"),
+			labels.NewEqualMatcher("lb", "vb"),
+		},
+
+		"Eq Matcher: Expansion - 3": labels.Selector{
+			labels.NewEqualMatcher("la", "va"),
+			labels.NewEqualMatcher("lb", "vb"),
+			labels.NewEqualMatcher("lc", "vc"),
+		},
+		"Regex Matcher: Expansion - 1": labels.Selector{
+			labels.NewMustRegexpMatcher("la", ".*va"),
+		},
+		"Regex Matcher: Expansion - 2": labels.Selector{
+			labels.NewMustRegexpMatcher("la", ".*va"),
+			labels.NewMustRegexpMatcher("lb", ".*vb"),
+		},
+		"Regex Matcher: Expansion - 3": labels.Selector{
+			labels.NewMustRegexpMatcher("la", ".*va"),
+			labels.NewMustRegexpMatcher("lb", ".*vb"),
+			labels.NewMustRegexpMatcher("lc", ".*vc"),
+		},
+	}
+
+	queryTypes := make(map[string]Querier)
+	defer func() {
+		for _, q := range queryTypes {
+			// Can't run a check for error here as some of these will fail as
+			// queryTypes is using the same slice for the different block queriers
+			// and would have been closed in the previous iterration.
+			q.Close()
+		}
+	}()
+
+	for title, selectors := range cases {
+		for _, nSeries := range []int{10} {
+			for _, nSamples := range []int64{1000, 10000, 100000} {
+				dir, err := ioutil.TempDir("", "test_persisted_query")
+				testutil.Ok(b, err)
+				defer func() {
+					testutil.Ok(b, os.RemoveAll(dir))
+				}()
+
+				series := genSeries(nSeries, 5, 1, int64(nSamples))
+
+				// Add some common labels to make the matchers select these series.
+				{
+					var commonLbls labels.Labels
+					for _, selector := range selectors {
+						switch sel := selector.(type) {
+						case *labels.EqualMatcher:
+							commonLbls = append(commonLbls, labels.Label{Name: sel.Name(), Value: sel.Value()})
+						case *labels.RegexpMatcher:
+							commonLbls = append(commonLbls, labels.Label{Name: sel.Name(), Value: sel.Value()})
+						}
+					}
+					for i := range commonLbls {
+						s := series[i].(*mockSeries)
+						allLabels := append(commonLbls, s.Labels()...)
+						s = &mockSeries{
+							labels:   func() labels.Labels { return allLabels },
+							iterator: s.iterator,
+						}
+						series[i] = s
+					}
+				}
+
+				qs := []Querier{}
+				for x := 0; x <= 10; x++ {
+					block, err := OpenBlock(nil, createBlock(b, dir, series), nil)
+					testutil.Ok(b, err)
+					q, err := NewBlockQuerier(block, 1, int64(nSamples))
+					testutil.Ok(b, err)
+					qs = append(qs, q)
+				}
+				queryTypes["_1-Block"] = &querier{blocks: qs[:1]}
+				queryTypes["_3-Blocks"] = &querier{blocks: qs[0:3]}
+				queryTypes["_10-Blocks"] = &querier{blocks: qs}
+
+				head := createHead(b, series)
+				qHead, err := NewBlockQuerier(head, 1, int64(nSamples))
+				testutil.Ok(b, err)
+				queryTypes["_Head"] = qHead
+
+				for qtype, querier := range queryTypes {
+					b.Run(title+qtype+"_nSeries:"+strconv.Itoa(nSeries)+"_nSamples:"+strconv.Itoa(int(nSamples)), func(b *testing.B) {
+						expExpansions, err := strconv.Atoi(string(title[len(title)-1]))
+						testutil.Ok(b, err)
+						benchQuery(b, expExpansions, querier, selectors)
+					})
+				}
+			}
+		}
+	}
+}
+
+func benchQuery(b *testing.B, expExpansions int, q Querier, selectors labels.Selector) {
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		ss, err := q.Select(selectors...)
+		testutil.Ok(b, err)
+		var actualExpansions int
+		for ss.Next() {
+			s := ss.At()
+			s.Labels()
+			it := s.Iterator()
+			for it.Next() {
+			}
+			actualExpansions++
+		}
+		testutil.Equals(b, expExpansions, actualExpansions)
+		testutil.Ok(b, ss.Err())
+	}
 }
