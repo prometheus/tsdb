@@ -76,7 +76,7 @@ func TestRepairBadIndexVersion(t *testing.T) {
 
 	r, err := index.NewFileReader(filepath.Join(dbDir, indexFilename))
 	testutil.Ok(t, err)
-	p, err := r.Postings("b", "1")
+	p, err := r.Postings("b", "1", nil)
 	testutil.Ok(t, err)
 	for p.Next() {
 		t.Logf("next ID %d", p.At())
@@ -102,7 +102,7 @@ func TestRepairBadIndexVersion(t *testing.T) {
 	r, err = index.NewFileReader(filepath.Join(tmpDbDir, indexFilename))
 	testutil.Ok(t, err)
 	defer r.Close()
-	p, err = r.Postings("b", "1")
+	p, err = r.Postings("b", "1", nil)
 	testutil.Ok(t, err)
 	res := []labels.Labels{}
 

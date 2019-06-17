@@ -34,6 +34,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/prometheus/tsdb"
 	"github.com/prometheus/tsdb/chunks"
+	"github.com/prometheus/tsdb/index"
 	"github.com/prometheus/tsdb/labels"
 	"gopkg.in/alecthomas/kingpin.v2"
 )
@@ -456,7 +457,8 @@ func analyzeBlock(b *tsdb.Block, limit int) {
 	labelpairsUncovered := map[string]uint64{}
 	labelpairsCount := map[string]uint64{}
 	entries := 0
-	p, err := ir.Postings("", "") // The special all key.
+	apkName, apkValue := index.AllPostingsKey()
+	p, err := ir.Postings(apkName, apkValue, nil) // The special all key.
 	if err != nil {
 		exitWithError(err)
 	}
@@ -528,7 +530,7 @@ func analyzeBlock(b *tsdb.Block, limit int) {
 			exitWithError(err)
 		}
 		for _, n := range names {
-			postings, err := ir.Postings("__name__", n)
+			postings, err := ir.Postings("__name__", n, nil)
 			if err != nil {
 				exitWithError(err)
 			}

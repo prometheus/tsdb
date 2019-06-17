@@ -1302,6 +1302,7 @@ func TestChunkAtBlockBoundary(t *testing.T) {
 	err = db.compact()
 	testutil.Ok(t, err)
 
+	apkName, apkValue := index.AllPostingsKey()
 	for _, block := range db.Blocks() {
 		r, err := block.Index()
 		testutil.Ok(t, err)
@@ -1309,7 +1310,7 @@ func TestChunkAtBlockBoundary(t *testing.T) {
 
 		meta := block.Meta()
 
-		p, err := r.Postings(index.AllPostingsKey())
+		p, err := r.Postings(apkName, apkValue, nil)
 		testutil.Ok(t, err)
 
 		var (

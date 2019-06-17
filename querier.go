@@ -379,7 +379,8 @@ func PostingsForMatchers(ix IndexReader, ms ...labels.Matcher) (index.Postings, 
 
 	// If there's nothing to subtract from, add in everything and remove the notIts later.
 	if len(its) == 0 && len(notIts) != 0 {
-		allPostings, err := ix.Postings(index.AllPostingsKey())
+		apkName, apkValue := index.AllPostingsKey()
+		allPostings, err := ix.Postings(apkName, apkValue, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -400,7 +401,7 @@ func postingsForMatcher(ix IndexReader, m labels.Matcher) (index.Postings, error
 
 	// Fast-path for equal matching.
 	if em, ok := m.(*labels.EqualMatcher); ok {
-		return ix.Postings(em.Name(), em.Value())
+		return ix.Postings(em.Name(), em.Value(), nil)
 	}
 
 	// Fast-path for set matching.
@@ -434,7 +435,7 @@ func postingsForMatcher(ix IndexReader, m labels.Matcher) (index.Postings, error
 	var rit []index.Postings
 
 	for _, v := range res {
-		it, err := ix.Postings(m.Name(), v)
+		it, err := ix.Postings(m.Name(), v, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -465,7 +466,7 @@ func inversePostingsForMatcher(ix IndexReader, m labels.Matcher) (index.Postings
 
 	var rit []index.Postings
 	for _, v := range res {
-		it, err := ix.Postings(m.Name(), v)
+		it, err := ix.Postings(m.Name(), v, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -479,7 +480,7 @@ func inversePostingsForMatcher(ix IndexReader, m labels.Matcher) (index.Postings
 func postingsForSetMatcher(ix IndexReader, name string, matches []string) (index.Postings, error) {
 	var its []index.Postings
 	for _, match := range matches {
-		if it, err := ix.Postings(name, match); err == nil {
+		if it, err := ix.Postings(name, match, nil); err == nil {
 			its = append(its, it)
 		} else {
 			return nil, err

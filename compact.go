@@ -646,11 +646,12 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 	}
 
 	var (
-		sets         = make([]ChunkSeriesSet, 0, len(blocks))
-		allSymbols   = make(map[string]struct{}, 1<<16)
-		closers      = []io.Closer{}
-		indexReaders = make([]IndexReader, 0, len(blocks))
-		overlapping  bool
+		sets              = make([]ChunkSeriesSet, 0, len(blocks))
+		allSymbols        = make(map[string]struct{}, 1<<16)
+		closers           = []io.Closer{}
+		indexReaders      = make([]IndexReader, 0, len(blocks))
+		overlapping       bool
+		apkName, apkValue = index.AllPostingsKey()
 	)
 	defer func() {
 		var merr tsdb_errors.MultiError
@@ -707,7 +708,7 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 			allSymbols[s] = struct{}{}
 		}
 
-		all, err := indexr.Postings(index.AllPostingsKey())
+		all, err := indexr.Postings(apkName, apkValue, nil)
 		if err != nil {
 			return err
 		}
@@ -820,10 +821,9 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 	}
 
 	var (
-		maxNumValues      int
-		numLabelValues    int
-		apkName, apkValue = index.AllPostingsKey()
-		names             = make([]string, 0, len(values)+1)
+		maxNumValues   int
+		numLabelValues int
+		names          = make([]string, 0, len(values)+1)
 	)
 	for _, v := range values {
 		numLabelValues += len(v)
@@ -853,6 +853,7 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 
 	postingBuf := make([]uint64, 0, 1000000)
 	seriesMap := set.SeriesMap()
+	var p index.Postings = index.NewBigEndianPostings(nil)
 	for _, n := range names {
 		s = s[:0]
 		if n == apkName {
@@ -867,7 +868,7 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 		for _, v := range s {
 			postingBuf = postingBuf[:0]
 			for i, ir := range indexReaders {
-				p, err := ir.Postings(n, v)
+				p, err = ir.Postings(n, v, p)
 				if err != nil {
 					return errors.Wrap(err, "read postings")
 				}

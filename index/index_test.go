@@ -220,7 +220,7 @@ func TestIndexRW_Postings(t *testing.T) {
 	ir, err := NewFileReader(fn)
 	testutil.Ok(t, err)
 
-	p, err := ir.Postings("a", "1")
+	p, err := ir.Postings("a", "1", nil)
 	testutil.Ok(t, err)
 
 	var l labels.Labels
@@ -342,7 +342,7 @@ func TestPersistence_index_e2e(t *testing.T) {
 	testutil.Ok(t, err)
 
 	for p := range mi.postings {
-		gotp, err := ir.Postings(p.Name, p.Value)
+		gotp, err := ir.Postings(p.Name, p.Value, nil)
 		testutil.Ok(t, err)
 
 		expp, err := mi.Postings(p.Name, p.Value)

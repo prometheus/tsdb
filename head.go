@@ -1239,7 +1239,7 @@ func (h *headIndexReader) LabelNames() ([]string, error) {
 }
 
 // Postings returns the postings list iterator for the label pair.
-func (h *headIndexReader) Postings(name, value string) (index.Postings, error) {
+func (h *headIndexReader) Postings(name, value string, _ index.Postings) (index.Postings, error) {
 	return h.head.postings.Get(name, value), nil
 }
 

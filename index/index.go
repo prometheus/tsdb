@@ -902,7 +902,8 @@ func (r *Reader) Series(id uint64, lbls *labels.Labels, chks *[]chunks.Meta) err
 }
 
 // Postings returns a postings list for the given label pair.
-func (r *Reader) Postings(name, value string) (Postings, error) {
+// 'reusePos' is used if it is a 'bigEndianPostings'.
+func (r *Reader) Postings(name, value string, reusePos Postings) (Postings, error) {
 	e, ok := r.postings[name]
 	if !ok {
 		return EmptyPostings(), nil
@@ -915,7 +916,7 @@ func (r *Reader) Postings(name, value string) (Postings, error) {
 	if d.Err() != nil {
 		return nil, errors.Wrap(d.Err(), "get postings entry")
 	}
-	_, p, err := r.dec.Postings(d.Get())
+	_, p, err := r.dec.Postings(d.Get(), reusePos)
 	if err != nil {
 		return nil, errors.Wrap(err, "decode postings")
 	}
@@ -1034,11 +1035,16 @@ type Decoder struct {
 }
 
 // Postings returns a postings list for b and its number of elements.
-func (dec *Decoder) Postings(b []byte) (int, Postings, error) {
+// 'reusePos' is used if it is a 'bigEndianPostings'.
+func (dec *Decoder) Postings(b []byte, reusePos Postings) (int, Postings, error) {
 	d := encoding.Decbuf{B: b}
 	n := d.Be32int()
 	l := d.Get()
-	return n, newBigEndianPostings(l), d.Err()
+	if bep, ok := reusePos.(*bigEndianPostings); ok {
+		bep.Reset(l)
+		return n, bep, d.Err()
+	}
+	return n, NewBigEndianPostings(l), d.Err()
 }
 
 // Series decodes a series entry from the given byte slice into lset and chks.

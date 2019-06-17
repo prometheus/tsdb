@@ -606,7 +606,7 @@ func TestBigEndian(t *testing.T) {
 	}
 
 	t.Run("Iteration", func(t *testing.T) {
-		bep := newBigEndianPostings(beLst)
+		bep := NewBigEndianPostings(beLst)
 		for i := 0; i < num; i++ {
 			testutil.Assert(t, bep.Next() == true, "")
 			testutil.Equals(t, uint64(ls[i]), bep.At())
@@ -654,7 +654,7 @@ func TestBigEndian(t *testing.T) {
 			},
 		}
 
-		bep := newBigEndianPostings(beLst)
+		bep := NewBigEndianPostings(beLst)
 
 		for _, v := range table {
 			testutil.Equals(t, v.found, bep.Seek(uint64(v.seek)))

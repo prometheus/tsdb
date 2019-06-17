@@ -75,7 +75,9 @@ type IndexReader interface {
 	// The Postings here contain the offsets to the series inside the index.
 	// Found IDs are not strictly required to point to a valid Series, e.g. during
 	// background garbage collections.
-	Postings(name, value string) (index.Postings, error)
+	// 'reusePos' is the Postings object that can be re-used instead of allocating
+	// a new object. Re-use of this object need not be guaranteed.
+	Postings(name, value string, reusePos index.Postings) (index.Postings, error)
 
 	// SortedPostings returns a postings list that is reordered to be sorted
 	// by the label set of the underlying series.
@@ -458,8 +460,8 @@ func (r blockIndexReader) LabelValues(names ...string) (index.StringTuples, erro
 	return st, errors.Wrapf(err, "block: %s", r.b.Meta().ULID)
 }
 
-func (r blockIndexReader) Postings(name, value string) (index.Postings, error) {
-	p, err := r.ir.Postings(name, value)
+func (r blockIndexReader) Postings(name, value string, reusePos index.Postings) (index.Postings, error) {
+	p, err := r.ir.Postings(name, value, reusePos)
 	return p, errors.Wrapf(err, "block: %s", r.b.Meta().ULID)
 }
 

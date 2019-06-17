@@ -1383,7 +1383,7 @@ func (m mockIndex) LabelValues(names ...string) (index.StringTuples, error) {
 	return index.NewStringTuples(m.labelIndex[names[0]], 1)
 }
 
-func (m mockIndex) Postings(name, value string) (index.Postings, error) {
+func (m mockIndex) Postings(name, value string, _ index.Postings) (index.Postings, error) {
 	l := labels.Label{Name: name, Value: value}
 	return index.NewListPostings(m.postings[l]), nil
 }

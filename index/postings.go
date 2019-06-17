@@ -649,7 +649,7 @@ type bigEndianPostings struct {
 	cur  uint32
 }
 
-func newBigEndianPostings(list []byte) *bigEndianPostings {
+func NewBigEndianPostings(list []byte) *bigEndianPostings {
 	return &bigEndianPostings{list: list}
 }
 
@@ -688,4 +688,9 @@ func (it *bigEndianPostings) Seek(x uint64) bool {
 
 func (it *bigEndianPostings) Err() error {
 	return nil
+}
+
+func (it *bigEndianPostings) Reset(list []byte) {
+	it.cur = 0
+	it.list = list
 }
