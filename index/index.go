@@ -532,7 +532,7 @@ func (w *Writer) WritePostings(name, value string, it Postings) error {
 		// The base.
 		w.buf2.PutUvarint32(refs[0])
 		// The width.
-		width := bits.Len32(uint32(refs[len(refs)-1]-refs[0]))
+		width := bits.Len32(uint32(refs[len(refs)-1] - refs[0]))
 		w.buf2.PutByte(byte(width))
 		for _, r := range refs {
 			w.buf2.PutBits(uint64(r-refs[0]), width)
@@ -541,6 +541,8 @@ func (w *Writer) WritePostings(name, value string, it Postings) error {
 		writeDeltaBlockPostings(&w.buf2, refs)
 	case 4:
 		writeBaseDeltaBlockPostings(&w.buf2, refs)
+	case 5:
+		writeBitmapPostings(&w.buf2, refs)
 	}
 
 	w.uint32s = refs
@@ -1061,6 +1063,9 @@ func (dec *Decoder) Postings(b []byte) (int, Postings, error) {
 	case 4:
 		l := d.Get()
 		return n, newBaseDeltaBlockPostings(l, n), d.Err()
+	case 5:
+		l := d.Get()
+		return n, newBitmapPostings(l), d.Err()
 	default:
 		return n, EmptyPostings(), d.Err()
 	}

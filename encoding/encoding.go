@@ -34,8 +34,8 @@ type Encbuf struct {
 	Count uint8
 }
 
-func (e *Encbuf) Reset() { 
-	e.B = e.B[:0] 
+func (e *Encbuf) Reset() {
+	e.B = e.B[:0]
 	e.Count = 0
 }
 

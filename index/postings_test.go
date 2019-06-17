@@ -729,7 +729,7 @@ func TestBaseDeltaPostings(t *testing.T) {
 		ls[i] = ls[i-1] + uint32(rand.Int31n(25)) + 2
 	}
 
-	width := bits.Len32(ls[len(ls)-1]-ls[0])
+	width := bits.Len32(ls[len(ls)-1] - ls[0])
 	buf := encoding.Encbuf{}
 	for i := 0; i < num; i++ {
 		buf.PutBits(uint64(ls[i]-ls[0]), width)
@@ -945,6 +945,80 @@ func TestBaseDeltaBlockPostings(t *testing.T) {
 	})
 }
 
+func TestBitmapPostings(t *testing.T) {
+	num := 1000
+	// mock a list as postings
+	ls := make([]uint32, num)
+	ls[0] = 2
+	for i := 1; i < num; i++ {
+		ls[i] = ls[i-1] + uint32(rand.Int31n(25)) + 2
+		// ls[i] = ls[i-1] + 2
+	}
+
+	buf := encoding.Encbuf{}
+	writeBitmapPostings(&buf, ls)
+	// t.Log("len", len(buf.Get()))
+
+	t.Run("Iteration", func(t *testing.T) {
+		bp := newBitmapPostings(buf.Get())
+		for i := 0; i < num; i++ {
+			testutil.Assert(t, bp.Next() == true, "")
+			// t.Log("ls[i] =", ls[i], "bp.At() =", bp.At())
+			testutil.Equals(t, uint64(ls[i]), bp.At())
+		}
+
+		testutil.Assert(t, bp.Next() == false, "")
+		testutil.Assert(t, bp.Err() == nil, "")
+	})
+
+	t.Run("Seek", func(t *testing.T) {
+		table := []struct {
+			seek  uint32
+			val   uint32
+			found bool
+		}{
+			{
+				ls[0] - 1, ls[0], true,
+			},
+			{
+				ls[4], ls[4], true,
+			},
+			{
+				ls[500] - 1, ls[500], true,
+			},
+			{
+				ls[600] + 1, ls[601], true,
+			},
+			{
+				ls[600] + 1, ls[601], true,
+			},
+			{
+				ls[600] + 1, ls[601], true,
+			},
+			{
+				ls[0], ls[601], true,
+			},
+			{
+				ls[600], ls[601], true,
+			},
+			{
+				ls[999], ls[999], true,
+			},
+			{
+				ls[999] + 10, ls[999], false,
+			},
+		}
+
+		bp := newBitmapPostings(buf.Get())
+
+		for _, v := range table {
+			testutil.Equals(t, v.found, bp.Seek(uint64(v.seek)))
+			testutil.Equals(t, uint64(v.val), bp.At())
+			testutil.Assert(t, bp.Err() == nil, "")
+		}
+	})
+}
+
 func BenchmarkPostings(b *testing.B) {
 	num := 100000
 	// mock a list as postings
@@ -962,7 +1036,7 @@ func BenchmarkPostings(b *testing.B) {
 	}
 
 	// baseDeltaPostings.
-	width := bits.Len32(ls[len(ls)-1]-ls[0])
+	width := bits.Len32(ls[len(ls)-1] - ls[0])
 	bufBD := encoding.Encbuf{}
 	for i := 0; i < num; i++ {
 		bufBD.PutBits(uint64(ls[i]-ls[0]), width)
@@ -976,6 +1050,11 @@ func BenchmarkPostings(b *testing.B) {
 	bufBDB := encoding.Encbuf{}
 	writeBaseDeltaBlockPostings(&bufBDB, ls)
 	// b.Log(len(bufBDB.Get()))
+
+	// bitmapPostings.
+	bufBM := encoding.Encbuf{}
+	writeBitmapPostings(&bufBM, ls)
+	// b.Log("bitmapPostings size", bitmapBits, "bits =", len(bufBM.Get()))
 
 	table := []struct {
 		seek  uint32
@@ -1019,7 +1098,7 @@ func BenchmarkPostings(b *testing.B) {
 		bench.ReportAllocs()
 		for j := 0; j < bench.N; j++ {
 			bep := newBigEndianPostings(bufBE)
-			
+
 			for i := 0; i < num; i++ {
 				testutil.Assert(bench, bep.Next() == true, "")
 				testutil.Equals(bench, uint64(ls[i]), bep.At())
@@ -1033,7 +1112,7 @@ func BenchmarkPostings(b *testing.B) {
 		bench.ReportAllocs()
 		for j := 0; j < bench.N; j++ {
 			bdp := newBaseDeltaPostings(bufBD.Get(), ls[0], width, len(ls))
-			
+
 			for i := 0; i < num; i++ {
 				testutil.Assert(bench, bdp.Next() == true, "")
 				testutil.Equals(bench, uint64(ls[i]), bdp.At())
@@ -1047,7 +1126,7 @@ func BenchmarkPostings(b *testing.B) {
 		bench.ReportAllocs()
 		for j := 0; j < bench.N; j++ {
 			dbp := newDeltaBlockPostings(bufDB.Get(), len(ls))
-			
+
 			for i := 0; i < num; i++ {
 				testutil.Assert(bench, dbp.Next() == true, "")
 				testutil.Equals(bench, uint64(ls[i]), dbp.At())
@@ -1061,7 +1140,7 @@ func BenchmarkPostings(b *testing.B) {
 		bench.ReportAllocs()
 		for j := 0; j < bench.N; j++ {
 			bdbp := newBaseDeltaBlockPostings(bufBDB.Get(), len(ls))
-			
+
 			for i := 0; i < num; i++ {
 				testutil.Assert(bench, bdbp.Next() == true, "")
 				testutil.Equals(bench, uint64(ls[i]), bdbp.At())
@@ -1070,13 +1149,27 @@ func BenchmarkPostings(b *testing.B) {
 			testutil.Assert(bench, bdbp.Err() == nil, "")
 		}
 	})
+	b.Run("bitmapPostingsIteration", func(bench *testing.B) {
+		bench.ResetTimer()
+		bench.ReportAllocs()
+		for j := 0; j < bench.N; j++ {
+			bm := newBitmapPostings(bufBM.Get())
+
+			for i := 0; i < num; i++ {
+				testutil.Assert(bench, bm.Next() == true, "")
+				testutil.Equals(bench, uint64(ls[i]), bm.At())
+			}
+			testutil.Assert(bench, bm.Next() == false, "")
+			testutil.Assert(bench, bm.Err() == nil, "")
+		}
+	})
 
 	b.Run("bigEndianSeek", func(bench *testing.B) {
 		bench.ResetTimer()
 		bench.ReportAllocs()
 		for j := 0; j < bench.N; j++ {
 			bep := newBigEndianPostings(bufBE)
-			
+
 			for _, v := range table {
 				testutil.Equals(bench, v.found, bep.Seek(uint64(v.seek)))
 				testutil.Equals(bench, uint64(v.val), bep.At())
@@ -1089,7 +1182,7 @@ func BenchmarkPostings(b *testing.B) {
 		bench.ReportAllocs()
 		for j := 0; j < bench.N; j++ {
 			bdp := newBaseDeltaPostings(bufBD.Get(), ls[0], width, len(ls))
-			
+
 			for _, v := range table {
 				testutil.Equals(bench, v.found, bdp.Seek(uint64(v.seek)))
 				testutil.Equals(bench, uint64(v.val), bdp.At())
@@ -1102,7 +1195,7 @@ func BenchmarkPostings(b *testing.B) {
 		bench.ReportAllocs()
 		for j := 0; j < bench.N; j++ {
 			dbp := newDeltaBlockPostings(bufDB.Get(), len(ls))
-			
+
 			for _, v := range table {
 				testutil.Equals(bench, v.found, dbp.Seek(uint64(v.seek)))
 				testutil.Equals(bench, uint64(v.val), dbp.At())
@@ -1115,11 +1208,24 @@ func BenchmarkPostings(b *testing.B) {
 		bench.ReportAllocs()
 		for j := 0; j < bench.N; j++ {
 			bdbp := newBaseDeltaBlockPostings(bufBDB.Get(), len(ls))
-			
+
 			for _, v := range table {
 				testutil.Equals(bench, v.found, bdbp.Seek(uint64(v.seek)))
 				testutil.Equals(bench, uint64(v.val), bdbp.At())
 				testutil.Assert(bench, bdbp.Err() == nil, "")
+			}
+		}
+	})
+	b.Run("bitmapPostingsSeek", func(bench *testing.B) {
+		bench.ResetTimer()
+		bench.ReportAllocs()
+		for j := 0; j < bench.N; j++ {
+			bm := newBitmapPostings(bufBM.Get())
+
+			for _, v := range table {
+				testutil.Equals(bench, v.found, bm.Seek(uint64(v.seek)))
+				testutil.Equals(bench, uint64(v.val), bm.At())
+				testutil.Assert(bench, bm.Err() == nil, "")
 			}
 		}
 	})

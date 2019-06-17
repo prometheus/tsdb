@@ -25,6 +25,7 @@ import (
 	"github.com/prometheus/tsdb/chunkenc"
 	"github.com/prometheus/tsdb/chunks"
 	"github.com/prometheus/tsdb/encoding"
+	"github.com/prometheus/tsdb/fileutil"
 	"github.com/prometheus/tsdb/labels"
 	"github.com/prometheus/tsdb/testutil"
 )
@@ -337,6 +338,12 @@ func TestPersistence_index_e2e(t *testing.T) {
 
 	err = iw.Close()
 	testutil.Ok(t, err)
+
+	f, err := fileutil.OpenMmapFile(filepath.Join(dir, indexFilename))
+	testutil.Ok(t, err)
+	toc, err := NewTOCFromByteSlice(realByteSlice(f.Bytes()))
+	testutil.Ok(t, err)
+	t.Log("size of postings =", toc.LabelIndicesTable-toc.Postings)
 
 	ir, err := NewFileReader(filepath.Join(dir, indexFilename))
 	testutil.Ok(t, err)
