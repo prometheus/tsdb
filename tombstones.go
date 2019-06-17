@@ -123,7 +123,8 @@ func writeTombstoneFile(logger log.Logger, dir string, tr TombstoneReader, meta 
 		return err
 	}
 	f = nil
-	meta.Stats.NumBytes += size
+
+	meta.Stats.NumBytesTombstone = size
 	meta.Stats.NumTombstones = tr.Total()
 	return fileutil.Replace(tmp, path)
 }

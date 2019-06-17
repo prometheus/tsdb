@@ -134,8 +134,6 @@ type Writer struct {
 	crc32 hash.Hash
 
 	Version int
-
-	size int64
 }
 
 // TOC represents index Table Of Content that states where each section of index starts.
@@ -227,7 +225,6 @@ func (w *Writer) write(bufs ...[]byte) error {
 		if err != nil {
 			return err
 		}
-		w.size += int64(n)
 		// For now the index file must not grow beyond 64GiB. Some of the fixed-sized
 		// offset references in v1 are only 4 bytes large.
 		// Once we move to compressed/varint representations in those areas, this limitation
@@ -564,7 +561,8 @@ func (w *Writer) Size() int64 {
 	pSize := int64(w.buf1.Len() + w.buf2.Len())
 	w.populateBufTOC()
 	tSize := int64(w.buf1.Len())
-	return w.size + lSize + pSize + tSize
+
+	return int64(w.pos) + lSize + pSize + tSize
 }
 
 func (w *Writer) Close() error {

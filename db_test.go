@@ -100,9 +100,6 @@ func TestDB_reloadOrder(t *testing.T) {
 
 	testutil.Ok(t, db.reload())
 	blocks := db.Blocks()
-	for _, b := range blocks {
-		b.meta.Stats.NumBytes = 0
-	}
 	testutil.Equals(t, 3, len(blocks))
 	testutil.Equals(t, metas[1].MinTime, blocks[0].Meta().MinTime)
 	testutil.Equals(t, metas[1].MaxTime, blocks[0].Meta().MaxTime)

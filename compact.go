@@ -842,7 +842,8 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 			return errors.Wrap(err, "write postings")
 		}
 	}
-	meta.Stats.NumBytes = chunkw.Size() + indexw.Size()
+	meta.Stats.NumBytesChunks = chunkw.Size()
+	meta.Stats.NumBytesIndex = indexw.Size()
 	return nil
 }
 

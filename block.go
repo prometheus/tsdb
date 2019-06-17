@@ -15,11 +15,13 @@
 package tsdb
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 
 	"github.com/go-kit/kit/log"
@@ -181,11 +183,14 @@ type BlockMeta struct {
 
 // BlockStats contains stats about contents of a block.
 type BlockStats struct {
-	NumSamples    uint64 `json:"numSamples,omitempty"`
-	NumSeries     uint64 `json:"numSeries,omitempty"`
-	NumChunks     uint64 `json:"numChunks,omitempty"`
-	NumTombstones uint64 `json:"numTombstones,omitempty"`
-	NumBytes      int64  `json:"numBytes,omitempty"`
+	NumSamples        uint64 `json:"numSamples,omitempty"`
+	NumSeries         uint64 `json:"numSeries,omitempty"`
+	NumChunks         uint64 `json:"numChunks,omitempty"`
+	NumTombstones     uint64 `json:"numTombstones,omitempty"`
+	NumBytesChunks    int64  `json:"numBytesChunks"`
+	NumBytesIndex     int64  `json:"numBytesIndex"`
+	NumBytesMeta      int64  `json:"numBytesMeta"`
+	NumBytesTombstone int64  `json:"numBytesTombstone"`
 }
 
 // BlockDesc describes a block by ULID and time range.
@@ -236,6 +241,22 @@ func readMetaFile(dir string) (*BlockMeta, error) {
 func writeMetaFile(logger log.Logger, dir string, meta *BlockMeta) error {
 	meta.Version = 1
 
+	// Use a buffer to calculate the file size.
+	buf := &bytes.Buffer{}
+	enc := json.NewEncoder(buf)
+	enc.SetIndent("", "\t")
+	if err := enc.Encode(meta); err != nil {
+		return err
+	}
+	// Get the current size and add to the final size one byte for each extra digit.
+	digitCount := len(strconv.Itoa(buf.Len())) - len(strconv.Itoa(int(meta.Stats.NumBytesMeta)))
+	meta.Stats.NumBytesMeta = int64(buf.Len() + digitCount)
+
+	// Write the final content.
+	buf.Reset()
+	if err := enc.Encode(meta); err != nil {
+		return err
+	}
 	// Make any changes to the file appear atomic.
 	path := filepath.Join(dir, metaFilename)
 	tmp := path + ".tmp"
@@ -250,11 +271,9 @@ func writeMetaFile(logger log.Logger, dir string, meta *BlockMeta) error {
 		return err
 	}
 
-	enc := json.NewEncoder(f)
-	enc.SetIndent("", "\t")
-
 	var merr tsdb_errors.MultiError
-	if merr.Add(enc.Encode(meta)); merr.Err() != nil {
+	_, err = f.Write(buf.Bytes())
+	if merr.Add(err); merr.Err() != nil {
 		merr.Add(f.Close())
 		return merr.Err()
 	}
@@ -373,7 +392,9 @@ func (pb *Block) MinTime() int64 { return pb.meta.MinTime }
 func (pb *Block) MaxTime() int64 { return pb.meta.MaxTime }
 
 // Size returns the number of bytes that the block takes up.
-func (pb *Block) Size() int64 { return pb.meta.Stats.NumBytes }
+func (pb *Block) Size() int64 {
+	return pb.meta.Stats.NumBytesMeta + pb.meta.Stats.NumBytesIndex + pb.meta.Stats.NumBytesChunks + pb.meta.Stats.NumBytesTombstone
+}
 
 // ErrClosing is returned when a block is in the process of being closed.
 var ErrClosing = errors.New("block is closing")
