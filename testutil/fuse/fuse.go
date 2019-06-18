@@ -231,8 +231,8 @@ func NewServer(t *testing.T, original, mountpoint string, hook Hook) (clean func
 			testutil.Ok(t, err)
 		}
 
-		os.RemoveAll(mountpoint)
-		os.RemoveAll(original)
+		testutil.Ok(t, os.RemoveAll(mountpoint))
+		testutil.Ok(t, os.RemoveAll(original))
 		return
 	}
 }
