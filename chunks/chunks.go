@@ -24,7 +24,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"sync"
 
 	"github.com/pkg/errors"
 	"github.com/prometheus/tsdb/chunkenc"
@@ -55,21 +54,14 @@ type Meta struct {
 	MinTime, MaxTime int64 // time range the data covers
 }
 
-// metaWriteHashBuf is the byte slice buffer used to write the hash.
-var metaWriteHashBufPool = &sync.Pool{
-	New: func() interface{} {
-		s := make([]byte, 1)
-		return &s
-	},
-}
-
 // writeHash writes the chunk encoding and raw data into the provided hash.
-func (cm *Meta) writeHash(h hash.Hash) error {
-	buf := *(metaWriteHashBufPool.Get().(*[]byte))
-	defer func() {
-		metaWriteHashBufPool.Put(&buf)
-	}()
-	buf[0] = byte(cm.Chunk.Encoding())
+func (cm *Meta) writeHash(h hash.Hash, buf []byte) error {
+	if len(buf) == 0 {
+		buf = []byte{byte(cm.Chunk.Encoding())}
+	} else {
+		buf = buf[:1]
+		buf[0] = byte(cm.Chunk.Encoding())
+	}
 	if _, err := h.Write(buf); err != nil {
 		return err
 	}
@@ -334,7 +326,7 @@ func (w *Writer) WriteChunks(chks ...Meta) error {
 		}
 
 		w.crc32.Reset()
-		if err := chk.writeHash(w.crc32); err != nil {
+		if err := chk.writeHash(w.crc32, b[:1]); err != nil {
 			return err
 		}
 		if err := w.write(w.crc32.Sum(b[:0])); err != nil {
