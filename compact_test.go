@@ -1062,19 +1062,19 @@ func TestDeleteCompactionBlockAfterFailedReload(t *testing.T) {
 }
 
 func TestOpenBlockWithHook(t *testing.T) {
-	//init action
+	// Init action.
 	original, err := ioutil.TempDir("", "dev")
 	testutil.Ok(t, err)
 	mountpoint, err := ioutil.TempDir("", "mountpoint")
 	testutil.Ok(t, err)
 
-	//create block will be successful because hook server does not start
+	// Create block will be successful because hook server does not start.
 	_, file := filepath.Split(createBlock(t, original, genSeries(1, 1, 200, 300)))
 	clean := fuse.NewServer(t, original, mountpoint, fuse.Hook(fuse.TestRenameHook{}))
-	//remember to call unmount after you do not use it
+	// Remember to call unmount after you do not use it.
 	defer clean()
 
-	//normal logic
+	// Normal logic.
 	pb, err := OpenBlock(nil, filepath.Join(mountpoint, file), nil)
 	if err != nil {
 		level.Warn(log.NewNopLogger()).Log("msg", "couldn't write the meta file for the block size", "err", err)
@@ -1085,7 +1085,7 @@ func TestOpenBlockWithHook(t *testing.T) {
 	testutil.Ok(t, pb.tombstones.Close())
 
 	testutil.Equals(t, true, Exist(filepath.Join(mountpoint, file, "index")))
-	//rename failed because there is an error by injected file system exception with fuse
+	// Rename failed because there is an error by injected file system exception with fuse.
 	testutil.Equals(t, false, Exist(filepath.Join(mountpoint, file, "meta.json")))
 }
 
