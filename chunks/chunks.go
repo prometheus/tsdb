@@ -54,9 +54,13 @@ type Meta struct {
 	MinTime, MaxTime int64 // time range the data covers
 }
 
+// metaWriteHashBuf is the byte slice buffer used to write the hash.
+var metaWriteHashBuf = make([]byte, 1)
+
 // writeHash writes the chunk encoding and raw data into the provided hash.
 func (cm *Meta) writeHash(h hash.Hash) error {
-	if _, err := h.Write([]byte{byte(cm.Chunk.Encoding())}); err != nil {
+	metaWriteHashBuf[0] = byte(cm.Chunk.Encoding())
+	if _, err := h.Write(metaWriteHashBuf); err != nil {
 		return err
 	}
 	if _, err := h.Write(cm.Chunk.Bytes()); err != nil {
