@@ -692,8 +692,8 @@ func (it *bigEndianPostings) Err() error {
 	return nil
 }
 
-// 1 is bigEndian, 2 is baseDelta, 3 is deltaBlock, 4 is baseDeltaBlock, 5 is bitmapPostings.
-const postingsType = 5
+// 1 is bigEndian, 2 is baseDelta, 3 is deltaBlock, 4 is baseDeltaBlock, 5 is bitmapPostings, 6 is roaringBitmapPostings.
+const postingsType = 6
 
 type bitSlice struct {
 	bstream []byte
@@ -1243,5 +1243,241 @@ func writeBitmapPostings(e *encoding.Encbuf, arr []uint32) {
 			}
 		}
 		e.B[offset+idx1] |= 1 << uint(7-idx2)
+	}
+}
+
+// roaringBitmap block format, type 0 = array, type 1 = bitmap.
+// ┌──────────┬──────────┬────────┐
+// │ key <4b> │ type<1b> │ bitmap │
+// └──────────┴──────────┴────────┘
+type roaringBitmapPostings struct {
+	bs         []byte
+	cur        uint64
+	inside     bool
+	idx        int
+	idx1       int
+	idx2       int
+	footerAddr int
+	bitmapSize int
+	valueSize  int
+	key        uint32
+	numBlock   int
+	blockIdx   int
+	blockType  byte
+	nextBlock  int
+}
+
+func newRoaringBitmapPostings(bstream []byte) *roaringBitmapPostings {
+	if len(bstream) <= 4 {
+		return nil
+	}
+	x := binary.BigEndian.Uint32(bstream)
+	return &roaringBitmapPostings{bs: bstream[4:], bitmapSize: 1 << (bitmapBits - 3), valueSize: bitmapBits >> 3, numBlock: (len(bstream)-int(x))/4 - 1, footerAddr: int(x)}
+}
+
+func (it *roaringBitmapPostings) At() uint64 {
+	return it.cur
+}
+
+func (it *roaringBitmapPostings) Next() bool {
+	if it.inside {
+		if it.blockType == 0 {
+			if it.idx < it.nextBlock {
+				it.cur = 0
+				for i := 0; i < it.valueSize; i++ {
+					it.cur = (it.cur << 8) + uint64(it.bs[it.idx+i])
+				}
+				it.idx += it.valueSize
+				it.cur += uint64(it.key)
+				return true
+			}
+		} else {
+			for it.idx1 < it.bitmapSize {
+				if it.bs[it.idx+it.idx1] == byte(0) {
+					it.idx1 += 1
+					continue
+				}
+				for it.idx1 < it.bitmapSize {
+					if it.bs[it.idx+it.idx1]&(1<<uint(7-it.idx2)) != byte(0) {
+						it.cur = uint64(it.key) + uint64(it.idx1*8+it.idx2)
+						it.idx2 += 1
+						if it.idx2 == 8 {
+							it.idx1 += 1
+							it.idx2 = 0
+						}
+						return true
+					} else {
+						it.idx2 += 1
+						if it.idx2 == 8 {
+							it.idx1 += 1
+							it.idx2 = 0
+						}
+					}
+				}
+			}
+			it.idx += it.bitmapSize
+			it.idx1 = 0
+			it.idx2 = 0
+		}
+		it.blockIdx += 1
+		it.inside = false
+		return it.Next()
+	} else {
+		if it.idx < it.footerAddr {
+			it.key = binary.BigEndian.Uint32(it.bs[it.idx:]) << bitmapBits
+			it.blockType = it.bs[it.idx+4]
+			it.idx += 5
+			it.inside = true
+			if it.blockIdx != it.numBlock-1 {
+				it.nextBlock = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+(it.blockIdx+1)*4:]))
+			} else {
+				it.nextBlock = it.footerAddr
+			}
+			return it.Next()
+		} else {
+			return false
+		}
+	}
+}
+
+func (it *roaringBitmapPostings) Seek(x uint64) bool {
+	if it.cur >= x {
+		return true
+	}
+	curKey := uint32(x) >> bitmapBits
+	i := sort.Search(it.numBlock-it.blockIdx, func(i int) bool {
+		off := int(binary.BigEndian.Uint32(it.bs[it.footerAddr+4*(it.blockIdx+i):]))
+		return binary.BigEndian.Uint32(it.bs[off:]) > curKey
+	})
+	if i > 0 {
+		i -= 1
+		if i > 0 {
+			it.idx1 = 0
+			it.idx2 = 0
+			it.inside = false
+			it.idx = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+4*(it.blockIdx+i):]))
+		}
+	}
+	it.blockIdx += i
+	if it.Next() {
+		if it.cur >= x {
+			return true
+		}
+		if it.blockType == 0 {
+			// If encoding with array, binary search.
+			num := (it.nextBlock - it.idx) / it.valueSize
+			j := sort.Search(num, func(i int) bool {
+				var temp uint64
+				for j := 0; j < it.valueSize; j++ {
+					temp = (temp << 8) + uint64(it.bs[it.idx+j+i*it.valueSize])
+				}
+				temp += uint64(it.key)
+				return temp >= x
+			})
+			it.cur = 0
+			for i := 0; i < it.valueSize; i++ {
+				it.cur = (it.cur<<8) + uint64(it.bs[it.idx+i+j*it.valueSize])
+			}
+			it.cur += uint64(it.key)
+			it.idx += (j + 1) * it.valueSize
+			if j == num {
+				// The first element in next block should be >= x.
+				return it.Next()
+			}
+			return true
+		} else {
+			// If encoding with bitmap, loop next.
+			for it.Next() {
+				if it.cur >= x {
+					return true
+				}
+			}
+			return false
+		}
+	} else {
+		return false
+	}
+}
+
+func (it *roaringBitmapPostings) Err() error {
+	return nil
+}
+
+func writeRoaringBitmapPostings(e *encoding.Encbuf, arr []uint32) {
+	key := uint32(0xffffffff)
+	bitmapSize := 1 << (bitmapBits - 3)
+	valueSize := bitmapBits >> 3
+	thres := (1 << bitmapBits) / bitmapBits
+	mask := uint32((1 << uint(bitmapBits)) - 1)
+	var curKey uint32
+	var curVal uint32
+	var offset int // The starting offset of the bitmap of each block.
+	var idx int
+	var idx1 int
+	var idx2 int
+	var startingOffs []uint32
+	var vals []int
+	c := make([]byte, 4)
+	startOff := len(e.Get())
+	e.PutBE32(0) // Footer starting offset.
+	for idx < len(arr) {
+		curKey = arr[idx] >> bitmapBits
+		curVal = arr[idx] & mask
+		if curKey != key {
+			if idx != 0 {
+				startingOffs = append(startingOffs, uint32(len(e.B)))
+				e.PutBE32(uint32(key))
+				if len(vals) > thres {
+					e.PutByte(byte(1))
+					offset = len(e.Get())
+					for i := 0; i < bitmapSize; i++ {
+						e.PutByte(byte(0))
+					}
+					for _, val := range vals {
+						idx1 = val >> 3
+						idx2 = val % 8
+						e.B[offset+idx1] |= 1 << uint(7-idx2)
+					}
+				} else {
+					e.PutByte(byte(0))
+					for _, val := range vals {
+						binary.BigEndian.PutUint32(c[:], uint32(val))
+						for i := 4 - valueSize; i < 4; i++ {
+							e.PutByte(c[i])
+						}
+					}
+				}
+				vals = vals[:0]
+			}
+			key = curKey
+		}
+		vals = append(vals, int(curVal))
+		idx += 1
+	}
+	startingOffs = append(startingOffs, uint32(len(e.B)))
+	e.PutBE32(uint32(key))
+	if len(vals) > thres {
+		e.PutByte(byte(1))
+		offset = len(e.Get())
+		for i := 0; i < bitmapSize; i++ {
+			e.PutByte(byte(0))
+		}
+		for _, val := range vals {
+			idx1 = val >> 3
+			idx2 = val % 8
+			e.B[offset+idx1] |= 1 << uint(7-idx2)
+		}
+	} else {
+		e.PutByte(byte(0))
+		for _, val := range vals {
+			binary.BigEndian.PutUint32(c[:], uint32(val))
+			for i := 4 - valueSize; i < 4; i++ {
+				e.PutByte(c[i])
+			}
+		}
+	}
+	binary.BigEndian.PutUint32(e.B[startOff:], uint32(len(e.B)-4-startOff))
+	for _, off := range startingOffs {
+		e.PutBE32(off - 4 - uint32(startOff))
 	}
 }
