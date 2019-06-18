@@ -126,7 +126,7 @@ func NewServer(t *testing.T, original, mountpoint string, hook Hook) (clean func
 	server, err := fs.NewServe()
 	testutil.Ok(t, err)
 
-	// Async start fuse server, and it will be stopped when calling fuse.Unmount
+	// Async start fuse server, and it will be stopped when calling fuse.Unmount method.
 	go func() {
 		fs.Start(server)
 	}()
