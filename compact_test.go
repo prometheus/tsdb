@@ -464,8 +464,8 @@ func (erringBReader) NumSeries() uint64                    { return 0 }
 
 type nopChunkWriter struct{}
 
-func (nopChunkWriter) WriteChunks(chunks ...chunks.Meta) error { return nil }
-func (nopChunkWriter) Close() error                            { return nil }
+func (nopChunkWriter) WriteChunks(b []byte, chunks ...chunks.Meta) error { return nil }
+func (nopChunkWriter) Close() error                                      { return nil }
 
 func TestCompaction_populateBlock(t *testing.T) {
 	var populateBlocksCases = []struct {

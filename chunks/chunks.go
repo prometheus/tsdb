@@ -286,7 +286,7 @@ func MergeChunks(a, b chunkenc.Chunk) (*chunkenc.XORChunk, error) {
 	return newChunk, nil
 }
 
-func (w *Writer) WriteChunks(chks ...Meta) error {
+func (w *Writer) WriteChunks(b []byte, chks ...Meta) error {
 	// Calculate maximum space we need and cut a new segment in case
 	// we don't fit into the current one.
 	maxLen := int64(binary.MaxVarintLen32) // The number of chunks.
@@ -303,10 +303,10 @@ func (w *Writer) WriteChunks(chks ...Meta) error {
 		}
 	}
 
-	var (
-		b   = [binary.MaxVarintLen32]byte{}
-		seq = uint64(w.seq()) << 32
-	)
+	var seq = uint64(w.seq()) << 32
+	if len(b) < binary.MaxVarintLen32 {
+		b = make([]byte, binary.MaxVarintLen32)
+	}
 	for i := range chks {
 		chk := &chks[i]
 
