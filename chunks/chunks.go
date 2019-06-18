@@ -58,15 +58,16 @@ type Meta struct {
 // metaWriteHashBuf is the byte slice buffer used to write the hash.
 var metaWriteHashBufPool = &sync.Pool{
 	New: func() interface{} {
-		return make([]byte, 1)
+		s := make([]byte, 1)
+		return &s
 	},
 }
 
 // writeHash writes the chunk encoding and raw data into the provided hash.
 func (cm *Meta) writeHash(h hash.Hash) error {
-	buf := metaWriteHashBufPool.Get().([]byte)
+	buf := *(metaWriteHashBufPool.Get().(*[]byte))
 	defer func() {
-		metaWriteHashBufPool.Put(buf)
+		metaWriteHashBufPool.Put(&buf)
 	}()
 	buf[0] = byte(cm.Chunk.Encoding())
 	if _, err := h.Write(buf); err != nil {
