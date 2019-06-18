@@ -24,6 +24,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
 
 	"github.com/pkg/errors"
 	"github.com/prometheus/tsdb/chunkenc"
@@ -55,12 +56,20 @@ type Meta struct {
 }
 
 // metaWriteHashBuf is the byte slice buffer used to write the hash.
-var metaWriteHashBuf = make([]byte, 1)
+var metaWriteHashBufPool = &sync.Pool{
+	New: func() interface{} {
+		return make([]byte, 1)
+	},
+}
 
 // writeHash writes the chunk encoding and raw data into the provided hash.
 func (cm *Meta) writeHash(h hash.Hash) error {
-	metaWriteHashBuf[0] = byte(cm.Chunk.Encoding())
-	if _, err := h.Write(metaWriteHashBuf); err != nil {
+	buf := metaWriteHashBufPool.Get().([]byte)
+	defer func() {
+		metaWriteHashBufPool.Put(buf)
+	}()
+	buf[0] = byte(cm.Chunk.Encoding())
+	if _, err := h.Write(buf); err != nil {
 		return err
 	}
 	if _, err := h.Write(cm.Chunk.Bytes()); err != nil {
