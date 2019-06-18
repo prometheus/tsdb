@@ -17,10 +17,9 @@ package fuse
 
 import (
 	"fmt"
+	"github.com/prometheus/tsdb/testutil"
 	"os"
 	"path/filepath"
-	"runtime"
-	"syscall"
 	"testing"
 	"time"
 
@@ -213,67 +212,27 @@ type Server struct {
 	mountpoint string
 }
 
-func NewServer(t *testing.T, original, mountpoint string, hook Hook) (*Server, error) {
+func NewServer(t *testing.T, original, mountpoint string, hook Hook) (clean func()) {
 	fs, err := NewHookFs(original, mountpoint, hook)
-	if err != nil {
-		return nil, err
-	}
+	testutil.Ok(t, err)
 
 	server, err := fs.NewServe()
-	if err != nil {
-		return nil, err
-	}
+	testutil.Ok(t, err)
 
-	//async start fuse server, and it will be stopped when calling syscall.Unmount
+	//async start fuse server, and it will be stopped when calling fuse.Unmount
 	go func() {
 		fs.Start(server)
 	}()
 
-	return &Server{
-		server:     server,
-		original:   original,
-		mountpoint: mountpoint,
-	}, nil
-}
+	testutil.Ok(t, server.WaitMount())
 
-func (s *Server) CleanUp() {
-	if err := s.server.Unmount(); err != nil {
-		if err = s.forceMount(); err != nil {
-			fmt.Println("Umount failed", fmt.Sprintf("mountpoint=%s, err=%v", s.mountpoint, err))
-		}
-	}
-
-	os.RemoveAll(s.mountpoint)
-	os.RemoveAll(s.original)
-}
-
-func (s *Server) forceMount() (err error) {
-	delay := time.Duration(0)
-	for try := 0; try < 5; try++ {
-		err = syscall.Unmount(s.mountpoint, flag)
-		if err == nil {
-			break
+	return func() {
+		if err = server.Unmount(); err != nil {
+			testutil.Ok(t, err)
 		}
 
-		// Sleep for a bit. This is not pretty, but there is
-		// no way we can be certain that the kernel thinks all
-		// open files have already been closed.
-		delay = 2*delay + 10*time.Millisecond
-		time.Sleep(delay)
+		os.RemoveAll(mountpoint)
+		os.RemoveAll(original)
+		return
 	}
-
-	return err
-}
-
-var (
-	flag = getFlagByPlaform()
-)
-
-// Unmount has different arguments for different platform
-func getFlagByPlaform() int {
-	if runtime.GOOS == "darwin" {
-		return -1
-	}
-
-	return 0x1
 }

@@ -13,8 +13,9 @@ matrix:
       - sudo -E apt-get -yq --no-install-suggests --no-install-recommends --force-yes install fuse
       - sudo modprobe fuse
       - sudo addgroup $USER fuse
-      - sudo chmod a+rw /etc/fuse.conf
-      - sudo echo user_allow_other >> /etc/fuse.conf
+      # sudo echo user_allow_other >> /etc/fuse.conf has a permission issue because
+      # the redirection of the file (>> /etc/fuse.conf) happens in the shell before sudo is run, so is done as a regular user.
+      - sudo sh -c 'echo user_allow_other >>/etc/fuse.conf'
       - make all
   - os: osx
     go: 1.12.x

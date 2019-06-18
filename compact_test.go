@@ -1070,19 +1070,19 @@ func TestOpenBlockWithHook(t *testing.T) {
 
 	//create block will be successful because hook server does not start
 	_, file := filepath.Split(createBlock(t, original, genSeries(1, 1, 200, 300)))
-	server, err := fuse.NewServer(t, original, mountpoint, fuse.Hook(fuse.TestRenameHook{}))
-	testutil.Ok(t, err)
+	clean := fuse.NewServer(t, original, mountpoint, fuse.Hook(fuse.TestRenameHook{}))
 	//remember to call unmount after you do not use it
-	defer func() {
-		server.CleanUp()
-	}()
+	defer clean()
 
 	//normal logic
-	_, err = OpenBlock(nil, filepath.Join(mountpoint, file), nil)
+	pb, err := OpenBlock(nil, filepath.Join(mountpoint, file), nil)
 	if err != nil {
 		level.Warn(log.NewNopLogger()).Log("msg", "couldn't write the meta file for the block size", "err", err)
 		return
 	}
+	testutil.Ok(t, pb.chunkr.Close())
+	testutil.Ok(t, pb.indexr.Close())
+	testutil.Ok(t, pb.tombstones.Close())
 
 	testutil.Equals(t, true, Exist(filepath.Join(mountpoint, file, "index")))
 	//rename failed because there is an error by injected file system exception with fuse

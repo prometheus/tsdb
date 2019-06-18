@@ -14,13 +14,7 @@ package fuse
 
 import "testing"
 
-func NewServer(t *testing.T, original, mountpoint string, hook Hook) (*Server, error) {
+func NewServer(t *testing.T, original, mountpoint string, hook Hook) (clean func()) {
 	t.Skip("Skip windows platform")
-	return nil, nil
+	return func() {}
 }
-
-func (s *Server) CleanUp() {
-
-}
-
-type Server struct{}
