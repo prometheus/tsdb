@@ -853,7 +853,8 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 
 	postingBuf := make([]uint64, 0, 1000000)
 	seriesMap := set.SeriesMap()
-	var p index.Postings = index.NewBigEndianPostings(nil)
+	var bigEndianPos index.Postings = index.NewBigEndianPostings(nil)
+	var listPos = index.NewListPostings(nil).(*index.ListPostings)
 	for _, n := range names {
 		s = s[:0]
 		if n == apkName {
@@ -868,12 +869,12 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 		for _, v := range s {
 			postingBuf = postingBuf[:0]
 			for i, ir := range indexReaders {
-				p, err = ir.Postings(n, v, p)
+				bigEndianPos, err = ir.Postings(n, v, bigEndianPos)
 				if err != nil {
 					return errors.Wrap(err, "read postings")
 				}
-				for p.Next() {
-					if newVal, ok := seriesMap[i][p.At()]; ok {
+				for bigEndianPos.Next() {
+					if newVal, ok := seriesMap[i][bigEndianPos.At()]; ok {
 						// idx is the index at which newVal exists or index at which we need to insert.
 						idx := sort.Search(len(postingBuf), func(i int) bool { return postingBuf[i] >= newVal })
 						if idx == len(postingBuf) {
@@ -884,7 +885,8 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 					}
 				}
 			}
-			if err := indexw.WritePostings(n, v, index.NewListPostings(postingBuf)); err != nil {
+			listPos.Reset(postingBuf)
+			if err := indexw.WritePostings(n, v, listPos); err != nil {
 				return errors.Wrap(err, "write postings")
 			}
 		}

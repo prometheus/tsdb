@@ -642,6 +642,11 @@ func (it *ListPostings) Err() error {
 	return nil
 }
 
+func (it *ListPostings) Reset(list []uint64) {
+	it.cur = 0
+	it.list = list
+}
+
 // bigEndianPostings implements the Postings interface over a byte stream of
 // big endian numbers.
 type bigEndianPostings struct {
