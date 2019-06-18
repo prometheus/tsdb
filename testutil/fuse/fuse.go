@@ -76,36 +76,27 @@ func (h *HookFs) Rename(oldName string, newName string, context *fuse.Context) f
 	return status
 }
 
-func (h *HookFs) NewServe() (*fuse.Server, error) {
-	server, err := newHookServer(h)
-	if err != nil {
-		return nil, err
-	}
-
-	return server, nil
-}
-
-// Tests will want to run this in a  goroutine.
+// Tests will want to run this in a goroutine.
 func (h *HookFs) Start(server *fuse.Server) {
 	server.Serve()
 }
 
-func newHookServer(hookfs *HookFs) (*fuse.Server, error) {
+func (h *HookFs) NewServe() (*fuse.Server, error) {
 	opts := &nodefs.Options{
 		NegativeTimeout: time.Second,
 		AttrTimeout:     time.Second,
 		EntryTimeout:    time.Second,
 	}
 	pathFsOpts := &pathfs.PathNodeFsOptions{ClientInodes: true}
-	pathFs := pathfs.NewPathNodeFs(hookfs, pathFsOpts)
+	pathFs := pathfs.NewPathNodeFs(h, pathFsOpts)
 	conn := nodefs.NewFileSystemConnector(pathFs.Root(), opts)
-	originalAbs, _ := filepath.Abs(hookfs.Original)
+	originalAbs, _ := filepath.Abs(h.Original)
 	mOpts := &fuse.MountOptions{
 		AllowOther: true,
-		Name:       hookfs.FsName,
+		Name:       h.FsName,
 		FsName:     originalAbs,
 	}
-	server, err := fuse.NewServer(conn.RawFS(), hookfs.Mountpoint, mOpts)
+	server, err := fuse.NewServer(conn.RawFS(), h.Mountpoint, mOpts)
 	if err != nil {
 		return nil, err
 	}
@@ -140,6 +131,5 @@ func NewServer(t *testing.T, original, mountpoint string, hook Hook) (clean func
 
 		testutil.Ok(t, os.RemoveAll(mountpoint))
 		testutil.Ok(t, os.RemoveAll(original))
-		return
 	}
 }
