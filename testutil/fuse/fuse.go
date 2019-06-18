@@ -178,7 +178,7 @@ func (h *HookFs) NewServe() (*fuse.Server, error) {
 	return server, nil
 }
 
-//tests will want to run this in a  goroutine.
+// Tests will want to run this in a  goroutine.
 func (h *HookFs) Start(server *fuse.Server) {
 	server.Serve()
 }
@@ -219,7 +219,7 @@ func NewServer(t *testing.T, original, mountpoint string, hook Hook) (clean func
 	server, err := fs.NewServe()
 	testutil.Ok(t, err)
 
-	//async start fuse server, and it will be stopped when calling fuse.Unmount
+	// Async start fuse server, and it will be stopped when calling fuse.Unmount
 	go func() {
 		fs.Start(server)
 	}()
