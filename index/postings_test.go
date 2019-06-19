@@ -1148,25 +1148,46 @@ func BenchmarkPostings(b *testing.B) {
 			ls[0] - 1, ls[0], true,
 		},
 		{
-			ls[4], ls[4], true,
+			ls[1000], ls[1000], true,
 		},
 		{
-			ls[5000] - 1, ls[5000], true,
+			ls[2000], ls[2000], true,
 		},
 		{
-			ls[6000] + 1, ls[6001], true,
+			ls[3000], ls[3000], true,
 		},
 		{
-			ls[6000] + 1, ls[6001], true,
+			ls[4000], ls[4000], true,
 		},
 		{
-			ls[6000] + 1, ls[6001], true,
+			ls[5000], ls[5000], true,
 		},
 		{
-			ls[0], ls[6001], true,
+			ls[6000], ls[6000], true,
 		},
 		{
-			ls[6000], ls[6001], true,
+			ls[10000], ls[10000], true,
+		},
+		{
+			ls[20000], ls[20000], true,
+		},
+		{
+			ls[30000], ls[30000], true,
+		},
+		{
+			ls[40000], ls[40000], true,
+		},
+		{
+			ls[50000], ls[50000], true,
+		},
+		{
+			ls[60000], ls[60000], true,
+		},
+		{
+			ls[70000], ls[70000], true,
+		},
+		{
+			ls[80000], ls[80000], true,
 		},
 		{
 			ls[99999], ls[99999], true,
