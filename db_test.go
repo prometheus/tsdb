@@ -1389,7 +1389,7 @@ func TestInitializeHeadTimestamp(t *testing.T) {
 		}()
 
 		testutil.Ok(t, os.MkdirAll(path.Join(dir, "wal"), 0777))
-		w, err := wal.New(nil, nil, path.Join(dir, "wal"))
+		w, err := wal.New(nil, nil, path.Join(dir, "wal"), false)
 		testutil.Ok(t, err)
 
 		var enc RecordEncoder
@@ -1439,7 +1439,7 @@ func TestInitializeHeadTimestamp(t *testing.T) {
 		createBlock(t, dir, genSeries(1, 1, 1000, 6000))
 
 		testutil.Ok(t, os.MkdirAll(path.Join(dir, "wal"), 0777))
-		w, err := wal.New(nil, nil, path.Join(dir, "wal"))
+		w, err := wal.New(nil, nil, path.Join(dir, "wal"), false)
 		testutil.Ok(t, err)
 
 		var enc RecordEncoder
