@@ -28,35 +28,39 @@ import (
 	"github.com/hanwen/go-fuse/fuse/pathfs"
 )
 
-type LoopBackFs struct {
+type loopBackFs struct {
 	pathfs.FileSystem
 }
 
-type HookFs struct {
-	Original   string
-	Mountpoint string
-	FsName     string
-	LoopBackFs
+// A FUSE filesystem that shunts all request to an underlying file system.
+// Its main purpose is to provide test coverage.
+type hookFs struct {
+	original   string
+	mountpoint string
+	fsName     string
+	loopBackFs
 	hook Hook
 }
 
-func NewHookFs(original string, mountpoint string, hook Hook) (*HookFs, error) {
-	hookfs := &HookFs{
-		Original:   original,
-		Mountpoint: mountpoint,
-		FsName:     "hookfs",
-		LoopBackFs: LoopBackFs{pathfs.NewLoopbackFileSystem(original)},
+func newHookFs(original string, mountpoint string, hook Hook) (*hookFs, error) {
+	hookfs := &hookFs{
+		original:   original,
+		mountpoint: mountpoint,
+		fsName:     "hookfs",
+		loopBackFs: loopBackFs{pathfs.NewLoopbackFileSystem(original)},
 		hook:       hook,
 	}
 	return hookfs, nil
 }
 
-func (h *HookFs) String() string {
+// String implements hanwen/go-fuse/fuse/pathfs.FileSystem. You are not expected to call h manually.
+func (h *hookFs) String() string {
 	return fmt.Sprintf("HookFs{Original=%s, Mountpoint=%s, FsName=%s, Underlying fs=%s, hook=%s}",
-		h.Original, h.Mountpoint, h.FsName, h.LoopBackFs.String(), h.hook)
+		h.original, h.mountpoint, h.fsName, h.loopBackFs.String(), h.hook)
 }
 
-func (h *HookFs) Rename(oldName string, newName string, context *fuse.Context) fuse.Status {
+// Rename implements hanwen/go-fuse/fuse/pathfs.FileSystem. You are not expected to call h manually.
+func (h *hookFs) Rename(oldName string, newName string, context *fuse.Context) fuse.Status {
 	preHooked, err := h.hook.PreRename(oldName, newName)
 	if preHooked {
 		if err != nil {
@@ -65,7 +69,7 @@ func (h *HookFs) Rename(oldName string, newName string, context *fuse.Context) f
 		}
 	}
 
-	status := h.LoopBackFs.Rename(oldName, newName, context)
+	status := h.loopBackFs.Rename(oldName, newName, context)
 
 	postHooked, err := h.hook.PostRename(oldName, newName)
 	if postHooked {
@@ -76,12 +80,7 @@ func (h *HookFs) Rename(oldName string, newName string, context *fuse.Context) f
 	return status
 }
 
-// Tests will want to run this in a goroutine.
-func (h *HookFs) Start(server *fuse.Server) {
-	server.Serve()
-}
-
-func (h *HookFs) NewServe() (*fuse.Server, error) {
+func (h *hookFs) newServer() (*fuse.Server, error) {
 	opts := &nodefs.Options{
 		NegativeTimeout: time.Second,
 		AttrTimeout:     time.Second,
@@ -90,13 +89,13 @@ func (h *HookFs) NewServe() (*fuse.Server, error) {
 	pathFsOpts := &pathfs.PathNodeFsOptions{ClientInodes: true}
 	pathFs := pathfs.NewPathNodeFs(h, pathFsOpts)
 	conn := nodefs.NewFileSystemConnector(pathFs.Root(), opts)
-	originalAbs, _ := filepath.Abs(h.Original)
+	originalAbs, _ := filepath.Abs(h.original)
 	mOpts := &fuse.MountOptions{
 		AllowOther: true,
-		Name:       h.FsName,
+		Name:       h.fsName,
 		FsName:     originalAbs,
 	}
-	server, err := fuse.NewServer(conn.RawFS(), h.Mountpoint, mOpts)
+	server, err := fuse.NewServer(conn.RawFS(), h.mountpoint, mOpts)
 	if err != nil {
 		return nil, err
 	}
@@ -104,22 +103,18 @@ func (h *HookFs) NewServe() (*fuse.Server, error) {
 	return server, nil
 }
 
-type Server struct {
-	server     *fuse.Server
-	original   string
-	mountpoint string
-}
-
+// NewServer creates a fuse server and attaches it to the given `mountpoint` directory.
+// It returns a function to `unmount` the given `mountpoint` directory.
 func NewServer(t *testing.T, original, mountpoint string, hook Hook) (clean func()) {
-	fs, err := NewHookFs(original, mountpoint, hook)
+	fs, err := newHookFs(original, mountpoint, hook)
 	testutil.Ok(t, err)
 
-	server, err := fs.NewServe()
+	server, err := fs.newServer()
 	testutil.Ok(t, err)
 
-	// Async start fuse server, and it will be stopped when calling fuse.Unmount method.
+	// Async start fuse server, and it will be stopped when calling `fuse.Unmount()` method.
 	go func() {
-		fs.Start(server)
+		server.Serve()
 	}()
 
 	testutil.Ok(t, server.WaitMount())

@@ -17,28 +17,41 @@ import (
 	"syscall"
 )
 
+// Hook is the base interface for user-written hooks.
+// You have to implement XXXHooK(e.g. `TestRenameHook`, ..).
 type Hook interface {
+	// If hooked is true, the real `rename()` would not be called.
 	PreRename(oldPatgh string, newPath string) (hooked bool, err error)
+
+	// If hooked is true, it will triggered after the real `rename()`.
 	PostRename(oldPatgh string, newPath string) (hooked bool, err error)
 }
 
+// TestRenameHook is called on rename.
 type TestRenameHook struct {
-	EmptyHook // Add the Empty hook so the that this struct implements the hook interface.
+	// Add the Empty hook so the that this struct implements the hook interface.
+	EmptyHook
 }
 
-// These will take precedence over the `testutil.EmptyHook`
+// These will take precedence over the `EmptyHook.PreRename()`.
 func (h TestRenameHook) PreRename(oldPatgh string, newPath string) (hooked bool, err error) {
 	return true, syscall.EIO
 }
+
+// These will take precedence over the `EmptyHook.PostRename()`.
 func (h TestRenameHook) PostRename(oldPatgh string, newPath string) (hooked bool, err error) {
 	return false, nil
 }
 
+// EmptyHook implements a Hook that returns false for every operation.
 type EmptyHook struct{}
 
+// PreRename is called on before real `rename()` method.
 func (h EmptyHook) PreRename(oldPatgh string, newPath string) (hooked bool, err error) {
 	return false, nil
 }
+
+// PostRename is called on after real `rename()` method.
 func (h EmptyHook) PostRename(oldPatgh string, newPath string) (hooked bool, err error) {
 	return false, nil
 }

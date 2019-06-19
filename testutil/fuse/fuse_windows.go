@@ -14,6 +14,7 @@ package fuse
 
 import "testing"
 
+// NewServer is a mock method because fuse does not support Windows platform.
 func NewServer(t *testing.T, original, mountpoint string, hook Hook) (clean func()) {
 	t.Skip("Skip windows platform")
 	return func() {}

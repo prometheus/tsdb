@@ -1061,6 +1061,8 @@ func TestDeleteCompactionBlockAfterFailedReload(t *testing.T) {
 	}
 }
 
+// TestOpenBlockWithHook ensures that when OpenBlock call rename failed, there is not meta.json file
+// It use fuse to inject rename filesystem error
 func TestOpenBlockWithHook(t *testing.T) {
 	// Init action.
 	original, err := ioutil.TempDir("", "dev")
