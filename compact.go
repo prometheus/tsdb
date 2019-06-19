@@ -511,7 +511,7 @@ type instrumentedChunkWriter struct {
 	trange  prometheus.Histogram
 }
 
-func (w *instrumentedChunkWriter) WriteChunks(b []byte, chunks ...chunks.Meta) error {
+func (w *instrumentedChunkWriter) WriteChunks(b []byte, chunks ...chunks.Meta) ([]byte, error) {
 	for _, c := range chunks {
 		w.size.Observe(float64(len(c.Chunk.Bytes())))
 		w.samples.Observe(float64(c.Chunk.NumSamples()))
@@ -653,7 +653,7 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 		indexReaders      = make([]IndexReader, 0, len(blocks))
 		overlapping       bool
 		apkName, apkValue = index.AllPostingsKey()
-		b                 = [binary.MaxVarintLen32]byte{}
+		b                 = make([]byte, binary.MaxVarintLen32)
 	)
 	defer func() {
 		var merr tsdb_errors.MultiError
@@ -784,7 +784,7 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 				return errors.Wrap(err, "merge overlapping chunks")
 			}
 		}
-		if err := chunkw.WriteChunks(b[:], mergedChks...); err != nil {
+		if b, err = chunkw.WriteChunks(b[:0], mergedChks...); err != nil {
 			return errors.Wrap(err, "write chunks")
 		}
 
@@ -854,9 +854,8 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 	}
 
 	postingBuf := make([]uint64, 0, 1000000)
-	seriesMap := set.SeriesMap()
-	var bigEndianPos index.Postings = index.NewBigEndianPostings(nil)
-	var listPos = index.NewListPostings(nil).(*index.ListPostings)
+	var bigEndianPost index.Postings = index.NewBigEndianPostings(nil)
+	var listPost = index.NewListPostings(nil).(*index.ListPostings)
 	for _, n := range names {
 		s = s[:0]
 		if n == apkName {
@@ -871,12 +870,12 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 		for _, v := range s {
 			postingBuf = postingBuf[:0]
 			for i, ir := range indexReaders {
-				bigEndianPos, err = ir.Postings(n, v, bigEndianPos)
+				bigEndianPost, err = ir.Postings(n, v, bigEndianPost)
 				if err != nil {
 					return errors.Wrap(err, "read postings")
 				}
-				for bigEndianPos.Next() {
-					if newVal, ok := seriesMap[i][bigEndianPos.At()]; ok {
+				for bigEndianPost.Next() {
+					if newVal, ok := set.seriesMap[i][bigEndianPost.At()]; ok {
 						// idx is the index at which newVal exists or index at which we need to insert.
 						idx := sort.Search(len(postingBuf), func(i int) bool { return postingBuf[i] >= newVal })
 						if idx == len(postingBuf) {
@@ -887,8 +886,8 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 					}
 				}
 			}
-			listPos.Reset(postingBuf)
-			if err := indexw.WritePostings(n, v, listPos); err != nil {
+			listPost.Reset(postingBuf)
+			if err := indexw.WritePostings(n, v, listPost); err != nil {
 				return errors.Wrap(err, "write postings")
 			}
 		}
@@ -973,7 +972,6 @@ func (c *compactionSeriesSet) At() (uint64, labels.Labels, []chunks.Meta, Interv
 
 type compactionMerger struct {
 	sets      []ChunkSeriesSet
-	first     bool
 	oks       []bool
 	seriesMap []map[uint64]uint64
 
@@ -989,24 +987,20 @@ type compactionMerger struct {
 // allocation of memory.
 func newCompactionMerger(sets []ChunkSeriesSet, blocks []BlockReader) (*compactionMerger, error) {
 	c := &compactionMerger{
-		sets:  sets,
-		oks:   make([]bool, len(sets)),
-		first: true,
+		sets: sets,
+		oks:  make([]bool, len(sets)),
 	}
 	c.seriesMap = make([]map[uint64]uint64, len(sets))
 	for i := range c.seriesMap {
 		c.seriesMap[i] = make(map[uint64]uint64, blocks[i].NumSeries())
 	}
+	for i, s := range c.sets {
+		c.oks[i] = s.Next()
+	}
 	return c, nil
 }
 
 func (c *compactionMerger) Next() bool {
-	if c.first {
-		for i, s := range c.sets {
-			c.oks[i] = s.Next()
-		}
-		c.first = false
-	}
 	if c.Err() != nil {
 		return false
 	}
@@ -1068,8 +1062,4 @@ func (c *compactionMerger) Err() error {
 
 func (c *compactionMerger) At() (uint64, labels.Labels, []chunks.Meta, Intervals) {
 	return c.ref - 1, c.l, c.c, c.intervals
-}
-
-func (c *compactionMerger) SeriesMap() []map[uint64]uint64 {
-	return c.seriesMap
 }

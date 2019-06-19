@@ -114,7 +114,7 @@ type ChunkWriter interface {
 	// b is the byte buffer that can be used by WriteChunks.
 	// After returning successfully, the Ref fields in the ChunkMetas
 	// are set and can be used to retrieve the chunks from the written data.
-	WriteChunks(b []byte, chunks ...chunks.Meta) error
+	WriteChunks(b []byte, chunks ...chunks.Meta) ([]byte, error)
 
 	// Close writes any required finalization and closes the resources
 	// associated with the underlying writer.
