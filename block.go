@@ -241,7 +241,9 @@ func readMetaFile(dir string) (*BlockMeta, error) {
 func writeMetaFile(logger log.Logger, dir string, meta *BlockMeta) error {
 	meta.Version = 1
 
-	// Use a buffer to calculate the file size.
+	// The meta file includes the filesize of the block so
+	// need to account the size of the meta file itself.
+	// Use a buffer to calculate the file size upfront.
 	buf := &bytes.Buffer{}
 	enc := json.NewEncoder(buf)
 	enc.SetIndent("", "\t")
