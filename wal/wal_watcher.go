@@ -76,6 +76,7 @@ var (
 		},
 		[]string{consumer},
 	)
+	lrMetrics = NewLiveReaderMetrics(prometheus.DefaultRegisterer)
 )
 
 // This function is copied from prometheus/prometheus/pkg/timestamp to avoid adding vendor to TSDB repo.
@@ -308,7 +309,7 @@ func (w *WALWatcher) watch(segmentNum int, tail bool) error {
 	}
 	defer segment.Close()
 
-	reader := NewLiveReader(w.logger, w.reg, segment)
+	reader := NewLiveReader(w.logger, lrMetrics, segment)
 
 	readTicker := time.NewTicker(readPeriod)
 	defer readTicker.Stop()
@@ -523,7 +524,7 @@ func (w *WALWatcher) readCheckpoint(checkpointDir string) error {
 		}
 		defer sr.Close()
 
-		r := NewLiveReader(w.logger, w.reg, sr)
+		r := NewLiveReader(w.logger, lrMetrics, sr)
 		if err := w.readSegment(r, index, false); err != io.EOF && err != nil {
 			return errors.Wrap(err, "readSegment")
 		}

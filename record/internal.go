@@ -74,8 +74,8 @@ type MemSeries struct {
 	PendingCommit bool // Whether there are samples waiting to be committed to this series.
 	Chunks        []*MemChunk
 	Lset          labels.Labels
+	HeadChunk     *MemChunk
 
-	headChunk    *MemChunk
 	chunkRange   int64
 	firstChunkID int
 
@@ -117,7 +117,7 @@ func (s *MemSeries) cut(mint int64) *MemChunk {
 		MaxTime: math.MinInt64,
 	}
 	s.Chunks = append(s.Chunks, c)
-	s.headChunk = c
+	s.HeadChunk = c
 
 	// Set upper bound on when the next chunk must be started. An earlier timestamp
 	// may be chosen dynamically at a later point.
@@ -143,7 +143,7 @@ func (s *MemSeries) ChunksMetas() []chunks.Meta {
 // and 'chunkRange', like how it would appear after 'newMemSeries(...)'.
 func (s *MemSeries) Reset() {
 	s.Chunks = nil
-	s.headChunk = nil
+	s.HeadChunk = nil
 	s.firstChunkID = 0
 	s.nextAt = math.MinInt64
 	s.sampleBuf = [4]sample{}
@@ -197,9 +197,9 @@ func (s *MemSeries) TruncateChunksBefore(mint int64) (removed int) {
 	s.Chunks = append(s.Chunks[:0], s.Chunks[k:]...)
 	s.firstChunkID += k
 	if len(s.Chunks) == 0 {
-		s.headChunk = nil
+		s.HeadChunk = nil
 	} else {
-		s.headChunk = s.Chunks[len(s.Chunks)-1]
+		s.HeadChunk = s.Chunks[len(s.Chunks)-1]
 	}
 
 	return k
@@ -270,7 +270,7 @@ func (s *MemSeries) Iterator(id int) chunkenc.Iterator {
 }
 
 func (s *MemSeries) head() *MemChunk {
-	return s.headChunk
+	return s.HeadChunk
 }
 
 type MemChunk struct {

@@ -50,9 +50,9 @@ func init() {
 	castagnoliTable = crc32.MakeTable(crc32.Castagnoli)
 }
 
-// NewCRC32 initializes a CRC32 hash with a preconfigured polynomial, so the
+// newCRC32 initializes a CRC32 hash with a preconfigured polynomial, so the
 // polynomial may be easily changed in one location at a later time, if necessary.
-func NewCRC32() hash.Hash32 {
+func newCRC32() hash.Hash32 {
 	return crc32.New(castagnoliTable)
 }
 
@@ -72,7 +72,7 @@ type TombstoneReader interface {
 }
 
 func WriteTombstoneFile(logger log.Logger, dir string, tr TombstoneReader) (int64, error) {
-	path := filepath.Join(dir, tombstoneFilename)
+	path := filepath.Join(dir, TombstoneFilename)
 	tmp := path + ".tmp"
 	hash := newCRC32()
 	var size int
@@ -151,9 +151,9 @@ type Stone struct {
 }
 
 func ReadTombstones(dir string) (TombstoneReader, int64, error) {
-	b, err := ioutil.ReadFile(filepath.Join(dir, tombstoneFilename))
+	b, err := ioutil.ReadFile(filepath.Join(dir, TombstoneFilename))
 	if os.IsNotExist(err) {
-		return newMemTombstones(), 0, nil
+		return NewMemTombstones(), 0, nil
 	} else if err != nil {
 		return nil, 0, err
 	}
@@ -175,7 +175,7 @@ func ReadTombstones(dir string) (TombstoneReader, int64, error) {
 	}
 
 	// Verify checksum.
-	hash := NewCRC32()
+	hash := newCRC32()
 	if _, err := hash.Write(d.Get()); err != nil {
 		return nil, 0, errors.Wrap(err, "write to hash")
 	}

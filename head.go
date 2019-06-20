@@ -351,20 +351,11 @@ func (h *Head) loadWAL(r *wal.Reader, multiRef map[uint64]uint64) (err error) {
 	}
 
 	var (
-<<<<<<< HEAD
-		dec       RecordDecoder
-		series    []RefSeries
-		samples   []RefSample
-		tstones   []Stone
-		allStones = newMemTombstones()
-=======
 		dec       record.RecordDecoder
 		series    []record.RefSeries
 		samples   []record.RefSample
 		tstones   []tombstones.Stone
 		allStones = tombstones.NewMemTombstones()
-		err       error
->>>>>>> Move tombstones to it's own package.
 	)
 	defer func() {
 		if err := allStones.Close(); err != nil {
@@ -389,7 +380,7 @@ func (h *Head) loadWAL(r *wal.Reader, multiRef map[uint64]uint64) (err error) {
 				series, created := h.getOrCreateWithID(s.Ref, s.Labels.Hash(), s.Labels)
 
 				if !created {
-					// There's already a different ref for this series.
+					// There's already a different Ref for this series.
 					multiRefLock.Lock()
 					multiRef[s.Ref] = series.Ref
 					multiRefLock.Unlock()
@@ -478,15 +469,11 @@ func (h *Head) loadWAL(r *wal.Reader, multiRef map[uint64]uint64) (err error) {
 	}
 	wg.Wait()
 
-<<<<<<< HEAD
 	if r.Err() != nil {
 		return errors.Wrap(r.Err(), "read records")
 	}
 
-	if err := allStones.Iter(func(ref uint64, dranges Intervals) error {
-=======
 	if err := allStones.Iter(func(ref uint64, dranges tombstones.Intervals) error {
->>>>>>> Move tombstones to it's own package.
 		return h.chunkRewrite(ref, dranges)
 	}); err != nil {
 		return errors.Wrap(r.Err(), "deleting samples from tombstones")
@@ -1347,8 +1334,8 @@ func (h *headIndexReader) Series(ref uint64, lbls *labels.Labels, chks *[]chunks
 			continue
 		}
 		// Set the head chunks as open (being appended to).
-		maxTime := c.maxTime
-		if s.headChunk == c {
+		maxTime := c.MaxTime
+		if s.HeadChunk == c {
 			maxTime = math.MaxInt64
 		}
 

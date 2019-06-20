@@ -102,28 +102,28 @@ func TestHead_ReadWAL(t *testing.T) {
 	for _, compress := range []bool{false, true} {
 		t.Run(fmt.Sprintf("compress=%t", compress), func(t *testing.T) {
 			entries := []interface{}{
-				[]RefSeries{
+				[]record.RefSeries{
 					{Ref: 10, Labels: labels.FromStrings("a", "1")},
 					{Ref: 11, Labels: labels.FromStrings("a", "2")},
 					{Ref: 100, Labels: labels.FromStrings("a", "3")},
 				},
-				[]RefSample{
+				[]record.RefSample{
 					{Ref: 0, T: 99, V: 1},
 					{Ref: 10, T: 100, V: 2},
 					{Ref: 100, T: 100, V: 3},
 				},
-				[]RefSeries{
+				[]record.RefSeries{
 					{Ref: 50, Labels: labels.FromStrings("a", "4")},
 					// This series has two refs pointing to it.
 					{Ref: 101, Labels: labels.FromStrings("a", "3")},
 				},
-				[]RefSample{
+				[]record.RefSample{
 					{Ref: 10, T: 101, V: 5},
 					{Ref: 50, T: 101, V: 6},
 					{Ref: 101, T: 101, V: 7},
 				},
-				[]Stone{
-					{ref: 0, intervals: []Interval{{Mint: 99, Maxt: 101}}},
+				[]tombstones.Stone{
+					{Ref: 0, Intervals: []tombstones.Interval{{Mint: 99, Maxt: 101}}},
 				},
 			}
 			dir, err := ioutil.TempDir("", "test_read_wal")
@@ -148,10 +148,10 @@ func TestHead_ReadWAL(t *testing.T) {
 			s50 := head.series.getByID(50)
 			s100 := head.series.getByID(100)
 
-			testutil.Equals(t, labels.FromStrings("a", "1"), s10.lset)
-			testutil.Equals(t, (*memSeries)(nil), s11) // Series without samples should be garbage colected at head.Init().
-			testutil.Equals(t, labels.FromStrings("a", "4"), s50.lset)
-			testutil.Equals(t, labels.FromStrings("a", "3"), s100.lset)
+			testutil.Equals(t, labels.FromStrings("a", "1"), s10.Lset)
+			testutil.Equals(t, (*record.MemSeries)(nil), s11) // Series without samples should be garbage colected at head.Init().
+			testutil.Equals(t, labels.FromStrings("a", "4"), s50.Lset)
+			testutil.Equals(t, labels.FromStrings("a", "3"), s100.Lset)
 
 			expandChunk := func(c chunkenc.Iterator) (x []sample) {
 				for c.Next() {
@@ -328,14 +328,14 @@ func TestHeadDeleteSeriesWithoutSamples(t *testing.T) {
 	for _, compress := range []bool{false, true} {
 		t.Run(fmt.Sprintf("compress=%t", compress), func(t *testing.T) {
 			entries := []interface{}{
-				[]RefSeries{
+				[]record.RefSeries{
 					{Ref: 10, Labels: labels.FromStrings("a", "1")},
 				},
-				[]RefSample{},
-				[]RefSeries{
+				[]record.RefSample{},
+				[]record.RefSeries{
 					{Ref: 50, Labels: labels.FromStrings("a", "2")},
 				},
-				[]RefSample{
+				[]record.RefSample{
 					{Ref: 50, T: 80, V: 1},
 					{Ref: 50, T: 90, V: 1},
 				},
@@ -1057,9 +1057,9 @@ func TestHead_LogRollback(t *testing.T) {
 
 			testutil.Equals(t, 1, len(recs))
 
-			series, ok := recs[0].([]RefSeries)
+			series, ok := recs[0].([]record.RefSeries)
 			testutil.Assert(t, ok, "expected series record but got %+v", recs[0])
-			testutil.Equals(t, []RefSeries{{Ref: 1, Labels: labels.FromStrings("a", "b")}}, series)
+			testutil.Equals(t, []record.RefSeries{{Ref: 1, Labels: labels.FromStrings("a", "b")}}, series)
 		})
 	}
 }
@@ -1067,7 +1067,7 @@ func TestHead_LogRollback(t *testing.T) {
 // TestWalRepair_DecodingError ensures that a repair is run for an error
 // when decoding a record.
 func TestWalRepair_DecodingError(t *testing.T) {
-	var enc RecordEncoder
+	var enc record.RecordEncoder
 	for name, test := range map[string]struct {
 		corrFunc  func(rec []byte) []byte // Func that applies the corruption to a record.
 		rec       []byte
@@ -1079,7 +1079,7 @@ func TestWalRepair_DecodingError(t *testing.T) {
 				// Do not modify the base record because it is Logged multiple times.
 				res := make([]byte, len(rec))
 				copy(res, rec)
-				res[0] = byte(RecordInvalid)
+				res[0] = byte(record.RecordInvalid)
 				return res
 			},
 			enc.Series([]record.RefSeries{{Ref: 1, Labels: labels.FromStrings("a", "b")}}, []byte{}),

@@ -608,7 +608,7 @@ func (c *LeveledCompactor) write(dest string, meta *BlockMeta, blocks ...BlockRe
 	}
 
 	// Create an empty tombstones file.
-	if _, err := tombstones.WriteTombstoneFile(c.logger, tmp, record.NewMemTombstones()); err != nil {
+	if _, err := tombstones.WriteTombstoneFile(c.logger, tmp, tombstones.NewMemTombstones()); err != nil {
 		return errors.Wrap(err, "write new tombstones file")
 	}
 
@@ -769,7 +769,7 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 			//
 			// TODO think how to avoid the typecasting to verify when it is head block.
 			if _, isHeadChunk := chk.Chunk.(*safeChunk); isHeadChunk && chk.MaxTime >= meta.MaxTime {
-				dranges = append(dranges, Interval{Mint: meta.MaxTime, Maxt: math.MaxInt64})
+				dranges = append(dranges, tombstones.Interval{Mint: meta.MaxTime, Maxt: math.MaxInt64})
 
 			} else
 			// Sanity check for disk blocks.
