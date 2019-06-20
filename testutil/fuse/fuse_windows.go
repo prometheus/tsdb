@@ -12,10 +12,18 @@
 // limitations under the License.
 package fuse
 
-import "testing"
+import "errors"
+
+// Server is empty struct because windows platform do not support fuse.
+type Server struct {
+}
 
 // NewServer is a mock method because fuse does not support Windows platform.
-func NewServer(t *testing.T, original, mountpoint string, hook Hook) (clean func()) {
-	t.Skip("Skip windows platform")
-	return func() {}
+func NewServer(original, mountpoint string, hook Hook) (*Server, error) {
+	return nil, errors.New("Unsupported fuse.")
+}
+
+// Close is a mock method
+func (s *Server) Close() (err error) {
+
 }

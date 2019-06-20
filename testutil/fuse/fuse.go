@@ -17,10 +17,9 @@ package fuse
 
 import (
 	"fmt"
-	"github.com/prometheus/tsdb/testutil"
-	"os"
 	"path/filepath"
-	"testing"
+	"runtime"
+	"syscall"
 	"time"
 
 	"github.com/hanwen/go-fuse/fuse"
@@ -32,7 +31,7 @@ type loopBackFs struct {
 	pathfs.FileSystem
 }
 
-// A FUSE filesystem that shunts all request to an underlying file system.
+// hookFs filesystem that shunts all request to an underlying file system.
 // Its main purpose is to provide test coverage.
 type hookFs struct {
 	original   string
@@ -40,17 +39,6 @@ type hookFs struct {
 	fsName     string
 	loopBackFs
 	hook Hook
-}
-
-func newHookFs(original string, mountpoint string, hook Hook) (*hookFs, error) {
-	hookfs := &hookFs{
-		original:   original,
-		mountpoint: mountpoint,
-		fsName:     "hookfs",
-		loopBackFs: loopBackFs{pathfs.NewLoopbackFileSystem(original)},
-		hook:       hook,
-	}
-	return hookfs, nil
 }
 
 // String implements hanwen/go-fuse/fuse/pathfs.FileSystem. You are not expected to call h manually.
@@ -95,36 +83,82 @@ func (h *hookFs) newServer() (*fuse.Server, error) {
 		Name:       h.fsName,
 		FsName:     originalAbs,
 	}
-	server, err := fuse.NewServer(conn.RawFS(), h.mountpoint, mOpts)
-	if err != nil {
-		return nil, err
-	}
+	return fuse.NewServer(conn.RawFS(), h.mountpoint, mOpts)
+}
 
-	return server, nil
+// Server is proxy of fuse server.
+type Server struct {
+	server     *fuse.Server
+	original   string
+	mountpoint string
 }
 
 // NewServer creates a fuse server and attaches it to the given `mountpoint` directory.
 // It returns a function to `unmount` the given `mountpoint` directory.
-func NewServer(t *testing.T, original, mountpoint string, hook Hook) (clean func()) {
-	fs, err := newHookFs(original, mountpoint, hook)
-	testutil.Ok(t, err)
+func NewServer(original, mountpoint string, hook Hook) (*Server, error) {
+	fs := &hookFs{
+		original:   original,
+		mountpoint: mountpoint,
+		fsName:     "hookfs",
+		loopBackFs: loopBackFs{pathfs.NewLoopbackFileSystem(original)},
+		hook:       hook,
+	}
 
 	server, err := fs.newServer()
-	testutil.Ok(t, err)
+	if err != nil {
+		return nil, err
+	}
 
 	// Async start fuse server, and it will be stopped when calling `fuse.Unmount()` method.
 	go func() {
 		server.Serve()
 	}()
 
-	testutil.Ok(t, server.WaitMount())
+	return &Server{
+		server:     server,
+		mountpoint: mountpoint,
+		original:   original,
+	}, server.WaitMount()
+}
 
-	return func() {
-		if err = server.Unmount(); err != nil {
-			testutil.Ok(t, err)
+// Close return false if unmount `mountpoint` faild. But if the caller open files but forget to close them,
+// we also force unmout them to avoid test case stuck.
+func (s *Server) Close() (err error) {
+	if err = s.server.Unmount(); err != nil {
+		s.forceMount()
+	}
+
+	return
+}
+
+// forceMount force to unmount `mountpoint` to avoid the case that caller open files but forget to close them.
+func (s *Server) forceMount() (err error) {
+	delay := time.Duration(0)
+	for try := 0; try < 5; try++ {
+		err = syscall.Unmount(s.mountpoint, flag)
+		if err == nil {
+			break
 		}
 
-		testutil.Ok(t, os.RemoveAll(mountpoint))
-		testutil.Ok(t, os.RemoveAll(original))
+		// Sleep for a bit. This is not pretty, but there is
+		// no way we can be certain that the kernel thinks all
+		// open files have already been closed.
+		delay = 2*delay + 10*time.Millisecond
+		time.Sleep(delay)
 	}
+
+	return err
+}
+
+var (
+	flag = unmountFlag()
+)
+
+// unmountFlag return force unmount flag based different platform.
+func unmountFlag() int {
+	if runtime.GOOS == "darwin" {
+		return -1
+	}
+
+	return 0x1
 }

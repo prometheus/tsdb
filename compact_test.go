@@ -16,7 +16,6 @@ package tsdb
 import (
 	"context"
 	"fmt"
-	"github.com/go-kit/kit/log/level"
 	"github.com/prometheus/tsdb/testutil/fuse"
 	"io/ioutil"
 	"math"
@@ -1061,34 +1060,41 @@ func TestDeleteCompactionBlockAfterFailedReload(t *testing.T) {
 	}
 }
 
-// TestOpenBlockWithHook ensures that when OpenBlock call rename failed, there is not meta.json file
-// It use fuse to inject rename filesystem error
-func TestOpenBlockWithHook(t *testing.T) {
-	// Init action.
-	original, err := ioutil.TempDir("", "dev")
+// TestFailedDelete ensures that the block is in its original state when a delete fails.
+func TestFailedDelete(t *testing.T) {
+	original, err := ioutil.TempDir("", "original")
 	testutil.Ok(t, err)
 	mountpoint, err := ioutil.TempDir("", "mountpoint")
 	testutil.Ok(t, err)
 
-	// Create block will be successful because hook server does not start.
-	_, file := filepath.Split(createBlock(t, original, genSeries(1, 1, 200, 300)))
-	clean := fuse.NewServer(t, original, mountpoint, fuse.Hook(fuse.TestRenameHook{}))
-	// Remember to call unmount after you do not use it.
-	defer clean()
+	defer func() {
+		testutil.Ok(t, os.RemoveAll(mountpoint))
+		testutil.Ok(t, os.RemoveAll(original))
+	}()
 
-	// Normal logic.
-	pb, err := OpenBlock(nil, filepath.Join(mountpoint, file), nil)
+	_, file := filepath.Split(createBlock(t, original, genSeries(1, 1, 1, 100)))
+	server, err := fuse.NewServer(original, mountpoint, fuse.FailingRenameHook{})
 	if err != nil {
-		level.Warn(log.NewNopLogger()).Log("msg", "couldn't write the meta file for the block size", "err", err)
-		return
+		t.Skip("use server couldn't be started")
 	}
-	testutil.Ok(t, pb.chunkr.Close())
-	testutil.Ok(t, pb.indexr.Close())
-	testutil.Ok(t, pb.tombstones.Close())
+	defer func() {
+		testutil.Ok(t, server.Close())
+	}()
 
-	testutil.Equals(t, true, Exist(filepath.Join(mountpoint, file, "index")))
-	// Rename failed because there is an error by injected file system exception with fuse.
-	testutil.Equals(t, false, Exist(filepath.Join(mountpoint, file, "meta.json")))
+	expHash, err := testutil.DirHash(original)
+	testutil.Ok(t, err)
+	pb, err := OpenBlock(nil, filepath.Join(mountpoint, file), nil)
+	testutil.Ok(t, err)
+	defer func() {
+		testutil.Ok(t, pb.Close())
+	}()
+
+	testutil.NotOk(t, pb.Delete(1, 10, labels.NewMustRegexpMatcher("", ".*")))
+
+	actHash, err := testutil.DirHash(original)
+	testutil.Ok(t, err)
+
+	testutil.Equals(t, expHash, actHash, "the block dir hash has changed after a failed delete")
 }
 
 func Exist(filename string) bool {
