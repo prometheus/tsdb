@@ -1096,8 +1096,3 @@ func TestFailedDelete(t *testing.T) {
 
 	testutil.Equals(t, expHash, actHash, "the block dir hash has changed after a failed delete")
 }
-
-func Exist(filename string) bool {
-	_, err := os.Stat(filename)
-	return err == nil || os.IsExist(err)
-}
