@@ -335,17 +335,13 @@ func (w *Writer) seq() int {
 	return len(w.files) - 1
 }
 
-func (w *Writer) Size() int64 {
-	return w.n
-}
-
-func (w *Writer) Close() error {
+func (w *Writer) Close() (int64, error) {
 	if err := w.finalizeTail(); err != nil {
-		return err
+		return w.n, err
 	}
 
 	// close dir file (if not windows platform will fail on rename)
-	return w.dirFile.Close()
+	return w.n, w.dirFile.Close()
 }
 
 // ByteSlice abstracts a byte slice.

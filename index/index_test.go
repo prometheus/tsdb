@@ -159,7 +159,8 @@ func TestIndexRW_Create_Open(t *testing.T) {
 	// An empty index must still result in a readable file.
 	iw, err := NewWriter(fn)
 	testutil.Ok(t, err)
-	testutil.Ok(t, iw.Close())
+	_, err = iw.Close()
+	testutil.Ok(t, err)
 
 	ir, err := NewFileReader(fn)
 	testutil.Ok(t, err)
@@ -215,7 +216,8 @@ func TestIndexRW_Postings(t *testing.T) {
 	err = iw.WritePostings("a", "1", newListPostings(1, 2, 3, 4))
 	testutil.Ok(t, err)
 
-	testutil.Ok(t, iw.Close())
+	_, err = iw.Close()
+	testutil.Ok(t, err)
 
 	ir, err := NewFileReader(fn)
 	testutil.Ok(t, err)
@@ -335,7 +337,7 @@ func TestPersistence_index_e2e(t *testing.T) {
 		}
 	}
 
-	err = iw.Close()
+	_, err = iw.Close()
 	testutil.Ok(t, err)
 
 	ir, err := NewFileReader(filepath.Join(dir, indexFilename))

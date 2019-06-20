@@ -464,8 +464,7 @@ func (erringBReader) MaxTime() int64                       { return 0 }
 type nopChunkWriter struct{}
 
 func (nopChunkWriter) WriteChunks(chunks ...chunks.Meta) error { return nil }
-func (nopChunkWriter) Size() int64                             { return 0 }
-func (nopChunkWriter) Close() error                            { return nil }
+func (nopChunkWriter) Close() (int64, error)                   { return 0, nil }
 
 func TestCompaction_populateBlock(t *testing.T) {
 	var populateBlocksCases = []struct {

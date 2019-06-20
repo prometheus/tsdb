@@ -15,7 +15,6 @@
 package tsdb
 
 import (
-	"bytes"
 	"encoding/json"
 	"io"
 	"io/ioutil"
@@ -59,13 +58,10 @@ type IndexWriter interface {
 	// The Postings here contain refs to the series that were added.
 	WritePostings(name, value string, it index.Postings) error
 
-	// Size returns the total size in bytes written by the writer.
-	// It also adds any bytes that would be written when calling the close method.
-	Size() int64
-
 	// Close writes any finalization and closes the resources associated with
 	// the underlying writer.
-	Close() error
+	// It returns total bytes written by the writer.
+	Close() (int64, error)
 }
 
 // IndexReader provides reading access of serialized index data.
@@ -119,13 +115,10 @@ type ChunkWriter interface {
 	// are set and can be used to retrieve the chunks from the written data.
 	WriteChunks(chunks ...chunks.Meta) error
 
-	// Size returns the total size in bytes written by the writer.
-	// It also adds any bytes that would be written when calling the close method.
-	Size() int64
-
 	// Close writes any required finalization and closes the resources
 	// associated with the underlying writer.
-	Close() error
+	// It returns total bytes written by the writer.
+	Close() (int64, error)
 }
 
 // ChunkReader provides reading access of serialized time series data.
@@ -241,22 +234,12 @@ func readMetaFile(dir string) (*BlockMeta, error) {
 func writeMetaFile(logger log.Logger, dir string, meta *BlockMeta) error {
 	meta.Version = 1
 
-	// The meta file includes the filesize of the block so
-	// need to account the size of the meta file itself.
-	// Use a buffer to calculate the file size upfront.
-	buf := &bytes.Buffer{}
-	enc := json.NewEncoder(buf)
-	enc.SetIndent("", "\t")
-	if err := enc.Encode(meta); err != nil {
+	if err := setMetaFileSize(meta); err != nil {
 		return err
 	}
-	// Get the current size and add to the final size one byte for each extra digit.
-	digitCount := len(strconv.Itoa(buf.Len())) - len(strconv.Itoa(int(meta.Stats.NumBytesMeta)))
-	meta.Stats.NumBytesMeta = int64(buf.Len() + digitCount)
 
-	// Write the final content.
-	buf.Reset()
-	if err := enc.Encode(meta); err != nil {
+	jsonMeta, err := json.MarshalIndent(meta, "", "\t")
+	if err != nil {
 		return err
 	}
 	// Make any changes to the file appear atomic.
@@ -274,13 +257,23 @@ func writeMetaFile(logger log.Logger, dir string, meta *BlockMeta) error {
 	}
 
 	var merr tsdb_errors.MultiError
-	_, err = f.Write(buf.Bytes())
-	if merr.Add(err); merr.Err() != nil {
+
+	n, err := f.Write(jsonMeta)
+	if err != nil {
+		merr.Add(err)
+		merr.Add(f.Close())
+		return merr.Err()
+
+	}
+	if n != int(meta.Stats.NumBytesMeta) {
+		merr.Add(errors.New("meta file size not calculated correctly"))
 		merr.Add(f.Close())
 		return merr.Err()
 	}
+
 	// Force the kernel to persist the file on disk to avoid data loss if the host crashes.
-	if merr.Add(f.Sync()); merr.Err() != nil {
+	if err := f.Sync(); err != nil {
+		merr.Add(err)
 		merr.Add(f.Close())
 		return merr.Err()
 	}
@@ -288,6 +281,22 @@ func writeMetaFile(logger log.Logger, dir string, meta *BlockMeta) error {
 		return err
 	}
 	return fileutil.Replace(tmp, path)
+}
+
+func setMetaFileSize(meta *BlockMeta) error {
+	// The meta file includes the filesize of the block so
+	// need to account the size of the meta file itself.
+	// Use a buffer to calculate the file size upfront.
+	jsonMeta, err := json.MarshalIndent(meta, "", "\t")
+	if err != nil {
+		return err
+	}
+
+	// Get the current size and add to the final size one byte for each extra digit char.
+	chars := len(strconv.Itoa(len(jsonMeta))) - len(strconv.Itoa(int(meta.Stats.NumBytesMeta)))
+	meta.Stats.NumBytesMeta = int64(len(jsonMeta) + chars)
+
+	return nil
 }
 
 // Block represents a directory of time series data covering a continuous time range.

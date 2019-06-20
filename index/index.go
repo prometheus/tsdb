@@ -449,12 +449,6 @@ func (w *Writer) WriteLabelIndex(names []string, values []string) error {
 
 // writeOffsetTable writes a sequence of readable hash entries.
 func (w *Writer) writeOffsetTable(entries []hashEntry) error {
-	w.populateBufOffsetTable(entries)
-	return w.write(w.buf1.Get(), w.buf2.Get())
-}
-
-// populateOffsetTable populates the buffer with a sequence of readable hash entries.
-func (w *Writer) populateBufOffsetTable(entries []hashEntry) {
 	w.buf2.Reset()
 	w.buf2.PutBE32int(len(entries))
 
@@ -469,16 +463,13 @@ func (w *Writer) populateBufOffsetTable(entries []hashEntry) {
 	w.buf1.Reset()
 	w.buf1.PutBE32int(w.buf2.Len())
 	w.buf2.PutHash(w.crc32)
+
+	return w.write(w.buf1.Get(), w.buf2.Get())
 }
 
 const indexTOCLen = 6*8 + 4
 
 func (w *Writer) writeTOC() error {
-	w.populateBufTOC()
-	return w.write(w.buf1.Get())
-}
-
-func (w *Writer) populateBufTOC() {
 	w.buf1.Reset()
 
 	w.buf1.PutBE64(w.toc.Symbols)
@@ -489,6 +480,8 @@ func (w *Writer) populateBufTOC() {
 	w.buf1.PutBE64(w.toc.PostingsTable)
 
 	w.buf1.PutHash(w.crc32)
+
+	return w.write(w.buf1.Get())
 }
 
 func (w *Writer) WritePostings(name, value string, it Postings) error {
@@ -554,28 +547,17 @@ type hashEntry struct {
 	offset uint64
 }
 
-func (w *Writer) Size() int64 {
-	w.populateBufOffsetTable(w.labelIndexes)
-	lSize := int64(w.buf1.Len() + w.buf2.Len())
-	w.populateBufOffsetTable(w.postings)
-	pSize := int64(w.buf1.Len() + w.buf2.Len())
-	w.populateBufTOC()
-	tSize := int64(w.buf1.Len())
-
-	return int64(w.pos) + lSize + pSize + tSize
-}
-
-func (w *Writer) Close() error {
+func (w *Writer) Close() (int64, error) {
 	if err := w.ensureStage(idxStageDone); err != nil {
-		return err
+		return int64(w.pos), err
 	}
 	if err := w.fbuf.Flush(); err != nil {
-		return err
+		return int64(w.pos), err
 	}
 	if err := w.f.Sync(); err != nil {
-		return err
+		return int64(w.pos), err
 	}
-	return w.f.Close()
+	return int64(w.pos), w.f.Close()
 }
 
 // StringTuples provides access to a sorted list of string tuples.

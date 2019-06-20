@@ -524,13 +524,8 @@ func (w *instrumentedChunkWriter) WriteChunks(chunks ...chunks.Meta) error {
 func (c *LeveledCompactor) write(dest string, meta *BlockMeta, blocks ...BlockReader) (err error) {
 	dir := filepath.Join(dest, meta.ULID.String())
 	tmp := dir + ".tmp"
-	var closers []io.Closer
-	defer func(t time.Time) {
-		var merr tsdb_errors.MultiError
-		merr.Add(err)
-		merr.Add(closeAll(closers))
-		err = merr.Err()
 
+	defer func(t time.Time) {
 		// RemoveAll returns no error when tmp doesn't exist so it is safe to always run it.
 		if err := os.RemoveAll(tmp); err != nil {
 			level.Error(c.logger).Log("msg", "removed tmp folder after failed compaction", "err", err.Error())
@@ -547,15 +542,12 @@ func (c *LeveledCompactor) write(dest string, meta *BlockMeta, blocks ...BlockRe
 		return err
 	}
 
-	// Populate chunk and index files into temporary directory with
-	// data of all blocks.
 	var chunkw ChunkWriter
-
+	var merr tsdb_errors.MultiError
 	chunkw, err = chunks.NewWriter(chunkDir(tmp))
 	if err != nil {
 		return errors.Wrap(err, "open chunk writer")
 	}
-	closers = append(closers, chunkw)
 	// Record written chunk sizes on level 1 compactions.
 	if meta.Compaction.Level == 1 {
 		chunkw = &instrumentedChunkWriter{
@@ -568,12 +560,21 @@ func (c *LeveledCompactor) write(dest string, meta *BlockMeta, blocks ...BlockRe
 
 	indexw, err := index.NewWriter(filepath.Join(tmp, indexFilename))
 	if err != nil {
-		return errors.Wrap(err, "open index writer")
+		merr.Add(err)
+		_, err := chunkw.Close()
+		merr.Add(err)
+		merr.Add(errors.Wrap(err, "open index writer"))
+		return merr.Err()
 	}
-	closers = append(closers, indexw)
 
 	if err := c.populateBlock(blocks, meta, indexw, chunkw); err != nil {
-		return errors.Wrap(err, "write compaction")
+		merr.Add(err)
+		_, err := chunkw.Close()
+		merr.Add(err)
+		_, err = indexw.Close()
+		merr.Add(err)
+		merr.Add(errors.Wrap(err, "write compaction"))
+		return merr.Err()
 	}
 
 	select {
@@ -586,11 +587,12 @@ func (c *LeveledCompactor) write(dest string, meta *BlockMeta, blocks ...BlockRe
 	// though these are covered under defer. This is because in Windows,
 	// you cannot delete these unless they are closed and the defer is to
 	// make sure they are closed if the function exits due to an error above.
-	var merr tsdb_errors.MultiError
-	for _, w := range closers {
-		merr.Add(w.Close())
-	}
-	closers = closers[:0] // Avoid closing the writers twice in the defer.
+	n, err := chunkw.Close()
+	merr.Add(err)
+	meta.Stats.NumBytesChunks = n
+	n, err = indexw.Close()
+	merr.Add(err)
+	meta.Stats.NumBytesIndex = n
 	if merr.Err() != nil {
 		return merr.Err()
 	}
@@ -842,8 +844,6 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 			return errors.Wrap(err, "write postings")
 		}
 	}
-	meta.Stats.NumBytesChunks = chunkw.Size()
-	meta.Stats.NumBytesIndex = indexw.Size()
 	return nil
 }
 
