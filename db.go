@@ -51,6 +51,7 @@ var DefaultOptions = &Options{
 	BlockRanges:            ExponentialBlockRanges(int64(2*time.Hour)/1e6, 3, 5),
 	NoLockfile:             false,
 	AllowOverlappingBlocks: false,
+	WALCompression:         false,
 }
 
 // Options of the DB storage.
@@ -80,6 +81,9 @@ type Options struct {
 	// Overlapping blocks are allowed if AllowOverlappingBlocks is true.
 	// This in-turn enables vertical compaction and vertical query merge.
 	AllowOverlappingBlocks bool
+
+	// WALCompression will turn on Snappy compression for records on the WAL.
+	WALCompression bool
 }
 
 // Appender allows appending a batch of data. It must be completed with a
@@ -306,7 +310,7 @@ func Open(dir string, l log.Logger, r prometheus.Registerer, opts *Options) (db 
 		if opts.WALSegmentSize > 0 {
 			segmentSize = opts.WALSegmentSize
 		}
-		wlog, err = wal.NewSize(l, r, filepath.Join(dir, "wal"), segmentSize)
+		wlog, err = wal.NewSize(l, r, filepath.Join(dir, "wal"), segmentSize, opts.WALCompression)
 		if err != nil {
 			return nil, err
 		}
@@ -328,8 +332,12 @@ func Open(dir string, l log.Logger, r prometheus.Registerer, opts *Options) (db 
 		minValidTime = blocks[len(blocks)-1].Meta().MaxTime
 	}
 
-	if err := db.head.Init(minValidTime); err != nil {
-		return nil, errors.Wrap(err, "read WAL")
+	if initErr := db.head.Init(minValidTime); initErr != nil {
+		db.head.metrics.walCorruptionsTotal.Inc()
+		level.Warn(db.logger).Log("msg", "encountered WAL read error, attempting repair", "err", err)
+		if err := wlog.Repair(initErr); err != nil {
+			return nil, errors.Wrap(err, "repair corrupted WAL")
+		}
 	}
 
 	go db.run()
