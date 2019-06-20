@@ -268,6 +268,11 @@ type Postings interface {
 
 	// Err returns the last error of the iterator.
 	Err() error
+
+	// Reset resets the postings using the given data.
+	// It is similar to creating a new Postings using that data.
+	// If Reset() was successful, it returns true.
+	Reset(data interface{}) bool
 }
 
 // errPostings is an empty iterator that always errors.
@@ -275,10 +280,11 @@ type errPostings struct {
 	err error
 }
 
-func (e errPostings) Next() bool       { return false }
-func (e errPostings) Seek(uint64) bool { return false }
-func (e errPostings) At() uint64       { return 0 }
-func (e errPostings) Err() error       { return e.err }
+func (e errPostings) Next() bool               { return false }
+func (e errPostings) Seek(uint64) bool         { return false }
+func (e errPostings) At() uint64               { return 0 }
+func (e errPostings) Err() error               { return e.err }
+func (e errPostings) Reset(_ interface{}) bool { return false }
 
 var emptyPostings = errPostings{}
 
@@ -365,6 +371,10 @@ func (it *intersectPostings) Err() error {
 		return it.a.Err()
 	}
 	return it.b.Err()
+}
+
+func (it *intersectPostings) Reset(_ interface{}) bool {
+	return false
 }
 
 // Merge returns a new iterator over the union of the input iterators.
@@ -502,6 +512,10 @@ func (it mergedPostings) Err() error {
 	return it.err
 }
 
+func (it mergedPostings) Reset(data interface{}) bool {
+	return false
+}
+
 // Without returns a new postings list that contains all elements from the full list that
 // are not in the drop list.
 func Without(full, drop Postings) Postings {
@@ -588,6 +602,10 @@ func (rp *removedPostings) Err() error {
 	return rp.remove.Err()
 }
 
+func (rp *removedPostings) Reset(_ interface{}) bool {
+	return false
+}
+
 // ListPostings implements the Postings interface over a plain list.
 type ListPostings struct {
 	list []uint64
@@ -642,9 +660,13 @@ func (it *ListPostings) Err() error {
 	return nil
 }
 
-func (it *ListPostings) Reset(list []uint64) {
-	it.cur = 0
-	it.list = list
+func (it *ListPostings) Reset(data interface{}) bool {
+	if list, ok := data.(*[]uint64); ok && list != nil {
+		it.cur = 0
+		it.list = *list
+		return true
+	}
+	return false
 }
 
 // bigEndianPostings implements the Postings interface over a byte stream of
@@ -695,7 +717,16 @@ func (it *bigEndianPostings) Err() error {
 	return nil
 }
 
-func (it *bigEndianPostings) Reset(list []byte) {
+func (it *bigEndianPostings) Reset(data interface{}) bool {
+	if list, ok := data.(*[]byte); ok && list != nil {
+		it.cur = 0
+		it.list = *list
+		return true
+	}
+	return false
+}
+
+func (it *bigEndianPostings) ResetWithBytes(list []byte) {
 	it.cur = 0
 	it.list = list
 }

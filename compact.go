@@ -886,7 +886,9 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 					}
 				}
 			}
-			listPost.Reset(postingBuf)
+			if !listPost.Reset(&postingBuf) {
+				listPost = index.NewListPostings(postingBuf).(*index.ListPostings)
+			}
 			if err := indexw.WritePostings(n, v, listPost); err != nil {
 				return errors.Wrap(err, "write postings")
 			}

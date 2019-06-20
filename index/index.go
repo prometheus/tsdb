@@ -1064,16 +1064,21 @@ type Decoder struct {
 }
 
 // Postings returns a postings list for b and its number of elements.
-// 'reusePos' is used if it is a 'bigEndianPostings'.
 func (dec *Decoder) Postings(b []byte, reusePos Postings) (int, Postings, error) {
 	d := encoding.Decbuf{B: b}
 	n := d.Be32int()
-	l := d.Get()
 	if bep, ok := reusePos.(*bigEndianPostings); ok {
-		bep.Reset(l)
+		// Avoding allocs for creating a pointer for reusePos.Reset
+		// if reusePos is bigEndianPostings.
+		bep.ResetWithBytes(d.Get())
 		return n, bep, d.Err()
+	} else if reusePos != nil {
+		l := d.Get()
+		if reusePos.Reset(&l) {
+			return n, reusePos, d.Err()
+		}
 	}
-	return n, NewBigEndianPostings(l), d.Err()
+	return n, NewBigEndianPostings(d.Get()), d.Err()
 }
 
 // Series decodes a series entry from the given byte slice into lset and chks.
