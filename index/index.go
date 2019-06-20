@@ -137,6 +137,10 @@ type Writer struct {
 	Version int
 }
 
+func (w *Writer) GetP() uint64 {
+	return w.pos
+}
+
 // TOC represents index Table Of Content that states where each section of index starts.
 type TOC struct {
 	Symbols           uint64
@@ -545,6 +549,15 @@ func (w *Writer) WritePostings(name, value string, it Postings) error {
 		writeBitmapPostings(&w.buf2, refs)
 	case 6:
 		writeRoaringBitmapPostings(&w.buf2, refs)
+		// if len(refs) < 32 {
+		// 	w.buf2.PutByte(0)
+		// 	for _, r := range refs {
+		// 		w.buf2.PutBE32(r)
+		// 	}
+		// } else {
+		// 	w.buf2.PutByte(1)
+		// 	writeRoaringBitmapPostings(&w.buf2, refs)
+		// }
 	}
 
 	w.uint32s = refs
@@ -1071,6 +1084,13 @@ func (dec *Decoder) Postings(b []byte) (int, Postings, error) {
 	case 6:
 		l := d.Get()
 		return n, newRoaringBitmapPostings(l), d.Err()
+		// typ := d.Byte()
+		// l := d.Get()
+		// if typ == 0 {
+		// 	return n, newBigEndianPostings(l), d.Err()
+		// } else {
+		// 	return n, newRoaringBitmapPostings(l), d.Err()
+		// }
 	default:
 		return n, EmptyPostings(), d.Err()
 	}

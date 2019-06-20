@@ -1247,16 +1247,16 @@ func writeBitmapPostings(e *encoding.Encbuf, arr []uint32) {
 }
 
 // roaringBitmap block format, type 0 = array, type 1 = bitmap.
-// ┌──────────┬──────────┬────────┐
-// │ key <4b> │ type<1b> │ bitmap │
-// └──────────┴──────────┴────────┘
+// ┌───────────────┬──────────┬──────────────┬────────────────┬────────────┬─────────────────────┬─────┬─────────────────────┐
+// │ key <uvarint> │ type<1b> │ bitmap/array │ numBlocks <4b> │ width <1b> │ block 1 addr <bits> │ ... │ block n addr <bits> │
+// └───────────────┴──────────┴──────────────┴────────────────┴────────────┴─────────────────────┴─────┴─────────────────────┘
 type roaringBitmapPostings struct {
 	bs         []byte
 	cur        uint64
 	inside     bool
-	idx        int
-	idx1       int
-	idx2       int
+	idx        int // The current offset inside the bs.
+	idx1       int // The offset in the bitmap in current block in bytes.
+	idx2       int // The offset in the current byte in the bitmap ([0,8)).
 	footerAddr int
 	bitmapSize int
 	valueSize  int
@@ -1265,6 +1265,7 @@ type roaringBitmapPostings struct {
 	blockIdx   int
 	blockType  byte
 	nextBlock  int
+	width      int
 }
 
 func newRoaringBitmapPostings(bstream []byte) *roaringBitmapPostings {
@@ -1272,7 +1273,7 @@ func newRoaringBitmapPostings(bstream []byte) *roaringBitmapPostings {
 		return nil
 	}
 	x := binary.BigEndian.Uint32(bstream)
-	return &roaringBitmapPostings{bs: bstream[4:], bitmapSize: 1 << (bitmapBits - 3), valueSize: bitmapBits >> 3, numBlock: (len(bstream)-int(x))/4 - 1, footerAddr: int(x)}
+	return &roaringBitmapPostings{bs: bstream[4:], bitmapSize: 1 << (bitmapBits - 3), valueSize: bitmapBits >> 3, numBlock: int(binary.BigEndian.Uint32(bstream[4+int(x):])), footerAddr: int(x), width: int(bstream[8+int(x)])}
 }
 
 func (it *roaringBitmapPostings) At() uint64 {
@@ -1280,8 +1281,8 @@ func (it *roaringBitmapPostings) At() uint64 {
 }
 
 func (it *roaringBitmapPostings) Next() bool {
-	if it.inside {
-		if it.blockType == 0 {
+	if it.inside { // Already entered the block.
+		if it.blockType == 0 { // Type array.
 			if it.idx < it.nextBlock {
 				it.cur = 0
 				for i := 0; i < it.valueSize; i++ {
@@ -1291,7 +1292,7 @@ func (it *roaringBitmapPostings) Next() bool {
 				it.cur += uint64(it.key)
 				return true
 			}
-		} else {
+		} else { // Type bitmap.
 			for it.idx1 < it.bitmapSize {
 				if it.bs[it.idx+it.idx1] == byte(0) {
 					it.idx1 += 1
@@ -1322,14 +1323,16 @@ func (it *roaringBitmapPostings) Next() bool {
 		it.blockIdx += 1
 		it.inside = false
 		return it.Next()
-	} else {
+	} else { // Not yet entered the block.
 		if it.idx < it.footerAddr {
-			it.key = binary.BigEndian.Uint32(it.bs[it.idx:]) << bitmapBits
-			it.blockType = it.bs[it.idx+4]
-			it.idx += 5
+			val, size := binary.Uvarint(it.bs[it.idx:])
+			it.key = uint32(val) << bitmapBits
+			it.idx += size
+			it.blockType = it.bs[it.idx]
+			it.idx += 1
 			it.inside = true
 			if it.blockIdx != it.numBlock-1 {
-				it.nextBlock = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+(it.blockIdx+1)*4:]))
+				it.nextBlock = int(it.readBits((it.footerAddr+5)*8+(it.blockIdx+1)*it.width))
 			} else {
 				it.nextBlock = it.footerAddr
 			}
@@ -1346,8 +1349,9 @@ func (it *roaringBitmapPostings) Seek(x uint64) bool {
 	}
 	curKey := uint32(x) >> bitmapBits
 	i := sort.Search(it.numBlock-it.blockIdx, func(i int) bool {
-		off := int(binary.BigEndian.Uint32(it.bs[it.footerAddr+4*(it.blockIdx+i):]))
-		return binary.BigEndian.Uint32(it.bs[off:]) > curKey
+		off := int(it.readBits((it.footerAddr+5)*8+(it.blockIdx+i)*it.width))
+		x, _ := binary.Uvarint(it.bs[off:])
+		return uint32(x) > curKey
 	})
 	if i > 0 {
 		i -= 1
@@ -1355,7 +1359,8 @@ func (it *roaringBitmapPostings) Seek(x uint64) bool {
 			it.idx1 = 0
 			it.idx2 = 0
 			it.inside = false
-			it.idx = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+4*(it.blockIdx+i):]))
+			// it.idx = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+4*(it.blockIdx+i):]))
+			it.idx = int(it.readBits((it.footerAddr+5)*8+(it.blockIdx+i)*it.width))
 		}
 	}
 	it.blockIdx += i
@@ -1403,59 +1408,60 @@ func (it *roaringBitmapPostings) Err() error {
 	return nil
 }
 
-func writeRoaringBitmapPostings(e *encoding.Encbuf, arr []uint32) {
-	key := uint32(0xffffffff)
-	bitmapSize := 1 << (bitmapBits - 3)
-	valueSize := bitmapBits >> 3
-	thres := (1 << bitmapBits) / bitmapBits
-	mask := uint32((1 << uint(bitmapBits)) - 1)
-	var curKey uint32
-	var curVal uint32
-	var offset int // The starting offset of the bitmap of each block.
-	var idx int
-	var idx1 int
-	var idx2 int
-	var startingOffs []uint32
-	var vals []int
-	c := make([]byte, 4)
-	startOff := len(e.Get())
-	e.PutBE32(0) // Footer starting offset.
-	for idx < len(arr) {
-		curKey = arr[idx] >> bitmapBits
-		curVal = arr[idx] & mask
-		if curKey != key {
-			if idx != 0 {
-				startingOffs = append(startingOffs, uint32(len(e.B)))
-				e.PutBE32(uint32(key))
-				if len(vals) > thres {
-					e.PutByte(byte(1))
-					offset = len(e.Get())
-					for i := 0; i < bitmapSize; i++ {
-						e.PutByte(byte(0))
-					}
-					for _, val := range vals {
-						idx1 = val >> 3
-						idx2 = val % 8
-						e.B[offset+idx1] |= 1 << uint(7-idx2)
-					}
-				} else {
-					e.PutByte(byte(0))
-					for _, val := range vals {
-						binary.BigEndian.PutUint32(c[:], uint32(val))
-						for i := 4 - valueSize; i < 4; i++ {
-							e.PutByte(c[i])
-						}
-					}
-				}
-				vals = vals[:0]
-			}
-			key = curKey
-		}
-		vals = append(vals, int(curVal))
+// Read key of the block starting from off.
+// func (it *roaringBitmapPostings) readKey(off int) uint32 {
+// 	key := uint32(0)
+// 	for i := 0; i < 4 - it.valueSize; i ++ {
+// 		key = (key << 8) + uint32(it.bs[off+i])
+// 	}
+// 	return key
+// }
+
+func (it *roaringBitmapPostings) readByte(idx int, count uint8) byte {
+	if count == 0 {
+		return it.bs[idx]
+	}
+	byt := it.bs[idx] << count
+	byt |= it.bs[idx+1] >> (8 - count)
+
+	return byt
+}
+
+func (it *roaringBitmapPostings) readBits(offset int) uint64 {
+	idx := offset / 8
+	count := uint8(offset % 8)
+	nbits := it.width
+	var u uint64
+
+	for nbits >= 8 {
+		byt := it.readByte(idx, count)
+
+		u = (u << 8) | uint64(byt)
+		nbits -= 8
 		idx += 1
 	}
-	startingOffs = append(startingOffs, uint32(len(e.B)))
-	e.PutBE32(uint32(key))
+
+	if nbits == 0 {
+		return u
+	}
+
+	if nbits > int(8-count) {
+		u = (u << uint(8-count)) | uint64((it.bs[idx]<<count)>>count)
+		nbits -= int(8 - count)
+		idx += 1
+
+		count = 0
+	}
+
+	u = (u << uint(nbits)) | uint64((it.bs[idx]<<count)>>(8-uint(nbits)))
+	return u
+}
+
+func writeRoaringBitmapBlock(e *encoding.Encbuf, vals []int, c []byte, key uint32, thres int, bitmapSize int, valueSize int) {
+	var offset int // The starting offset of the bitmap of each block.
+	var idx1 int // The offset in the bitmap in current block in bytes.
+	var idx2 int // The offset in the current byte in the bitmap ([0,8)).
+	e.PutUvarint32(key)
 	if len(vals) > thres {
 		e.PutByte(byte(1))
 		offset = len(e.Get())
@@ -1476,8 +1482,50 @@ func writeRoaringBitmapPostings(e *encoding.Encbuf, arr []uint32) {
 			}
 		}
 	}
+}
+
+func writeRoaringBitmapPostings(e *encoding.Encbuf, arr []uint32) {
+	key := uint32(0xffffffff) // The initial key should be unique.
+	bitmapSize := 1 << (bitmapBits - 3) // Bitmap size in bytes.
+	valueSize := bitmapBits >> 3 // The size of the element in array in bytes.
+	thres := (1 << bitmapBits) / bitmapBits // Threshold of number of elements in the block for choosing encoding type.
+	mask := uint32((1 << uint(bitmapBits)) - 1) // Mask for the elements in the block.
+	var curKey uint32
+	var curVal uint32
+	var idx int // Index of current element in arr.
+	var startingOffs []uint32 // The starting offsets of each block.
+	var vals []int // The converted values in the current block.
+	c := make([]byte, 4)
+	startOff := len(e.Get())
+	e.PutBE32(0) // Footer starting offset.
+	for idx < len(arr) {
+		curKey = arr[idx] >> bitmapBits // Key of block.
+		curVal = arr[idx] & mask // Value inside block.
+		if curKey != key {
+			// Move to next block.
+			if idx != 0 {
+				startingOffs = append(startingOffs, uint32(len(e.B)))
+				writeRoaringBitmapBlock(e, vals, c, key, thres, bitmapSize, valueSize)
+				vals = vals[:0]
+			}
+			key = curKey
+		}
+		vals = append(vals, int(curVal))
+		idx += 1
+	}
+	startingOffs = append(startingOffs, uint32(len(e.B)))
+	writeRoaringBitmapBlock(e, vals, c, key, thres, bitmapSize, valueSize)
+
+	// Put footer starting offset.
 	binary.BigEndian.PutUint32(e.B[startOff:], uint32(len(e.B)-4-startOff))
+	width := bits.Len32(startingOffs[len(startingOffs)-1] - 4 - uint32(startOff))
+	if width == 0 {
+		// key 0 will result in o width.
+		width += 1
+	}
+	e.PutBE32(uint32(len(startingOffs))) // Number of blocks.
+	e.PutByte(byte(width))
 	for _, off := range startingOffs {
-		e.PutBE32(off - 4 - uint32(startOff))
+		e.PutBits(uint64(off - 4 - uint32(startOff)), width)
 	}
 }
