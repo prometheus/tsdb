@@ -795,7 +795,7 @@ func (it *baseDeltaPostings) Err() error {
 	return nil
 }
 
-const deltaBlockSize = 128
+const deltaBlockSize = 256
 
 // Block format(delta is to the previous value).
 // ┌────────────────┬───────────────┬─────────────────┬────────────┬────────────────┬─────┬────────────────┐
@@ -1039,13 +1039,8 @@ func (it *baseDeltaBlockPostings) Seek(x uint64) bool {
 		// may contain the first value >= x.
 		i -= 1
 	}
-	it.offset = (startOff + i*deltaBlockSize) << 3
 
-	// Read base, idx, and width.
-	it.Next()
-	if x <= it.base {
-		return true
-	} else {
+	if i == 0 && it.idx > 0 {
 		temp := x - it.base
 		j := sort.Search(it.count-it.idxBlock, func(i int) bool {
 			return it.bs.readBits(it.offset+i*it.bs.width) >= temp
@@ -1065,6 +1060,34 @@ func (it *baseDeltaBlockPostings) Seek(x uint64) bool {
 			return it.Next()
 		}
 		return true
+	} else {
+		it.offset = (startOff + i*deltaBlockSize) << 3
+
+		// Read base, idx, and width.
+		it.Next()
+		if x <= it.base {
+			return true
+		} else {
+			temp := x - it.base
+			j := sort.Search(it.count-it.idxBlock, func(i int) bool {
+				return it.bs.readBits(it.offset+i*it.bs.width) >= temp
+			})
+
+			if j < it.count-it.idxBlock {
+				it.offset += j * it.bs.width
+				it.cur = it.bs.readBits(it.offset) + it.base
+				it.offset += it.bs.width
+				it.idxBlock += j + 1
+				it.idx += j + 1
+				if it.idxBlock == it.count {
+					it.offset = ((it.offset-1)/(deltaBlockSize<<3) + 1) * deltaBlockSize << 3
+				}
+			} else {
+				it.offset = (startOff + (i+1)*deltaBlockSize) << 3
+				return it.Next()
+			}
+			return true
+		}
 	}
 }
 
@@ -1246,10 +1269,27 @@ func writeBitmapPostings(e *encoding.Encbuf, arr []uint32) {
 	}
 }
 
+var rbpMasks []byte
+var rbpValueMask uint32
+var rbpValueSize int
+var rbpBitmapSize int
+func init() {
+	for i := 7; i >= 0; i-- {
+		rbpMasks = append(rbpMasks, byte(1<<uint(i)))
+	}
+	rbpValueMask = uint32((1 << uint(bitmapBits)) - 1)
+	rbpBitmapSize = 1 << (bitmapBits - 3)
+	rbpValueSize = bitmapBits >> 3
+}
+
 // roaringBitmap block format, type 0 = array, type 1 = bitmap.
-// ┌───────────────┬──────────┬──────────────┬────────────────┬────────────┬─────────────────────┬─────┬─────────────────────┐
-// │ key <uvarint> │ type<1b> │ bitmap/array │ numBlocks <4b> │ width <1b> │ block 1 addr <bits> │ ... │ block n addr <bits> │
-// └───────────────┴──────────┴──────────────┴────────────────┴────────────┴─────────────────────┴─────┴─────────────────────┘
+// ┌───────────────┬──────────┬──────────────┐
+// │ key <uvarint> │ type<1b> │ bitmap/array │
+// └───────────────┴──────────┴──────────────┘
+// footer format.
+// ┌────────────┬─────────────────────┬─────┬─────────────────────┐
+// │ width <1b> │ block 1 addr <bits> │ ... │ block n addr <bits> │
+// └────────────┴─────────────────────┴─────┴─────────────────────┘
 type roaringBitmapPostings struct {
 	bs         []byte
 	cur        uint64
@@ -1258,14 +1298,13 @@ type roaringBitmapPostings struct {
 	idx1       int // The offset in the bitmap in current block in bytes.
 	idx2       int // The offset in the current byte in the bitmap ([0,8)).
 	footerAddr int
-	bitmapSize int
-	valueSize  int
 	key        uint32
 	numBlock   int
 	blockIdx   int
 	blockType  byte
 	nextBlock  int
 	width      int
+	addrMask   uint32
 }
 
 func newRoaringBitmapPostings(bstream []byte) *roaringBitmapPostings {
@@ -1273,7 +1312,9 @@ func newRoaringBitmapPostings(bstream []byte) *roaringBitmapPostings {
 		return nil
 	}
 	x := binary.BigEndian.Uint32(bstream)
-	return &roaringBitmapPostings{bs: bstream[4:], bitmapSize: 1 << (bitmapBits - 3), valueSize: bitmapBits >> 3, numBlock: int(binary.BigEndian.Uint32(bstream[4+int(x):])), footerAddr: int(x), width: int(bstream[8+int(x)])}
+	// return &roaringBitmapPostings{bs: bstream[4:], numBlock: int(binary.BigEndian.Uint32(bstream[4+int(x):])), footerAddr: int(x), width: int(bstream[8+int(x)])}
+	// return &roaringBitmapPostings{bs: bstream[4:], numBlock: (len(bstream)-int(x))/4 - 1, footerAddr: int(x)}
+	return &roaringBitmapPostings{bs: bstream[4:], numBlock: (len(bstream)-int(x)-5)/int(bstream[4+int(x)]), footerAddr: int(x), width: int(bstream[4+int(x)]), addrMask: uint32((1<<(8*uint(bstream[4+int(x)])))-1)}
 }
 
 func (it *roaringBitmapPostings) At() uint64 {
@@ -1284,39 +1325,32 @@ func (it *roaringBitmapPostings) Next() bool {
 	if it.inside { // Already entered the block.
 		if it.blockType == 0 { // Type array.
 			if it.idx < it.nextBlock {
-				it.cur = 0
-				for i := 0; i < it.valueSize; i++ {
-					it.cur = (it.cur << 8) + uint64(it.bs[it.idx+i])
-				}
-				it.idx += it.valueSize
-				it.cur += uint64(it.key)
+				it.cur = uint64(it.key) | uint64(it.bs[it.idx])
+				it.idx += 1
 				return true
 			}
 		} else { // Type bitmap.
-			for it.idx1 < it.bitmapSize {
-				if it.bs[it.idx+it.idx1] == byte(0) {
-					it.idx1 += 1
-					continue
-				}
-				for it.idx1 < it.bitmapSize {
-					if it.bs[it.idx+it.idx1]&(1<<uint(7-it.idx2)) != byte(0) {
-						it.cur = uint64(it.key) + uint64(it.idx1*8+it.idx2)
-						it.idx2 += 1
-						if it.idx2 == 8 {
-							it.idx1 += 1
-							it.idx2 = 0
-						}
-						return true
-					} else {
-						it.idx2 += 1
-						if it.idx2 == 8 {
-							it.idx1 += 1
-							it.idx2 = 0
-						}
+			for it.idx1 < rbpBitmapSize && it.bs[it.idx+it.idx1] == 0 {
+				it.idx1 += 1
+			}
+			for it.idx1 < rbpBitmapSize {
+				if it.bs[it.idx+it.idx1]&rbpMasks[it.idx2] != 0 {
+					it.cur = uint64(it.key) | uint64((it.idx1<<3)+it.idx2)
+					it.idx2 += 1
+					if it.idx2 == 8 {
+						it.idx1 += 1
+						it.idx2 = 0
+					}
+					return true
+				} else {
+					it.idx2 += 1
+					if it.idx2 == 8 {
+						it.idx1 += 1
+						it.idx2 = 0
 					}
 				}
 			}
-			it.idx += it.bitmapSize
+			it.idx += rbpBitmapSize
 			it.idx1 = 0
 			it.idx2 = 0
 		}
@@ -1331,14 +1365,61 @@ func (it *roaringBitmapPostings) Next() bool {
 			it.blockType = it.bs[it.idx]
 			it.idx += 1
 			it.inside = true
-			if it.blockIdx != it.numBlock-1 {
-				it.nextBlock = int(it.readBits((it.footerAddr+5)*8+(it.blockIdx+1)*it.width))
-			} else {
-				it.nextBlock = it.footerAddr
+
+			if it.blockType == 0 {
+				if it.blockIdx != it.numBlock-1 {
+					// it.nextBlock = int(it.readBits((it.footerAddr+5)*8+(it.blockIdx+1)*it.width))
+					// it.nextBlock = it.readBytes(it.footerAddr+1+(it.blockIdx+1)*it.width)
+					it.nextBlock = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+1+(it.blockIdx+1)*it.width-4+it.width:])&it.addrMask)
+					// it.nextBlock = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+(it.blockIdx+1)*4:]))
+				} else {
+					it.nextBlock = it.footerAddr
+				}
 			}
 			return it.Next()
 		} else {
 			return false
+		}
+	}
+}
+
+func (it *roaringBitmapPostings) seekInBlock(x uint64) bool {
+	curVal := byte(uint32(x) & rbpValueMask)
+	if it.blockType == 0 {
+		// If encoding with array, binary search.
+		num := (it.nextBlock - it.idx)
+		j := sort.Search(num, func(i int) bool {
+			return it.bs[it.idx+i] >= curVal
+		})
+		if j == num {
+			// The first element in next block should be >= x.
+			it.idx = it.nextBlock
+			it.inside = false
+			return it.Next()
+		}
+
+		it.cur = uint64(it.key) | uint64(it.bs[it.idx+j])
+		it.idx += j + 1
+		return true
+	} else {
+		// If encoding with bitmap, go to the exact location of value of x.
+		it.idx1 = int(curVal >> 3)
+		it.idx2 = int(curVal % 8)
+		if it.bs[it.idx+it.idx1]&rbpMasks[it.idx2] != 0 { // Found x.
+			it.cur = uint64(it.key) | uint64(it.idx1*8+it.idx2)
+			it.idx2 += 1
+			if it.idx2 == 8 {
+				it.idx1 += 1
+				it.idx2 = 0
+			}
+			return true
+		} else {
+			it.idx2 += 1
+			if it.idx2 == 8 {
+				it.idx1 += 1
+				it.idx2 = 0
+			}
+			return it.Next()
 		}
 	}
 }
@@ -1348,60 +1429,82 @@ func (it *roaringBitmapPostings) Seek(x uint64) bool {
 		return true
 	}
 	curKey := uint32(x) >> bitmapBits
-	i := sort.Search(it.numBlock-it.blockIdx, func(i int) bool {
-		off := int(it.readBits((it.footerAddr+5)*8+(it.blockIdx+i)*it.width))
-		x, _ := binary.Uvarint(it.bs[off:])
-		return uint32(x) > curKey
-	})
-	if i > 0 {
-		i -= 1
-		if i > 0 {
+	if it.inside && it.key >> bitmapBits == curKey {
+		// Fast path.
+		return it.seekInBlock(x)
+	} else {
+		i := sort.Search(it.numBlock-it.blockIdx, func(i int) bool {
+			// off := int(it.readBits(((it.footerAddr+5)<<3)+(it.blockIdx+i)*it.width))
+			// off := int(binary.BigEndian.Uint32(it.bs[it.footerAddr+4*(it.blockIdx+i):]))
+			// off := it.readBytes(it.footerAddr+1+(it.blockIdx+i)*it.width)
+			off := int(binary.BigEndian.Uint32(it.bs[it.footerAddr+1+(it.blockIdx+i)*it.width-4+it.width:])&it.addrMask)
+			k, _ := binary.Uvarint(it.bs[off:])
+			return uint32(k) >= curKey
+			// return binary.BigEndian.Uint32(it.bs[off:]) > curKey
+		})
+		if i == it.numBlock-it.blockIdx {
+			return false
+		}
+		if i != 0 { // i > 0.
 			it.idx1 = 0
 			it.idx2 = 0
 			it.inside = false
 			// it.idx = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+4*(it.blockIdx+i):]))
-			it.idx = int(it.readBits((it.footerAddr+5)*8+(it.blockIdx+i)*it.width))
+			// it.idx = int(it.readBits(((it.footerAddr+5)<<3)+(it.blockIdx+i)*it.width))
+			// it.idx = it.readBytes(it.footerAddr+1+(it.blockIdx+i)*it.width)
+			it.idx = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+1+(it.blockIdx+i)*it.width-4+it.width:])&it.addrMask)
 		}
+		it.blockIdx += i
 	}
-	it.blockIdx += i
-	if it.Next() {
-		if it.cur >= x {
-			return true
-		}
-		if it.blockType == 0 {
-			// If encoding with array, binary search.
-			num := (it.nextBlock - it.idx) / it.valueSize
-			j := sort.Search(num, func(i int) bool {
-				var temp uint64
-				for j := 0; j < it.valueSize; j++ {
-					temp = (temp << 8) + uint64(it.bs[it.idx+j+i*it.valueSize])
-				}
-				temp += uint64(it.key)
-				return temp >= x
-			})
-			it.cur = 0
-			for i := 0; i < it.valueSize; i++ {
-				it.cur = (it.cur<<8) + uint64(it.bs[it.idx+i+j*it.valueSize])
-			}
-			it.cur += uint64(it.key)
-			it.idx += (j + 1) * it.valueSize
-			if j == num {
-				// The first element in next block should be >= x.
-				return it.Next()
-			}
-			return true
-		} else {
-			// If encoding with bitmap, loop next.
-			for it.Next() {
-				if it.cur >= x {
-					return true
-				}
-			}
+
+	val, size := binary.Uvarint(it.bs[it.idx:])
+	// If the key of current block doesn't match, directly go to the next block.
+	if uint32(val) != curKey {
+		if it.blockIdx == it.numBlock-1 {
+			it.idx = it.footerAddr
 			return false
+		} else {
+			it.blockIdx += 1
+			// it.idx = int(it.readBits((it.footerAddr+5)*8+it.blockIdx*it.width))
+			// it.idx = it.readBytes(it.footerAddr+1+it.blockIdx*it.width)
+			it.idx = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+1+it.blockIdx*it.width-4+it.width:])&it.addrMask)
+			// it.idx = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+it.blockIdx*4:]))
+			val, size := binary.Uvarint(it.bs[it.idx:])
+			it.key = uint32(val) << bitmapBits
+			it.idx += size
+			it.blockType = it.bs[it.idx]
+			it.idx += 1
+			it.inside = true
+			if it.blockType == 0 {
+				if it.blockIdx != it.numBlock-1 {
+					// it.nextBlock = int(it.readBits((it.footerAddr+5)*8+(it.blockIdx+1)*it.width))
+					// it.nextBlock = it.readBytes(it.footerAddr+1+(it.blockIdx+1)*it.width)
+					it.nextBlock = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+1+(it.blockIdx+1)*it.width-4+it.width:])&it.addrMask)
+					// it.nextBlock = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+(it.blockIdx+1)*4:]))
+				} else {
+					it.nextBlock = it.footerAddr
+				}
+			}
+			return it.Next()
 		}
-	} else {
-		return false
 	}
+	it.key = uint32(val) << bitmapBits
+	it.idx += size
+	it.blockType = it.bs[it.idx]
+	it.idx += 1
+	it.inside = true
+
+	if it.blockType == 0 {
+		if it.blockIdx != it.numBlock-1 {
+			// it.nextBlock = int(it.readBits((it.footerAddr+5)*8+(it.blockIdx+1)*it.width))
+			// it.nextBlock = it.readBytes(it.footerAddr+1+(it.blockIdx+1)*it.width)
+			it.nextBlock = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+1+(it.blockIdx+1)*it.width-4+it.width:])&it.addrMask)
+			// it.nextBlock = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+(it.blockIdx+1)*4:]))
+		} else {
+			it.nextBlock = it.footerAddr
+		}
+	}
+	return it.seekInBlock(x)
 }
 
 func (it *roaringBitmapPostings) Err() error {
@@ -1417,6 +1520,14 @@ func (it *roaringBitmapPostings) Err() error {
 // 	return key
 // }
 
+func (it *roaringBitmapPostings) readBytes(off int) int {
+	val := 0
+	for i := 0; i < it.width; i ++ {
+		val = (val << 8) | int(it.bs[off+i])
+	}
+	return val
+}
+
 func (it *roaringBitmapPostings) readByte(idx int, count uint8) byte {
 	if count == 0 {
 		return it.bs[idx]
@@ -1428,7 +1539,7 @@ func (it *roaringBitmapPostings) readByte(idx int, count uint8) byte {
 }
 
 func (it *roaringBitmapPostings) readBits(offset int) uint64 {
-	idx := offset / 8
+	idx := offset >> 3
 	count := uint8(offset % 8)
 	nbits := it.width
 	var u uint64
@@ -1484,6 +1595,12 @@ func writeRoaringBitmapBlock(e *encoding.Encbuf, vals []int, c []byte, key uint3
 	}
 }
 
+func putBytes(e *encoding.Encbuf, val uint32, width int) {
+	for i := width - 1; i >= 0; i-- {
+		e.PutByte(byte((val>>(8*uint(i))&0xff)))
+	}
+}
+
 func writeRoaringBitmapPostings(e *encoding.Encbuf, arr []uint32) {
 	key := uint32(0xffffffff) // The initial key should be unique.
 	bitmapSize := 1 << (bitmapBits - 3) // Bitmap size in bytes.
@@ -1523,9 +1640,18 @@ func writeRoaringBitmapPostings(e *encoding.Encbuf, arr []uint32) {
 		// key 0 will result in o width.
 		width += 1
 	}
-	e.PutBE32(uint32(len(startingOffs))) // Number of blocks.
-	e.PutByte(byte(width))
+	// e.PutBE32(uint32(len(startingOffs))) // Number of blocks.
+	// e.PutByte(byte(width))
+	// for _, off := range startingOffs {
+	// 	e.PutBits(uint64(off - 4 - uint32(startOff)), width)
+	// }
+
+	e.PutByte(byte((width+7)/8))
 	for _, off := range startingOffs {
-		e.PutBits(uint64(off - 4 - uint32(startOff)), width)
+		putBytes(e, off - 4 - uint32(startOff), (width+7)/8)
 	}
+
+	// for _, off := range startingOffs {
+	// 	e.PutBE32(off - 4 - uint32(startOff))
+	// }
 }
