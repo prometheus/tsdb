@@ -54,14 +54,15 @@ type TombstoneReader interface {
 	Close() error
 }
 
-func writeTombstoneFile(logger log.Logger, dir string, tr TombstoneReader) error {
+func writeTombstoneFile(logger log.Logger, dir string, tr TombstoneReader) (int64, error) {
 	path := filepath.Join(dir, tombstoneFilename)
 	tmp := path + ".tmp"
 	hash := newCRC32()
+	var size int
 
 	f, err := os.Create(tmp)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer func() {
 		if f != nil {
@@ -79,10 +80,11 @@ func writeTombstoneFile(logger log.Logger, dir string, tr TombstoneReader) error
 	// Write the meta.
 	buf.PutBE32(MagicTombstone)
 	buf.PutByte(tombstoneFormatV1)
-	_, err = f.Write(buf.Get())
+	n, err := f.Write(buf.Get())
 	if err != nil {
-		return err
+		return 0, err
 	}
+	size += n
 
 	mw := io.MultiWriter(f, hash)
 
@@ -94,32 +96,34 @@ func writeTombstoneFile(logger log.Logger, dir string, tr TombstoneReader) error
 			buf.PutVarint64(iv.Mint)
 			buf.PutVarint64(iv.Maxt)
 
-			_, err = mw.Write(buf.Get())
+			n, err = mw.Write(buf.Get())
 			if err != nil {
 				return err
 			}
+			size += n
 		}
 		return nil
 	}); err != nil {
-		return fmt.Errorf("error writing tombstones: %v", err)
+		return int64(n), fmt.Errorf("error writing tombstones: %v", err)
 	}
 
-	_, err = f.Write(hash.Sum(nil))
+	n, err = f.Write(hash.Sum(nil))
 	if err != nil {
-		return err
+		return 0, err
 	}
+	size += n
 
 	var merr tsdb_errors.MultiError
 	if merr.Add(f.Sync()); merr.Err() != nil {
 		merr.Add(f.Close())
-		return merr.Err()
+		return 0, merr.Err()
 	}
 
 	if err = f.Close(); err != nil {
-		return err
+		return 0, err
 	}
 	f = nil
-	return fileutil.Replace(tmp, path)
+	return int64(size), fileutil.Replace(tmp, path)
 }
 
 // Stone holds the information on the posting and time-range
@@ -132,7 +136,7 @@ type Stone struct {
 func readTombstones(dir string) (TombstoneReader, SizeReader, error) {
 	b, err := ioutil.ReadFile(filepath.Join(dir, tombstoneFilename))
 	if os.IsNotExist(err) {
-		return newMemTombstones(), nil, nil
+		return newMemTombstones(), &TombstoneFile{size: 0}, nil
 	} else if err != nil {
 		return nil, nil, err
 	}
@@ -230,6 +234,10 @@ func (t *memTombstones) addInterval(ref uint64, itvs ...Interval) {
 	}
 }
 
+func (*memTombstones) Close() error {
+	return nil
+}
+
 // TombstoneFile holds information about the tombstone file.
 type TombstoneFile struct {
 	size int64
@@ -238,10 +246,6 @@ type TombstoneFile struct {
 // Size returns the tombstone file size.
 func (t *TombstoneFile) Size() int64 {
 	return t.size
-}
-
-func (*memTombstones) Close() error {
-	return nil
 }
 
 // Interval represents a single time-interval.
