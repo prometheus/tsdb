@@ -822,10 +822,17 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 		return nil
 	}
 
+	return c.writePostings(indexw, values, set.seriesMap, indexReaders)
+}
+
+// writePostings writes the postings into the index file.
+func (c *LeveledCompactor) writePostings(indexw IndexWriter, values map[string]stringset,
+	seriesMap []map[uint64]uint64, indexReaders []IndexReader) (err error) {
 	var (
-		maxNumValues   int
-		numLabelValues int
-		names          = make([]string, 0, len(values)+1)
+		maxNumValues      int
+		numLabelValues    int
+		names             = make([]string, 0, len(values)+1)
+		apkName, apkValue = index.AllPostingsKey()
 	)
 	for _, v := range values {
 		numLabelValues += len(v)
@@ -875,14 +882,16 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 					return errors.Wrap(err, "read postings")
 				}
 				for bigEndianPost.Next() {
-					if newVal, ok := set.seriesMap[i][bigEndianPost.At()]; ok {
-						// idx is the index at which newVal exists or index at which we need to insert.
-						idx := sort.Search(len(postingBuf), func(i int) bool { return postingBuf[i] >= newVal })
-						if idx == len(postingBuf) {
-							postingBuf = append(postingBuf, newVal)
-						} else if postingBuf[idx] != newVal {
-							postingBuf = append(postingBuf[:idx], append([]uint64{newVal}, postingBuf[idx:]...)...)
-						}
+					newVal, ok := seriesMap[i][bigEndianPost.At()]
+					if !ok {
+						continue
+					}
+					// idx is the index at which newVal exists or index at which we need to insert.
+					idx := sort.Search(len(postingBuf), func(i int) bool { return postingBuf[i] >= newVal })
+					if idx == len(postingBuf) {
+						postingBuf = append(postingBuf, newVal)
+					} else if postingBuf[idx] != newVal {
+						postingBuf = append(postingBuf[:idx], append([]uint64{newVal}, postingBuf[idx:]...)...)
 					}
 				}
 			}

@@ -928,8 +928,8 @@ func (r *Reader) Series(id uint64, lbls *labels.Labels, chks *[]chunks.Meta) err
 }
 
 // Postings returns a postings list for the given label pair.
-// 'reusePos' is used if it is a 'bigEndianPostings'.
-func (r *Reader) Postings(name, value string, reusePos Postings) (Postings, error) {
+// 'reusePosts' is used if it is a 'bigEndianPostings'.
+func (r *Reader) Postings(name, value string, reusePosts Postings) (Postings, error) {
 	e, ok := r.postings[name]
 	if !ok {
 		return EmptyPostings(), nil
@@ -942,7 +942,7 @@ func (r *Reader) Postings(name, value string, reusePos Postings) (Postings, erro
 	if d.Err() != nil {
 		return nil, errors.Wrap(d.Err(), "get postings entry")
 	}
-	_, p, err := r.dec.Postings(d.Get(), reusePos)
+	_, p, err := r.dec.Postings(d.Get(), reusePosts)
 	if err != nil {
 		return nil, errors.Wrap(err, "decode postings")
 	}
@@ -1064,18 +1064,18 @@ type Decoder struct {
 }
 
 // Postings returns a postings list for b and its number of elements.
-func (dec *Decoder) Postings(b []byte, reusePos Postings) (int, Postings, error) {
+func (dec *Decoder) Postings(b []byte, reusePosts Postings) (int, Postings, error) {
 	d := encoding.Decbuf{B: b}
 	n := d.Be32int()
-	if bep, ok := reusePos.(*bigEndianPostings); ok {
-		// Avoding allocs for creating a pointer for reusePos.Reset
-		// if reusePos is bigEndianPostings.
+	if bep, ok := reusePosts.(*bigEndianPostings); ok {
+		// Avoding allocs for creating a pointer for reusePosts.Reset
+		// if reusePosts is bigEndianPostings.
 		bep.ResetWithBytes(d.Get())
 		return n, bep, d.Err()
-	} else if reusePos != nil {
+	} else if reusePosts != nil {
 		l := d.Get()
-		if reusePos.Reset(&l) {
-			return n, reusePos, d.Err()
+		if reusePosts.Reset(&l) {
+			return n, reusePosts, d.Err()
 		}
 	}
 	return n, NewBigEndianPostings(d.Get()), d.Err()

@@ -75,9 +75,9 @@ type IndexReader interface {
 	// The Postings here contain the offsets to the series inside the index.
 	// Found IDs are not strictly required to point to a valid Series, e.g. during
 	// background garbage collections.
-	// 'reusePos' is the Postings object that can be re-used instead of allocating
-	// a new object. Re-use of this object need not be guaranteed.
-	Postings(name, value string, reusePos index.Postings) (index.Postings, error)
+	// 'reusePosts' is the Postings object that can be re-used instead of allocating
+	// a new object.
+	Postings(name, value string, reusePosts index.Postings) (index.Postings, error)
 
 	// SortedPostings returns a postings list that is reordered to be sorted
 	// by the label set of the underlying series.
@@ -112,6 +112,8 @@ type ChunkWriter interface {
 	// WriteChunks writes several chunks. The Chunk field of the ChunkMetas
 	// must be populated.
 	// b is the byte buffer that can be used by WriteChunks.
+	// The returned []byte buffer is 'b' if the size was enough.
+	// Else a new buffer is allocated and that is returned instead.
 	// After returning successfully, the Ref fields in the ChunkMetas
 	// are set and can be used to retrieve the chunks from the written data.
 	WriteChunks(b []byte, chunks ...chunks.Meta) ([]byte, error)
@@ -461,8 +463,8 @@ func (r blockIndexReader) LabelValues(names ...string) (index.StringTuples, erro
 	return st, errors.Wrapf(err, "block: %s", r.b.Meta().ULID)
 }
 
-func (r blockIndexReader) Postings(name, value string, reusePos index.Postings) (index.Postings, error) {
-	p, err := r.ir.Postings(name, value, reusePos)
+func (r blockIndexReader) Postings(name, value string, reusePosts index.Postings) (index.Postings, error) {
+	p, err := r.ir.Postings(name, value, reusePosts)
 	if err != nil {
 		// Checking for error before wrapping saves some allocs.
 		// This results in big savings of allocs if this function
