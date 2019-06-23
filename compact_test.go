@@ -16,7 +16,6 @@ package tsdb
 import (
 	"context"
 	"fmt"
-	"github.com/prometheus/tsdb/testutil/fuse"
 	"io/ioutil"
 	"math"
 	"os"
@@ -1058,41 +1057,4 @@ func TestDeleteCompactionBlockAfterFailedReload(t *testing.T) {
 			testutil.Equals(t, expBlocks, len(actBlocks)-1, "block count should be the same as before the compaction") // -1 to exclude the corrupted block.
 		})
 	}
-}
-
-// TestFailedDelete ensures that the block is in its original state when a delete fails.
-func TestFailedDelete(t *testing.T) {
-	original, err := ioutil.TempDir("", "original")
-	testutil.Ok(t, err)
-	mountpoint, err := ioutil.TempDir("", "mountpoint")
-	testutil.Ok(t, err)
-
-	defer func() {
-		testutil.Ok(t, os.RemoveAll(mountpoint))
-		testutil.Ok(t, os.RemoveAll(original))
-	}()
-
-	_, file := filepath.Split(createBlock(t, original, genSeries(1, 1, 1, 100)))
-	server, err := fuse.NewServer(original, mountpoint, fuse.FailingRenameHook{})
-	if err != nil {
-		t.Skip("use server couldn't be started")
-	}
-	defer func() {
-		testutil.Ok(t, server.Close())
-	}()
-
-	expHash, err := testutil.DirHash(original)
-	testutil.Ok(t, err)
-	pb, err := OpenBlock(nil, filepath.Join(mountpoint, file), nil)
-	testutil.Ok(t, err)
-	defer func() {
-		testutil.Ok(t, pb.Close())
-	}()
-
-	testutil.NotOk(t, pb.Delete(1, 10, labels.NewMustRegexpMatcher("", ".*")))
-
-	actHash, err := testutil.DirHash(original)
-	testutil.Ok(t, err)
-
-	testutil.Equals(t, expHash, actHash, "the block dir hash has changed after a failed delete")
 }

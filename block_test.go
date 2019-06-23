@@ -17,6 +17,8 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"github.com/prometheus/tsdb/labels"
+	"github.com/prometheus/tsdb/testutil/fuse"
 	"io/ioutil"
 	"math/rand"
 	"os"
@@ -235,4 +237,41 @@ func populateSeries(lbls []map[string]string, mint, maxt int64) []Series {
 		series = append(series, newSeries(lbl, samples))
 	}
 	return series
+}
+
+// TestFailedDelete ensures that the block is in its original state when a delete fails.
+func TestFailedDelete(t *testing.T) {
+	original, err := ioutil.TempDir("", "original")
+	testutil.Ok(t, err)
+	mountpoint, err := ioutil.TempDir("", "mountpoint")
+	testutil.Ok(t, err)
+
+	defer func() {
+		testutil.Ok(t, os.RemoveAll(mountpoint))
+		testutil.Ok(t, os.RemoveAll(original))
+	}()
+
+	_, file := filepath.Split(createBlock(t, original, genSeries(1, 1, 1, 100)))
+	server, err := fuse.NewServer(original, mountpoint, fuse.FailingRenameHook{})
+	if err != nil {
+		t.Skip(err) // Skip the test for any error. These tests are optional
+	}
+	defer func() {
+		testutil.Ok(t, server.Close())
+	}()
+
+	expHash, err := testutil.DirHash(original)
+	testutil.Ok(t, err)
+	pb, err := OpenBlock(nil, filepath.Join(mountpoint, file), nil)
+	testutil.Ok(t, err)
+	defer func() {
+		testutil.Ok(t, pb.Close())
+	}()
+
+	testutil.NotOk(t, pb.Delete(1, 10, labels.NewMustRegexpMatcher("", ".*")))
+
+	actHash, err := testutil.DirHash(original)
+	testutil.Ok(t, err)
+
+	testutil.Equals(t, expHash, actHash, "the block dir hash has changed after a failed delete")
 }

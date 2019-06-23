@@ -1,4 +1,4 @@
-// Copyright 2019 The qiffang Authors
+// Copyright 2019 The Prometheus Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -150,18 +150,18 @@ func (h EmptyHook) PostFsync(realRetCode int32) (hooked bool, err error) {
 	return false, nil
 }
 
-// FailingRenameHook is called on rename directory.
+// FailingRenameHook implements the hook interface and fails on renaming operations.
 type FailingRenameHook struct {
 	// Add the Empty hook so the that this struct implements the hook interface.
 	EmptyHook
 }
 
-// PreRename will take precedence over the `EmptyHook.PreRename()`.
+// PreRename fails for pre rename operation.
 func (h FailingRenameHook) PreRename(oldPatgh string, newPath string) (hooked bool, err error) {
 	return true, syscall.EIO
 }
 
-// PostRename will take precedence over the `EmptyHook.PostRename()`.
+// PostRename fails for post rename operation.
 func (h FailingRenameHook) PostRename(oldPatgh string, newPath string) (hooked bool, err error) {
 	return false, nil
 }

@@ -1,6 +1,6 @@
 // +build linux darwin
 
-// Copyright 2019 The qiffang Authors
+// Copyright 2019 The Prometheus Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -31,8 +31,8 @@ type loopBackFs struct {
 	pathfs.FileSystem
 }
 
-// hookFs filesystem that shunts all request to an underlying file system.
-// Its main purpose is to provide test coverage.
+// hookFs implements the fuse FileSystem interface and allows injecting hooks for different operations.
+// Its main purpose is to provide a way to inject file system errors.
 type hookFs struct {
 	original   string
 	mountpoint string
@@ -41,18 +41,17 @@ type hookFs struct {
 	hook Hook
 }
 
-// String implements hanwen/go-fuse/fuse/pathfs.FileSystem. You are not expected to call h manually.
+// String returns the string representation of the mounted points.
 func (h *hookFs) String() string {
 	return fmt.Sprintf("HookFs{Original=%s, Mountpoint=%s, FsName=%s, Underlying fs=%s, hook=%s}",
 		h.original, h.mountpoint, h.fsName, h.loopBackFs.String(), h.hook)
 }
 
-// Rename implements hanwen/go-fuse/fuse/pathfs.FileSystem. You are not expected to call h manually.
+// Rename calls the injected rename hooks if those exist or the underlying loopback fs Rename api.
 func (h *hookFs) Rename(oldName string, newName string, context *fuse.Context) fuse.Status {
 	preHooked, err := h.hook.PreRename(oldName, newName)
 	if preHooked {
 		if err != nil {
-
 			return fuse.ToStatus(err)
 		}
 	}
@@ -86,7 +85,7 @@ func (h *hookFs) newServer() (*fuse.Server, error) {
 	return fuse.NewServer(conn.RawFS(), h.mountpoint, mOpts)
 }
 
-// Server is proxy of fuse server.
+// Server is a fuse server proxy.
 type Server struct {
 	server     *fuse.Server
 	original   string
@@ -94,7 +93,7 @@ type Server struct {
 }
 
 // NewServer creates a fuse server and attaches it to the given `mountpoint` directory.
-// It returns a function to `unmount` the given `mountpoint` directory.
+// The caller should not forget to close the server to release the mountpoints.
 func NewServer(original, mountpoint string, hook Hook) (*Server, error) {
 	fs := &hookFs{
 		original:   original,
@@ -121,18 +120,19 @@ func NewServer(original, mountpoint string, hook Hook) (*Server, error) {
 	}, server.WaitMount()
 }
 
-// Close return false if unmount `mountpoint` faild. But if the caller open files but forget to close them,
-// we also force unmout them to avoid test case stuck.
-func (s *Server) Close() (err error) {
-	if err = s.server.Unmount(); err != nil {
-		s.forceMount()
+// Close releases the mountpoints and return false if the unmount fails.
+// When the mountpoint has open files it tries to force unmount.
+func (s *Server) Close() error {
+	err := s.server.Unmount()
+	if err != nil {
+		return s.forceUnmount()
 	}
 
-	return
+	return nil
 }
 
-// forceMount force to unmount `mountpoint` to avoid the case that caller open files but forget to close them.
-func (s *Server) forceMount() (err error) {
+// forceUnmount forces to unmount even when there are still open files.
+func (s *Server) forceUnmount() (err error) {
 	delay := time.Duration(0)
 	for try := 0; try < 5; try++ {
 		err = syscall.Unmount(s.mountpoint, flag)
@@ -154,7 +154,7 @@ var (
 	flag = unmountFlag()
 )
 
-// unmountFlag return force unmount flag based different platform.
+// unmountFlag returns platform dependent force unmount flag.
 func unmountFlag() int {
 	if runtime.GOOS == "darwin" {
 		return -1

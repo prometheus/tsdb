@@ -1,4 +1,4 @@
-// Copyright 2019 The qiffang Authors
+// Copyright 2019 The Prometheus Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -14,16 +14,16 @@ package fuse
 
 import "errors"
 
-// Server is empty struct because windows platform do not support fuse.
+// Server implements a mock server to allow skipping test for windows platform as it doesn't support fuse.
 type Server struct {
 }
 
-// NewServer is a mock method because fuse does not support Windows platform.
+// NewServer always returns an error because fuse does not support Windows platform.
 func NewServer(original, mountpoint string, hook Hook) (*Server, error) {
-	return nil, errors.New("Unsupported fuse.")
+	return nil, errors.New("fuse not supported under Windows")
 }
 
-// Close is a mock method
-func (s *Server) Close() (err error) {
+// Close is a noop method.
+func (s *Server) Close() error {
 
 }
