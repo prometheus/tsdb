@@ -104,7 +104,7 @@ func writeTombstoneFile(logger log.Logger, dir string, tr TombstoneReader) (int6
 		}
 		return nil
 	}); err != nil {
-		return int64(n), fmt.Errorf("error writing tombstones: %v", err)
+		return 0, fmt.Errorf("error writing tombstones: %v", err)
 	}
 
 	n, err = f.Write(hash.Sum(nil))

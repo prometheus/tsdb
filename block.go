@@ -240,8 +240,7 @@ func writeMetaFile(logger log.Logger, dir string, meta *BlockMeta) error {
 
 	// The meta file is within a block so
 	// its size needs to be calcualted and set upfront.
-	err := setMetaFileSize(meta)
-	if err != nil {
+	if err := setMetaFileSize(meta); err != nil {
 		return err
 	}
 
@@ -265,8 +264,7 @@ func writeMetaFile(logger log.Logger, dir string, meta *BlockMeta) error {
 	}
 
 	var merr tsdb_errors.MultiError
-	_, err = f.Write(jsonMeta)
-	if err != nil {
+	if _, err = f.Write(jsonMeta); err != nil {
 		merr.Add(err)
 		merr.Add(f.Close())
 		return merr.Err()
@@ -275,6 +273,7 @@ func writeMetaFile(logger log.Logger, dir string, meta *BlockMeta) error {
 	// Force the kernel to persist the file on disk to avoid data loss if the host crashes.
 	if err := f.Sync(); err != nil {
 		merr.Add(err)
+		merr.Add(f.Close())
 		return merr.Err()
 	}
 	if err := f.Close(); err != nil {
@@ -285,7 +284,6 @@ func writeMetaFile(logger log.Logger, dir string, meta *BlockMeta) error {
 
 // setMetaFileSize calculates and set the meta file size.
 func setMetaFileSize(meta *BlockMeta) error {
-
 	jsonMeta, err := json.MarshalIndent(meta, "", "\t")
 	if err != nil {
 		return err
