@@ -41,9 +41,10 @@ func TestBlockMetaMustNeverBeVersion2(t *testing.T) {
 		testutil.Ok(t, os.RemoveAll(dir))
 	}()
 
-	testutil.Ok(t, writeMetaFile(log.NewNopLogger(), dir, &BlockMeta{}))
+	_, err = writeMetaFile(log.NewNopLogger(), dir, &BlockMeta{})
+	testutil.Ok(t, err)
 
-	meta, err := readMetaFile(dir)
+	meta, _, err := readMetaFile(dir)
 	testutil.Ok(t, err)
 	testutil.Assert(t, meta.Version != 2, "meta.json version must never be 2")
 }
@@ -202,32 +203,6 @@ func TestBlockSize(t *testing.T) {
 		testutil.Assert(t, actAfterDelete > actAfterCompact, "after a delete and compaction the block size should be smaller %v,%v", actAfterDelete, actAfterCompact)
 		testutil.Equals(t, expAfterCompact, actAfterCompact, "after a delete and compaction reported block size doesn't match actual disk size")
 	}
-
-	// Remove the block meta size info and ensure it gets recalculated.
-	// This ensures that opening a blocks that are missing size info(created by an older library version) returns the correct block size.
-	{
-
-		expMetaNoSize, err := readMetaFile(blockDirInit)
-		testutil.Ok(t, err)
-		expMetaNoSize.Stats.NumBytesChunks, expMetaNoSize.Stats.NumBytesIndex, expMetaNoSize.Stats.NumBytesTombstone = 0, 0, 0
-		testutil.Ok(t, writeMetaFile(nil, blockDirInit, expMetaNoSize))
-
-		actMetaNoSize, err := readMetaFile(blockDirInit)
-		testutil.Ok(t, err)
-		testutil.Equals(t, expMetaNoSize, actMetaNoSize, "rewritten meta should not include any size details")
-
-		b, err := OpenBlock(nil, blockDirInit, nil)
-		testutil.Ok(t, err)
-		defer func() {
-			testutil.Ok(t, b.Close())
-		}()
-		expSize := b.Size()
-		actSize, err := testutil.DirSize(blockInit.Dir())
-		testutil.Ok(t, err)
-		testutil.Assert(t, expSize > 0, "block size should never be zero")
-		testutil.Equals(t, expSize, actSize, "opening a block with an empty  meta size details should get the size re-calculated")
-	}
-
 }
 
 // createBlock creates a block with given set of series and returns its dir.

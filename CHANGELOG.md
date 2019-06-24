@@ -1,8 +1,7 @@
 ## master / unreleased
  - [FEATURE] Provide option to compress WAL records using Snappy. [#609](https://github.com/prometheus/tsdb/pull/609)
  - [BUGFIX] Re-calculate block size when calling `block.Delete`.
-    - as part of this the `BlockStats` now includes size information for chunks,index,tombstone,meta separately.
-
+ - [CHANGE] `BlockStats` no longer holds size information and this is kept in memory.
 
 ## 0.8.0
  - [BUGFIX] Calling `Close` more than once on a querier returns an error instead of a panic.

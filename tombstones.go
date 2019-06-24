@@ -133,41 +133,37 @@ type Stone struct {
 	intervals Intervals
 }
 
-func readTombstones(dir string) (TombstoneReader, SizeReader, error) {
+func readTombstones(dir string) (TombstoneReader, int64, error) {
 	b, err := ioutil.ReadFile(filepath.Join(dir, tombstoneFilename))
 	if os.IsNotExist(err) {
-		return newMemTombstones(), &TombstoneFile{size: 0}, nil
+		return newMemTombstones(), 0, nil
 	} else if err != nil {
-		return nil, nil, err
-	}
-
-	sr := &TombstoneFile{
-		size: int64(len(b)),
+		return nil, 0, err
 	}
 
 	if len(b) < 5 {
-		return nil, sr, errors.Wrap(encoding.ErrInvalidSize, "tombstones header")
+		return nil, 0, errors.Wrap(encoding.ErrInvalidSize, "tombstones header")
 	}
 
 	d := &encoding.Decbuf{B: b[:len(b)-4]} // 4 for the checksum.
 	if mg := d.Be32(); mg != MagicTombstone {
-		return nil, sr, fmt.Errorf("invalid magic number %x", mg)
+		return nil, 0, fmt.Errorf("invalid magic number %x", mg)
 	}
 	if flag := d.Byte(); flag != tombstoneFormatV1 {
-		return nil, sr, fmt.Errorf("invalid tombstone format %x", flag)
+		return nil, 0, fmt.Errorf("invalid tombstone format %x", flag)
 	}
 
 	if d.Err() != nil {
-		return nil, sr, d.Err()
+		return nil, 0, d.Err()
 	}
 
 	// Verify checksum.
 	hash := newCRC32()
 	if _, err := hash.Write(d.Get()); err != nil {
-		return nil, sr, errors.Wrap(err, "write to hash")
+		return nil, 0, errors.Wrap(err, "write to hash")
 	}
 	if binary.BigEndian.Uint32(b[len(b)-4:]) != hash.Sum32() {
-		return nil, sr, errors.New("checksum did not match")
+		return nil, 0, errors.New("checksum did not match")
 	}
 
 	stonesMap := newMemTombstones()
@@ -177,13 +173,13 @@ func readTombstones(dir string) (TombstoneReader, SizeReader, error) {
 		mint := d.Varint64()
 		maxt := d.Varint64()
 		if d.Err() != nil {
-			return nil, sr, d.Err()
+			return nil, 0, d.Err()
 		}
 
 		stonesMap.addInterval(k, Interval{mint, maxt})
 	}
 
-	return stonesMap, sr, nil
+	return stonesMap, int64(len(b)), nil
 }
 
 type memTombstones struct {
@@ -236,16 +232,6 @@ func (t *memTombstones) addInterval(ref uint64, itvs ...Interval) {
 
 func (*memTombstones) Close() error {
 	return nil
-}
-
-// TombstoneFile holds information about the tombstone file.
-type TombstoneFile struct {
-	size int64
-}
-
-// Size returns the tombstone file size.
-func (t *TombstoneFile) Size() int64 {
-	return t.size
 }
 
 // Interval represents a single time-interval.

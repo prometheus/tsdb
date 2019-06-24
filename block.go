@@ -20,7 +20,6 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
-	"strconv"
 	"sync"
 
 	"github.com/go-kit/kit/log"
@@ -152,12 +151,6 @@ type Appendable interface {
 	Appender() Appender
 }
 
-// SizeReader returns the size of the object in bytes.
-type SizeReader interface {
-	// Size returns the size in bytes.
-	Size() int64
-}
-
 // BlockMeta provides meta information about a block.
 type BlockMeta struct {
 	// Unique identifier for the block and its contents. Changes on compaction.
@@ -180,14 +173,10 @@ type BlockMeta struct {
 
 // BlockStats contains stats about contents of a block.
 type BlockStats struct {
-	NumSamples        uint64 `json:"numSamples,omitempty"`
-	NumSeries         uint64 `json:"numSeries,omitempty"`
-	NumChunks         uint64 `json:"numChunks,omitempty"`
-	NumTombstones     uint64 `json:"numTombstones,omitempty"`
-	NumBytesChunks    int64  `json:"numBytesChunks"`
-	NumBytesIndex     int64  `json:"numBytesIndex"`
-	NumBytesMeta      int64  `json:"numBytesMeta"`
-	NumBytesTombstone int64  `json:"numBytesTombstone"`
+	NumSamples    uint64 `json:"numSamples,omitempty"`
+	NumSeries     uint64 `json:"numSeries,omitempty"`
+	NumChunks     uint64 `json:"numChunks,omitempty"`
+	NumTombstones uint64 `json:"numTombstones,omitempty"`
 }
 
 // BlockDesc describes a block by ULID and time range.
@@ -218,31 +207,25 @@ const metaFilename = "meta.json"
 
 func chunkDir(dir string) string { return filepath.Join(dir, "chunks") }
 
-func readMetaFile(dir string) (*BlockMeta, error) {
+func readMetaFile(dir string) (*BlockMeta, int64, error) {
 	b, err := ioutil.ReadFile(filepath.Join(dir, metaFilename))
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	var m BlockMeta
 
 	if err := json.Unmarshal(b, &m); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if m.Version != 1 {
-		return nil, errors.Errorf("unexpected meta file version %d", m.Version)
+		return nil, 0, errors.Errorf("unexpected meta file version %d", m.Version)
 	}
 
-	return &m, nil
+	return &m, int64(len(b)), nil
 }
 
-func writeMetaFile(logger log.Logger, dir string, meta *BlockMeta) error {
+func writeMetaFile(logger log.Logger, dir string, meta *BlockMeta) (int64, error) {
 	meta.Version = 1
-
-	// The meta file is within a block so
-	// its size needs to be calcualted and set upfront.
-	if err := setMetaFileSize(meta); err != nil {
-		return err
-	}
 
 	// Make any changes to the file appear atomic.
 	path := filepath.Join(dir, metaFilename)
@@ -255,44 +238,32 @@ func writeMetaFile(logger log.Logger, dir string, meta *BlockMeta) error {
 
 	f, err := os.Create(tmp)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	jsonMeta, err := json.MarshalIndent(meta, "", "\t")
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	var merr tsdb_errors.MultiError
-	if _, err = f.Write(jsonMeta); err != nil {
+	n, err := f.Write(jsonMeta)
+	if err != nil {
 		merr.Add(err)
 		merr.Add(f.Close())
-		return merr.Err()
+		return 0, merr.Err()
 	}
 
 	// Force the kernel to persist the file on disk to avoid data loss if the host crashes.
 	if err := f.Sync(); err != nil {
 		merr.Add(err)
 		merr.Add(f.Close())
-		return merr.Err()
+		return 0, merr.Err()
 	}
 	if err := f.Close(); err != nil {
-		return err
+		return 0, err
 	}
-	return fileutil.Replace(tmp, path)
-}
-
-// setMetaFileSize calculates and set the meta file size.
-func setMetaFileSize(meta *BlockMeta) error {
-	jsonMeta, err := json.MarshalIndent(meta, "", "\t")
-	if err != nil {
-		return err
-	}
-
-	// Get the current size and add to the final size one byte for each extra digit char.
-	chars := len(strconv.Itoa(len(jsonMeta))) - len(strconv.Itoa(int(meta.Stats.NumBytesMeta)))
-	meta.Stats.NumBytesMeta = int64(len(jsonMeta) + chars)
-	return nil
+	return int64(n), fileutil.Replace(tmp, path)
 }
 
 // Block represents a directory of time series data covering a continuous time range.
@@ -313,6 +284,11 @@ type Block struct {
 	tombstones TombstoneReader
 
 	logger log.Logger
+
+	numBytesChunks    int64
+	numBytesIndex     int64
+	numBytesTombstone int64
+	numBytesMeta      int64
 }
 
 // OpenBlock opens the block in the directory. It can be passed a chunk pool, which is used
@@ -330,7 +306,7 @@ func OpenBlock(logger log.Logger, dir string, pool chunkenc.Pool) (pb *Block, er
 			err = merr.Err()
 		}
 	}()
-	meta, err := readMetaFile(dir)
+	meta, sizeMeta, err := readMetaFile(dir)
 	if err != nil {
 		return nil, err
 	}
@@ -347,42 +323,24 @@ func OpenBlock(logger log.Logger, dir string, pool chunkenc.Pool) (pb *Block, er
 	}
 	closers = append(closers, ir)
 
-	tr, tsr, err := readTombstones(dir)
+	tr, sizeTomb, err := readTombstones(dir)
 	if err != nil {
 		return nil, err
 	}
 	closers = append(closers, tr)
 
-	// Calculate the block size.
-	// This is done at read and not when creating a block to avoid blocks return zero size.
-	// For example opening a block created by an older library version wouldn't include the size information.
-	{
-		// Rewrite the meta only when the sizes has changed.
-		// This check is to allow opening the db in read only mode without
-		// any meta file rewrites when the blocks size hasn't changed.
-		if meta.Stats.NumBytesChunks != cr.Size() ||
-			meta.Stats.NumBytesIndex != ir.Size() ||
-			meta.Stats.NumBytesTombstone != tsr.Size() {
-
-			meta.Stats.NumBytesChunks = cr.Size()
-			meta.Stats.NumBytesIndex = ir.Size()
-			meta.Stats.NumBytesTombstone = tsr.Size()
-
-			err = writeMetaFile(logger, dir, meta)
-			if err != nil {
-				return nil, err
-			}
-		}
-	}
-
 	pb = &Block{
-		dir:             dir,
-		meta:            *meta,
-		chunkr:          cr,
-		indexr:          ir,
-		tombstones:      tr,
-		symbolTableSize: ir.SymbolTableSize(),
-		logger:          logger,
+		dir:               dir,
+		meta:              *meta,
+		chunkr:            cr,
+		indexr:            ir,
+		tombstones:        tr,
+		symbolTableSize:   ir.SymbolTableSize(),
+		logger:            logger,
+		numBytesChunks:    cr.Size(),
+		numBytesIndex:     ir.Size(),
+		numBytesTombstone: sizeTomb,
+		numBytesMeta:      sizeMeta,
 	}
 	return pb, nil
 }
@@ -422,7 +380,7 @@ func (pb *Block) MaxTime() int64 { return pb.meta.MaxTime }
 
 // Size returns the number of bytes that the block takes up.
 func (pb *Block) Size() int64 {
-	return pb.meta.Stats.NumBytesChunks + pb.meta.Stats.NumBytesIndex + pb.meta.Stats.NumBytesTombstone + pb.meta.Stats.NumBytesMeta
+	return pb.numBytesChunks + pb.numBytesIndex + pb.numBytesTombstone + pb.numBytesMeta
 }
 
 // ErrClosing is returned when a block is in the process of being closed.
@@ -470,7 +428,8 @@ func (pb *Block) GetSymbolTableSize() uint64 {
 
 func (pb *Block) setCompactionFailed() error {
 	pb.meta.Compaction.Failed = true
-	return writeMetaFile(pb.logger, pb.dir, &pb.meta)
+	_, err := writeMetaFile(pb.logger, pb.dir, &pb.meta)
+	return err
 }
 
 type blockIndexReader struct {
@@ -598,8 +557,13 @@ Outer:
 	if err != nil {
 		return err
 	}
-	pb.meta.Stats.NumBytesTombstone = n
-	return writeMetaFile(pb.logger, pb.dir, &pb.meta)
+	pb.numBytesTombstone = n
+	n, err = writeMetaFile(pb.logger, pb.dir, &pb.meta)
+	if err != nil {
+		return err
+	}
+	pb.numBytesMeta = n
+	return nil
 }
 
 // CleanTombstones will remove the tombstones and rewrite the block (only if there are any tombstones).
