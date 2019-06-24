@@ -940,11 +940,31 @@ func (db *DB) Snapshot(dir string, withHead bool) error {
 			return errors.Wrapf(err, "error snapshotting block: %s", b.Dir())
 		}
 	}
+
 	if !withHead {
 		return nil
 	}
-	_, err := db.compactor.Write(dir, db.head, db.head.MinTime(), db.head.MaxTime(), nil)
-	return errors.Wrap(err, "snapshot head block")
+
+	mint := db.head.MinTime()
+	maxt := db.head.MaxTime()
+
+	// Wrap head into a range that bounds all reads to it.
+	// Otherwise we can have race between appends and head.Chunks() that takes all it has.
+	// See: https://github.com/prometheus/prometheus/issues/5105.
+	head := &rangeHead{
+		head: db.head,
+		mint: mint,
+		maxt: maxt,
+	}
+	// We add 1 millisecond to block maxt because block
+	// intervals are half-open: [b.MinTime, b.MaxTime). But
+	// chunk intervals are closed: [c.MinTime, c.MaxTime];
+	// so in order to make sure that we populate as many samples as possible, add 1 to desired block
+	// max time for snapshot.
+	if _, err := db.compactor.Write(dir, head, mint, maxt+1, nil); err != nil {
+		return errors.Wrap(err, "snapshot head block")
+	}
+	return nil
 }
 
 // Querier returns a new querier over the data partition for the given time range.

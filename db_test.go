@@ -489,6 +489,61 @@ func TestDB_Snapshot(t *testing.T) {
 	testutil.Equals(t, 1000.0, sum)
 }
 
+// Test against https://github.com/prometheus/prometheus/issues/5105
+func TestDB_Snapshot_ChunksOutsideOfCompactedRange(t *testing.T) {
+	db, delete := openTestDB(t, nil)
+	defer delete()
+
+	// append data
+	app := db.Appender()
+	mint := int64(1414141414000)
+	for i := 0; i < 1000; i++ {
+		_, err := app.Add(labels.FromStrings("foo", "bar"), mint+int64(i), 1.0)
+		testutil.Ok(t, err)
+	}
+	testutil.Ok(t, app.Commit())
+	testutil.Ok(t, app.Rollback())
+
+	snap, err := ioutil.TempDir("", "snap")
+	testutil.Ok(t, err)
+
+	// Hackingly introduce "race", by having lower max time then maxTime in last chunk.
+	db.head.maxTime = db.head.maxTime-10
+
+	defer func() {
+		testutil.Ok(t, os.RemoveAll(snap))
+	}()
+	testutil.Ok(t, db.Snapshot(snap, true))
+	testutil.Ok(t, db.Close())
+
+	// reopen DB from snapshot
+	db, err = Open(snap, nil, nil, nil)
+	testutil.Ok(t, err)
+	defer func() { testutil.Ok(t, db.Close()) }()
+
+	querier, err := db.Querier(mint, mint+1000)
+	testutil.Ok(t, err)
+	defer func() { testutil.Ok(t, querier.Close()) }()
+
+	// sum values
+	seriesSet, err := querier.Select(labels.NewEqualMatcher("foo", "bar"))
+	testutil.Ok(t, err)
+
+	sum := 0.0
+	for seriesSet.Next() {
+		series := seriesSet.At().Iterator()
+		for series.Next() {
+			_, v := series.At()
+			sum += v
+		}
+		testutil.Ok(t, series.Err())
+	}
+	testutil.Ok(t, seriesSet.Err())
+
+	// Since we snapshotted with MaxTime - 10, we expect 10 less samples.
+	testutil.Equals(t, 1000.0 - 10, sum)
+}
+
 func TestDB_SnapshotWithDelete(t *testing.T) {
 	numSamples := int64(10)
 

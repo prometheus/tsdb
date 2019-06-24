@@ -757,9 +757,14 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 		}
 
 		for i, chk := range chks {
-			if chk.MinTime < meta.MinTime || chk.MaxTime > meta.MaxTime {
+			if chk.MinTime < meta.MinTime {
 				return errors.Errorf("found chunk with minTime: %d maxTime: %d outside of compacted minTime: %d maxTime: %d",
 					chk.MinTime, chk.MaxTime, meta.MinTime, meta.MaxTime)
+			}
+
+			// Block range is max exclusive, chunk min and max are inclusive, so chk.max == meta.max is wrong as well.
+			if chk.MaxTime >= meta.MaxTime {
+				dranges = append(dranges, Interval{Mint: meta.MaxTime, Maxt: math.MaxInt64})
 			}
 
 			if len(dranges) > 0 {
@@ -767,6 +772,7 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 				if !chk.OverlapsClosedInterval(dranges[0].Mint, dranges[len(dranges)-1].Maxt) {
 					continue
 				}
+
 				newChunk := chunkenc.NewXORChunk()
 				app, err := newChunk.Appender()
 				if err != nil {
