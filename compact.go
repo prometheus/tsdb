@@ -420,12 +420,14 @@ func (c *LeveledCompactor) Compact(dest string, dirs []string, open []*Block) (u
 		if meta.Stats.NumSamples == 0 {
 			for _, b := range bs {
 				b.meta.Compaction.Deletable = true
-				if _, err = writeMetaFile(c.logger, b.dir, &b.meta); err != nil {
+				n, err := writeMetaFile(c.logger, b.dir, &b.meta)
+				if err != nil {
 					level.Error(c.logger).Log(
 						"msg", "Failed to write 'Deletable' to meta file after compaction",
 						"ulid", b.meta.ULID,
 					)
 				}
+				b.numBytesMeta = n
 			}
 			uid = ulid.ULID{}
 			level.Info(c.logger).Log(

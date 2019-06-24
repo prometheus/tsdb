@@ -428,7 +428,8 @@ func (pb *Block) GetSymbolTableSize() uint64 {
 
 func (pb *Block) setCompactionFailed() error {
 	pb.meta.Compaction.Failed = true
-	_, err := writeMetaFile(pb.logger, pb.dir, &pb.meta)
+	n, err := writeMetaFile(pb.logger, pb.dir, &pb.meta)
+	pb.numBytesMeta = n
 	return err
 }
 
