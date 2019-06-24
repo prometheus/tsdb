@@ -163,6 +163,7 @@ func TestBlockSize(t *testing.T) {
 		expSizeInit  int64
 		blockDirInit string
 	)
+
 	// Create a block and compare the reported size vs actual disk size.
 	{
 		blockDirInit = createBlock(t, tmpdir, genSeries(10, 1, 1, 100))
@@ -200,6 +201,31 @@ func TestBlockSize(t *testing.T) {
 		testutil.Ok(t, err)
 		testutil.Assert(t, actAfterDelete > actAfterCompact, "after a delete and compaction the block size should be smaller %v,%v", actAfterDelete, actAfterCompact)
 		testutil.Equals(t, expAfterCompact, actAfterCompact, "after a delete and compaction reported block size doesn't match actual disk size")
+	}
+
+	// Remove the block meta size info and ensure it gets recalculated.
+	// This ensures that opening a blocks that are missing size info(created by an older library version) returns the correct block size.
+	{
+
+		expMetaNoSize, err := readMetaFile(blockDirInit)
+		testutil.Ok(t, err)
+		expMetaNoSize.Stats.NumBytesChunks, expMetaNoSize.Stats.NumBytesIndex, expMetaNoSize.Stats.NumBytesTombstone = 0, 0, 0
+		testutil.Ok(t, writeMetaFile(nil, blockDirInit, expMetaNoSize))
+
+		actMetaNoSize, err := readMetaFile(blockDirInit)
+		testutil.Ok(t, err)
+		testutil.Equals(t, expMetaNoSize, actMetaNoSize, "rewritten meta should not include any size details")
+
+		b, err := OpenBlock(nil, blockDirInit, nil)
+		testutil.Ok(t, err)
+		defer func() {
+			testutil.Ok(t, b.Close())
+		}()
+		expSize := b.Size()
+		actSize, err := testutil.DirSize(blockInit.Dir())
+		testutil.Ok(t, err)
+		testutil.Assert(t, expSize > 0, "block size should never be zero")
+		testutil.Equals(t, expSize, actSize, "opening a block with an empty  meta size details should get the size re-calculated")
 	}
 
 }
