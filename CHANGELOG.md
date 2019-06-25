@@ -1,6 +1,8 @@
 ## master / unreleased
  - [FEATURE] Added `DBReadOnly` to allow opening a database in read only mode.
-    - `BlockReader` interface is refactored to return the full block meta instead of just MinTime/MaxTime.
+    - `DBReadOnly.Blocks()` exposes a slice of `BlockReader`s and 
+    for this the  interface is refactored to return the full block meta instead of 
+    just MinTime/MaxTime. Required to allow reading the ULID of a block.
  - [FEATURE] Provide option to compress WAL records using Snappy. [#609](https://github.com/prometheus/tsdb/pull/609)
  - [BUGFIX] Re-calculate block size when calling `block.Delete`.
  - [CHANGE] The meta file `BlockStats` no longer holds size information. This is now dynamically calculated and kept in memory. It also includes the meta file size which was not included before.

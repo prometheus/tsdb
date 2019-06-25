@@ -2216,9 +2216,6 @@ func TestDBReadOnly(t *testing.T) {
 	{
 		dbWritable, err := Open(dbDir, logger, nil, nil)
 		testutil.Ok(t, err)
-		defer func() {
-			testutil.Ok(t, dbWritable.Close())
-		}()
 		dbWritable.DisableCompactions()
 
 		dbSizeBeforeAppend, err := testutil.DirSize(dbWritable.Dir())
@@ -2230,8 +2227,6 @@ func TestDBReadOnly(t *testing.T) {
 		expSeriesCount++
 
 		expBlocks = dbWritable.Blocks()
-		expDBHash, err = testutil.DirHash(dbWritable.Dir())
-		testutil.Ok(t, err)
 		expDbSize, err := testutil.DirSize(dbWritable.Dir())
 		testutil.Ok(t, err)
 		testutil.Assert(t, expDbSize > dbSizeBeforeAppend, "db size didn't increase after an append")
@@ -2239,6 +2234,10 @@ func TestDBReadOnly(t *testing.T) {
 		q, err := dbWritable.Querier(math.MinInt64, math.MaxInt64)
 		testutil.Ok(t, err)
 		expSeries = query(t, q, matchAll)
+
+		testutil.Ok(t, dbWritable.Close()) // Close here to allow getting the dir hash for windows.
+		expDBHash, err = testutil.DirHash(dbWritable.Dir())
+		testutil.Ok(t, err)
 	}
 
 	// Open a read only db and ensure that the API returns the same result as the normal DB.

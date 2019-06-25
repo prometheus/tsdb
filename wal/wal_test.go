@@ -24,8 +24,6 @@ import (
 	"testing"
 
 	client_testutil "github.com/prometheus/client_golang/prometheus/testutil"
-	prom_testutil "github.com/prometheus/client_golang/prometheus/testutil"
-
 	"github.com/prometheus/tsdb/testutil"
 )
 
@@ -299,11 +297,8 @@ func TestCorruptAndCarryOn(t *testing.T) {
 		w, err := NewSize(logger, nil, dir, segmentSize, false)
 		testutil.Ok(t, err)
 
-		// Also test the wal corruption metric is working as expected.
-		testutil.Equals(t, 0.0, prom_testutil.ToFloat64(w.walCorruptionsTotal))
 		err = w.Repair(corruptionErr)
 		testutil.Ok(t, err)
-		testutil.Equals(t, 1.0, prom_testutil.ToFloat64(w.walCorruptionsTotal))
 
 		// Ensure that we have a completely clean slate after reapiring.
 		testutil.Equals(t, w.segment.Index(), 1) // We corrupted segment 0.

@@ -333,7 +333,7 @@ func (db *DBReadOnly) Querier(mint, maxt int64) (Querier, error) {
 	return dbWritable.Querier(mint, maxt)
 }
 
-// Blocks returns all persisted blocks.
+// Blocks returns a slice of block readers for persisted blocks.
 func (db *DBReadOnly) Blocks() ([]BlockReader, error) {
 	loadable, corrupted, err := openBlocks(db.logger, db.dir, nil, nil)
 	if err != nil {

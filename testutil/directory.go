@@ -132,7 +132,7 @@ func NewTemporaryDirectory(name string, t T) (handler TemporaryDirectory) {
 	return
 }
 
-// DirSize returns a directory size in bytes.
+// DirSize returns the size in bytes of all files in a directory.
 func DirSize(path string) (int64, error) {
 	var size int64
 	err := filepath.Walk(path, func(_ string, info os.FileInfo, err error) error {
@@ -142,7 +142,7 @@ func DirSize(path string) (int64, error) {
 		if !info.IsDir() {
 			size += info.Size()
 		}
-		return err
+		return nil
 	})
 	return size, err
 }

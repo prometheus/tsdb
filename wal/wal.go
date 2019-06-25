@@ -504,7 +504,6 @@ func (w *WAL) flushPage(clear bool) error {
 
 // First Byte of header format:
 // [ 4 bits unallocated] [1 bit snappy compression flag] [ 3 bit record type ]
-
 const (
 	snappyMask  = 1 << 3
 	recTypeMask = snappyMask - 1
