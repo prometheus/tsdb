@@ -135,7 +135,7 @@ func (s *Server) Close() error {
 func (s *Server) forceUnmount() (err error) {
 	delay := time.Duration(0)
 	for try := 0; try < 5; try++ {
-		err = syscall.Unmount(s.mountpoint, flag)
+		err = syscall.Unmount(s.mountpoint, unmountFlag())
 		if err == nil {
 			break
 		}
@@ -149,10 +149,6 @@ func (s *Server) forceUnmount() (err error) {
 
 	return err
 }
-
-var (
-	flag = unmountFlag()
-)
 
 // unmountFlag returns platform dependent force unmount flag.
 func unmountFlag() int {

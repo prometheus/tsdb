@@ -14,7 +14,8 @@ package fuse
 
 import "errors"
 
-// Server implements a mock server to allow skipping test for windows platform as it doesn't support fuse.
+// Server implements a mock server to allow skipping tests for windows platform
+// which doesn't support fuse.
 type Server struct {
 }
 
@@ -25,5 +26,5 @@ func NewServer(original, mountpoint string, hook Hook) (*Server, error) {
 
 // Close is a noop method.
 func (s *Server) Close() error {
-
+	return nil
 }

@@ -254,7 +254,7 @@ func TestFailedDelete(t *testing.T) {
 	_, file := filepath.Split(createBlock(t, original, genSeries(1, 1, 1, 100)))
 	server, err := fuse.NewServer(original, mountpoint, fuse.FailingRenameHook{})
 	if err != nil {
-		t.Skip(err) // Skip the test for any error. These tests are optional
+		t.Skip(err) // Skip the test for any error. These tests are optional.
 	}
 	defer func() {
 		testutil.Ok(t, server.Close())
