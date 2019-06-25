@@ -154,33 +154,35 @@ func DirHash(path string) ([]byte, error) {
 		if err != nil {
 			return err
 		}
-		if !info.IsDir() {
-			f, err := os.Open(path)
-			if err != nil {
-				return err
-			}
-			defer f.Close()
-
-			if _, err := io.Copy(hash, f); err != nil {
-				return err
-			}
-
-			if _, err := io.WriteString(hash, strconv.Itoa(int(info.Size()))); err != nil {
-				return err
-			}
-			if _, err := io.WriteString(hash, info.Name()); err != nil {
-				return err
-			}
-			modTime, err := info.ModTime().GobEncode()
-			if err != nil {
-				return err
-			}
-			if _, err := io.WriteString(hash, string(modTime)); err != nil {
-				return err
-			}
-
+		if info.IsDir() {
+			return nil
 		}
-		return err
+		f, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+
+		if _, err := io.Copy(hash, f); err != nil {
+			return err
+		}
+
+		if _, err := io.WriteString(hash, strconv.Itoa(int(info.Size()))); err != nil {
+			return err
+		}
+		if _, err := io.WriteString(hash, info.Name()); err != nil {
+			return err
+		}
+		modTime, err := info.ModTime().GobEncode()
+		if err != nil {
+			return err
+		}
+		if _, err := io.WriteString(hash, string(modTime)); err != nil {
+			return err
+		}
+
+		return nil
 	})
+
 	return hash.Sum(nil), err
 }
