@@ -152,7 +152,7 @@ func (h EmptyHook) PostFsync(realRetCode int32) (hooked bool, err error) {
 
 // FailingRenameHook implements the hook interface and fails on renaming operations.
 type FailingRenameHook struct {
-	// Add the Empty hook so the that this struct implements the hook interface.
+	// EmptyHook is embedded so that the FailingRenameHook fully struct implements the hook interface.
 	EmptyHook
 }
 

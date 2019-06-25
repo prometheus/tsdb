@@ -76,7 +76,11 @@ func (h *hookFs) newServer() (*fuse.Server, error) {
 	pathFsOpts := &pathfs.PathNodeFsOptions{ClientInodes: true}
 	pathFs := pathfs.NewPathNodeFs(h, pathFsOpts)
 	conn := nodefs.NewFileSystemConnector(pathFs.Root(), opts)
-	originalAbs, _ := filepath.Abs(h.original)
+	originalAbs, err := filepath.Abs(h.original)
+	if err != nil {
+		return nil, err
+	}
+
 	mOpts := &fuse.MountOptions{
 		AllowOther: true,
 		Name:       h.fsName,
