@@ -169,13 +169,12 @@ type WAL struct {
 	compress    bool
 	snappyBuf   []byte
 
-	fsyncDuration       prometheus.Summary
-	pageFlushes         prometheus.Counter
-	pageCompletions     prometheus.Counter
-	truncateFail        prometheus.Counter
-	truncateTotal       prometheus.Counter
-	currentSegment      prometheus.Gauge
-	walCorruptionsTotal prometheus.Counter
+	fsyncDuration   prometheus.Summary
+	pageFlushes     prometheus.Counter
+	pageCompletions prometheus.Counter
+	truncateFail    prometheus.Counter
+	truncateTotal   prometheus.Counter
+	currentSegment  prometheus.Gauge
 }
 
 // New returns a new WAL over the given directory.
@@ -271,10 +270,6 @@ func registerMetrics(reg prometheus.Registerer, w *WAL) {
 		Name: "prometheus_tsdb_wal_segment_current",
 		Help: "WAL segment index that TSDB is currently writing to.",
 	})
-	w.walCorruptionsTotal = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "prometheus_tsdb_wal_corruptions_total",
-		Help: "Total number of WAL corruptions.",
-	})
 	if reg != nil {
 		reg.MustRegister(w.fsyncDuration, w.pageFlushes, w.pageCompletions, w.truncateFail, w.truncateTotal, w.currentSegment)
 	}
@@ -325,7 +320,6 @@ func (w *WAL) Repair(origErr error) error {
 	if cerr.Segment < 0 {
 		return errors.New("corruption error does not specify position")
 	}
-	w.walCorruptionsTotal.Inc()
 	level.Warn(w.logger).Log("msg", "starting corruption repair",
 		"segment", cerr.Segment, "offset", cerr.Offset)
 
