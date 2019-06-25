@@ -171,11 +171,8 @@ func DirHash(path string) ([]byte, error) {
 			if _, err := io.WriteString(hash, info.Name()); err != nil {
 				return err
 			}
-			modTime, err := info.ModTime().GobEncode()
-			if err != nil {
-				return err
-			}
-			if _, err := io.WriteString(hash, string(modTime)); err != nil {
+
+			if _, err := io.WriteString(hash, string(info.ModTime().Unix())); err != nil {
 				return err
 			}
 

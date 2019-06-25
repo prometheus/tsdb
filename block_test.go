@@ -17,7 +17,6 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
-	"github.com/prometheus/tsdb/labels"
 	"github.com/prometheus/tsdb/testutil/fuse"
 	"io/ioutil"
 	"math/rand"
