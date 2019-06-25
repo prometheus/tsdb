@@ -693,7 +693,7 @@ func (it *bigEndianPostings) Err() error {
 }
 
 // 1 is bigEndian, 2 is baseDelta, 3 is deltaBlock, 4 is baseDeltaBlock, 5 is bitmapPostings, 6 is roaringBitmapPostings.
-const postingsType = 6
+const postingsType = 2
 
 type bitSlice struct {
 	bstream []byte
@@ -747,15 +747,26 @@ func (bs *bitSlice) readBits(offset int) uint64 {
 // │ num <4b> │ base <uvarint> │ width <1b> │ delta 1 <bits> │ ... │ delta n <bits> │
 // └──────────┴────────────────┴────────────┴────────────────┴─────┴────────────────┘
 type baseDeltaPostings struct {
-	bs   bitSlice
-	base uint32
-	size int
-	idx  int
-	cur  uint64
+	bs    []byte
+	width int
+	base  uint32
+	size  int
+	idx   int
+	cur   uint64
+	mask  uint32
+	prel  int
 }
 
 func newBaseDeltaPostings(bstream []byte, base uint32, width int, size int) *baseDeltaPostings {
-	return &baseDeltaPostings{bs: bitSlice{bstream: bstream, width: width}, base: base, size: size, cur: uint64(base)}
+	return &baseDeltaPostings{bs: bstream, width: width, base: base, size: size, cur: uint64(base), mask: (uint32(1) << (uint32(width)<<3)) - 1, prel: 4 - width}
+}
+
+func (it *baseDeltaPostings) readBytes(off int) int {
+	val := 0
+	for i := 0; i < it.width; i ++ {
+		val = (val << 8) | int(it.bs[off+i])
+	}
+	return val
 }
 
 func (it *baseDeltaPostings) At() uint64 {
@@ -763,9 +774,14 @@ func (it *baseDeltaPostings) At() uint64 {
 }
 
 func (it *baseDeltaPostings) Next() bool {
-	if it.size > it.idx {
-		it.cur = it.bs.readBits(it.idx*it.bs.width) + uint64(it.base)
-		it.idx += 1
+	if it.idx < it.size*it.width {
+		if it.idx-it.prel < 0 {
+			it.cur = uint64(it.readBytes(it.idx)) + uint64(it.base)
+			it.idx += it.width
+			return true
+		}
+		it.cur = uint64(binary.BigEndian.Uint32(it.bs[it.idx-it.prel:])&it.mask) + uint64(it.base)
+		it.idx += it.width
 		return true
 	}
 	return false
@@ -776,18 +792,19 @@ func (it *baseDeltaPostings) Seek(x uint64) bool {
 		return true
 	}
 
-	num := it.size - it.idx
+	num := it.size - it.idx / it.width
 	// Do binary search between current position and end.
 	x -= uint64(it.base)
 	i := sort.Search(num, func(i int) bool {
-		return it.bs.readBits((i+it.idx)*it.bs.width) >= x
+		return uint64(binary.BigEndian.Uint32(it.bs[it.idx+i*it.width-it.prel:])&it.mask) >= x
 	})
 	if i < num {
-		it.cur = it.bs.readBits((i+it.idx)*it.bs.width) + uint64(it.base)
-		it.idx += i
+		it.idx += i*it.width
+		it.cur = uint64(it.base) + uint64(binary.BigEndian.Uint32(it.bs[it.idx-it.prel:])&it.mask)
+		it.idx += it.width
 		return true
 	}
-	it.idx += i
+	it.idx += i*it.width
 	return false
 }
 

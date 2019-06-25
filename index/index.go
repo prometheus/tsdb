@@ -536,10 +536,15 @@ func (w *Writer) WritePostings(name, value string, it Postings) error {
 		// The base.
 		w.buf2.PutUvarint32(refs[0])
 		// The width.
-		width := bits.Len32(uint32(refs[len(refs)-1] - refs[0]))
+		width := (bits.Len32(refs[len(refs)-1] - refs[0]) + 7) >> 3
+		if width == 0 {
+			width = 1
+		}
 		w.buf2.PutByte(byte(width))
-		for _, r := range refs {
-			w.buf2.PutBits(uint64(r-refs[0]), width)
+		for i := 0; i < len(refs); i++ {
+			for j := width - 1; j >= 0; j-- {
+				w.buf2.B = append(w.buf2.B, byte(((refs[i]-refs[0])>>(8*uint(j))&0xff)))
+			}
 		}
 	case 3:
 		writeDeltaBlockPostings(&w.buf2, refs)

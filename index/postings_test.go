@@ -729,10 +729,12 @@ func TestBaseDeltaPostings(t *testing.T) {
 		ls[i] = ls[i-1] + uint32(rand.Int31n(25)) + 2
 	}
 
-	width := bits.Len32(ls[len(ls)-1] - ls[0])
+	width := (bits.Len32(ls[len(ls)-1] - ls[0]) + 7) >> 3
 	buf := encoding.Encbuf{}
 	for i := 0; i < num; i++ {
-		buf.PutBits(uint64(ls[i]-ls[0]), width)
+		for j := width - 1; j >= 0; j-- {
+			buf.B = append(buf.B, byte(((ls[i]-ls[0])>>(8*uint(j))&0xff)))
+		}
 	}
 	// t.Log("(baseDeltaPostings) len of 1000 number = ", len(buf.Get()))
 
@@ -1100,7 +1102,8 @@ func BenchmarkPostings(b *testing.B) {
 	ls := make([]uint32, num)
 	ls[0] = 2
 	for i := 1; i < num; i++ {
-		ls[i] = ls[i-1] + uint32(rand.Int31n(15)) + 2
+		ls[i] = ls[i-1] + uint32(rand.Int31n(25)) + 2
+		// ls[i] = ls[i-1] + 2
 	}
 
 	// bigEndianPostings.
@@ -1112,10 +1115,13 @@ func BenchmarkPostings(b *testing.B) {
 	b.Log("bigEndianPostings size =", len(bufBE))
 
 	// baseDeltaPostings.
-	width := bits.Len32(ls[len(ls)-1] - ls[0])
+	width := (bits.Len32(ls[len(ls)-1] - ls[0]) + 7) >> 3
 	bufBD := encoding.Encbuf{}
 	for i := 0; i < num; i++ {
-		bufBD.PutBits(uint64(ls[i]-ls[0]), width)
+		for j := width - 1; j >= 0; j-- {
+			bufBD.B = append(bufBD.B, byte(((ls[i]-ls[0])>>(8*uint(j))&0xff)))
+		}
+		// bufBD.PutBits(uint64(ls[i]-ls[0]), width)
 	}
 	b.Log("baseDeltaPostings size =", len(bufBD.Get()))
 
@@ -1232,20 +1238,20 @@ func BenchmarkPostings(b *testing.B) {
 			testutil.Assert(bench, bep.Err() == nil, "")
 		}
 	})
-	// b.Run("baseDeltaIteration", func(bench *testing.B) {
-	// 	bench.ResetTimer()
-	// 	bench.ReportAllocs()
-	// 	for j := 0; j < bench.N; j++ {
-	// 		bdp := newBaseDeltaPostings(bufBD.Get(), ls[0], width, len(ls))
+	b.Run("baseDeltaIteration", func(bench *testing.B) {
+		bench.ResetTimer()
+		bench.ReportAllocs()
+		for j := 0; j < bench.N; j++ {
+			bdp := newBaseDeltaPostings(bufBD.Get(), ls[0], width, len(ls))
 
-	// 		for i := 0; i < num; i++ {
-	// 			testutil.Assert(bench, bdp.Next() == true, "")
-	// 			testutil.Equals(bench, uint64(ls[i]), bdp.At())
-	// 		}
-	// 		testutil.Assert(bench, bdp.Next() == false, "")
-	// 		testutil.Assert(bench, bdp.Err() == nil, "")
-	// 	}
-	// })
+			for i := 0; i < num; i++ {
+				testutil.Assert(bench, bdp.Next() == true, "")
+				testutil.Equals(bench, uint64(ls[i]), bdp.At())
+			}
+			testutil.Assert(bench, bdp.Next() == false, "")
+			testutil.Assert(bench, bdp.Err() == nil, "")
+		}
+	})
 	// b.Run("deltaBlockIteration", func(bench *testing.B) {
 	// 	bench.ResetTimer()
 	// 	bench.ReportAllocs()
@@ -1316,19 +1322,19 @@ func BenchmarkPostings(b *testing.B) {
 			}
 		}
 	})
-	// b.Run("baseDeltaSeek", func(bench *testing.B) {
-	// 	bench.ResetTimer()
-	// 	bench.ReportAllocs()
-	// 	for j := 0; j < bench.N; j++ {
-	// 		bdp := newBaseDeltaPostings(bufBD.Get(), ls[0], width, len(ls))
+	b.Run("baseDeltaSeek", func(bench *testing.B) {
+		bench.ResetTimer()
+		bench.ReportAllocs()
+		for j := 0; j < bench.N; j++ {
+			bdp := newBaseDeltaPostings(bufBD.Get(), ls[0], width, len(ls))
 
-	// 		for _, v := range table {
-	// 			testutil.Equals(bench, v.found, bdp.Seek(uint64(v.seek)))
-	// 			testutil.Equals(bench, uint64(v.val), bdp.At())
-	// 			testutil.Assert(bench, bdp.Err() == nil, "")
-	// 		}
-	// 	}
-	// })
+			for _, v := range table {
+				testutil.Equals(bench, v.found, bdp.Seek(uint64(v.seek)))
+				testutil.Equals(bench, uint64(v.val), bdp.At())
+				testutil.Assert(bench, bdp.Err() == nil, "")
+			}
+		}
+	})
 	// b.Run("deltaBlockSeek", func(bench *testing.B) {
 	// 	bench.ResetTimer()
 	// 	bench.ReportAllocs()
