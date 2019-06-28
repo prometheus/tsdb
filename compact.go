@@ -773,6 +773,7 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 					return err
 				}
 
+				// TODO(codesome): Use XORIterator.Reset(), and maybe also re-use this deletedIterator.
 				it := &deletedIterator{it: chk.Chunk.Iterator(), intervals: dranges}
 				for it.Next() {
 					ts, v := it.At()
