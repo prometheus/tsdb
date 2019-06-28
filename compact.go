@@ -895,9 +895,8 @@ func (c *LeveledCompactor) writePostings(indexw IndexWriter, values map[string]s
 					}
 				}
 			}
-			if !listPost.Reset(&postingBuf) {
-				listPost = index.NewListPostings(postingBuf).(*index.ListPostings)
-			}
+
+			listPost.Reset(postingBuf)
 			if err := indexw.WritePostings(n, v, listPost); err != nil {
 				return errors.Wrap(err, "write postings")
 			}

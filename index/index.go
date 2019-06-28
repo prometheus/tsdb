@@ -1068,15 +1068,8 @@ func (dec *Decoder) Postings(b []byte, reusePosts Postings) (int, Postings, erro
 	d := encoding.Decbuf{B: b}
 	n := d.Be32int()
 	if bep, ok := reusePosts.(*bigEndianPostings); ok {
-		// Avoding allocs for creating a pointer for reusePosts.Reset
-		// if reusePosts is bigEndianPostings.
-		bep.ResetWithBytes(d.Get())
+		bep.Reset(d.Get())
 		return n, bep, d.Err()
-	} else if reusePosts != nil {
-		l := d.Get()
-		if reusePosts.Reset(&l) {
-			return n, reusePosts, d.Err()
-		}
 	}
 	return n, NewBigEndianPostings(d.Get()), d.Err()
 }
