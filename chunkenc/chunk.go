@@ -58,7 +58,6 @@ type Iterator interface {
 	At() (int64, float64)
 	Err() error
 	Next() bool
-	Reset([]byte) bool
 }
 
 // NewNopIterator returns a new chunk iterator that does not hold any data.
@@ -71,7 +70,6 @@ type nopIterator struct{}
 func (nopIterator) At() (int64, float64) { return 0, 0 }
 func (nopIterator) Next() bool           { return false }
 func (nopIterator) Err() error           { return nil }
-func (nopIterator) Reset(_ []byte) bool  { return false }
 
 // Pool is used to create and reuse chunk references to avoid allocations.
 type Pool interface {

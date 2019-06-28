@@ -102,11 +102,11 @@ func (c *XORChunk) Appender() (Appender, error) {
 	return a, nil
 }
 
-func (c *XORChunk) iterator() *xorIterator {
+func (c *XORChunk) iterator() *XORIterator {
 	// Should iterators guarantee to act on a copy of the data so it doesn't lock append?
 	// When using striped locks to guard access to chunks, probably yes.
 	// Could only copy data if the chunk is not completed yet.
-	return &xorIterator{
+	return &XORIterator{
 		br:       newBReader(c.b.bytes()[2:]),
 		numTotal: binary.BigEndian.Uint16(c.b.bytes()),
 	}
@@ -220,7 +220,7 @@ func (a *xorAppender) writeVDelta(v float64) {
 	}
 }
 
-type xorIterator struct {
+type XORIterator struct {
 	br       bstream
 	numTotal uint16
 	numRead  uint16
@@ -235,15 +235,15 @@ type xorIterator struct {
 	err    error
 }
 
-func (it *xorIterator) At() (int64, float64) {
+func (it *XORIterator) At() (int64, float64) {
 	return it.t, it.val
 }
 
-func (it *xorIterator) Err() error {
+func (it *XORIterator) Err() error {
 	return it.err
 }
 
-func (it *xorIterator) Reset(b []byte) bool {
+func (it *XORIterator) Reset(b []byte) {
 	it.br = newBReader(b[2:])
 	it.numTotal = binary.BigEndian.Uint16(b)
 
@@ -254,11 +254,9 @@ func (it *xorIterator) Reset(b []byte) bool {
 	it.trailing = 0
 	it.tDelta = 0
 	it.err = nil
-
-	return true
 }
 
-func (it *xorIterator) Next() bool {
+func (it *XORIterator) Next() bool {
 	if it.err != nil || it.numRead == it.numTotal {
 		return false
 	}
@@ -346,7 +344,7 @@ func (it *xorIterator) Next() bool {
 	return it.readValue()
 }
 
-func (it *xorIterator) readValue() bool {
+func (it *XORIterator) readValue() bool {
 	bit, err := it.br.readBit()
 	if err != nil {
 		it.err = err
