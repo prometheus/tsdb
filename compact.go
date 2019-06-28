@@ -757,7 +757,12 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 		}
 
 		for i, chk := range chks {
-			if chk.MinTime < meta.MinTime || chk.MaxTime > meta.MaxTime {
+			// Re-encode chunks that are still open(being written to).
+			// The chunk.Bytes() method is not safe for open chunks hence the re-encoding.
+			// This happens only when snapshotting the head block.
+			if chk.MaxTime == math.MaxInt64 {
+				dranges = append(dranges, Interval{Mint: meta.MaxTime, Maxt: math.MaxInt64})
+			} else if chk.MinTime < meta.MinTime || chk.MaxTime > meta.MaxTime {
 				return errors.Errorf("found chunk with minTime: %d maxTime: %d outside of compacted minTime: %d maxTime: %d",
 					chk.MinTime, chk.MaxTime, meta.MinTime, meta.MaxTime)
 			}
