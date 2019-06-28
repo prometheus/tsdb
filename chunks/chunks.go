@@ -300,6 +300,7 @@ func (w *Writer) WriteChunks(b []byte, chks ...Meta) ([]byte, error) {
 	}
 
 	var seq = uint64(w.seq()) << 32
+	// Ensuring that len of 'b' is at least binary.MaxVarintLen32.
 	for len(b) < binary.MaxVarintLen32 {
 		b = append(b, 0)
 	}
