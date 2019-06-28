@@ -243,6 +243,21 @@ func (it *xorIterator) Err() error {
 	return it.err
 }
 
+func (it *xorIterator) Reset(b []byte) bool {
+	it.br = newBReader(b[2:])
+	it.numTotal = binary.BigEndian.Uint16(b)
+
+	it.numRead = 0
+	it.t = 0
+	it.val = 0
+	it.leading = 0
+	it.trailing = 0
+	it.tDelta = 0
+	it.err = nil
+
+	return true
+}
+
 func (it *xorIterator) Next() bool {
 	if it.err != nil || it.numRead == it.numTotal {
 		return false

@@ -1169,6 +1169,11 @@ func (it *deletedIterator) At() (int64, float64) {
 	return it.it.At()
 }
 
+func (it *deletedIterator) Reset(_ []byte) bool {
+	// TODO: Implement this. How to reset intervals?
+	return false
+}
+
 func (it *deletedIterator) Next() bool {
 Outer:
 	for it.it.Next() {
