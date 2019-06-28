@@ -1082,7 +1082,7 @@ func (dec *Decoder) Postings(b []byte) (int, Postings, error) {
 		return n, newDeltaBlockPostings(l, n), d.Err()
 	case 4:
 		l := d.Get()
-		return n, newBaseDeltaBlockPostings(l, n), d.Err()
+		return n, newBaseDeltaBlockPostings(l), d.Err()
 	case 5:
 		l := d.Get()
 		return n, newBitmapPostings(l), d.Err()
