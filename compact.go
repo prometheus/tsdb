@@ -757,15 +757,22 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 		}
 
 		for i, chk := range chks {
-			// Re-encode head chunks that are still open(being written to) or
+			// Re-encode head chunks that are still open (being appended to) or
 			// outside the compacted MaxTime range.
-			// The chunk.Bytes() method is not safe for these chunks hence the re-encoding.
+			// The chunk.Bytes() method is not safe for open chunks hence the re-encoding.
 			// This happens when snapshotting the head block.
-			if _, isHeadChunk := chk.Chunk.(*safeChunk); isHeadChunk && (chk.MaxTime > meta.MaxTime || chk.MaxTime == math.MaxInt64) {
+			//
+			// Block time range is half-open: [meta.MinTime, meta.MaxTime) and
+			// chunks are closed hence the chk.MaxTime >= meta.MaxTime check.
+			if _, isHeadChunk := chk.Chunk.(*safeChunk); isHeadChunk && chk.MaxTime >= meta.MaxTime {
 				dranges = append(dranges, Interval{Mint: meta.MaxTime, Maxt: math.MaxInt64})
 			} else if chk.MinTime < meta.MinTime || chk.MaxTime > meta.MaxTime { // Sanity check for disk blocks.
 				return errors.Errorf("found chunk with minTime: %d maxTime: %d outside of compacted minTime: %d maxTime: %d",
 					chk.MinTime, chk.MaxTime, meta.MinTime, meta.MaxTime)
+			} else if chk.MaxTime == meta.MaxTime { // This shouldn't happen as well, but will brake many users so keeping it as a warning only.
+				level.Warn(c.logger).Log("msg", "found chunk at max time boundary",
+					"chunk minTime", chk.MinTime, "chunk maxTime", chk.MaxTime,
+					"compacted minTime", meta.MinTime, "compacted mmaxTime", meta.MaxTime)
 			}
 
 			if len(dranges) > 0 {
@@ -782,21 +789,19 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 				it := &deletedIterator{it: chk.Chunk.Iterator(), intervals: dranges}
 
 				var (
-					min = int64(math.MinInt64)
-					t   int64
-					v   float64
+					t int64
+					v float64
 				)
 				for it.Next() {
 					t, v = it.At()
 					app.Append(t, v)
-					if min == math.MinInt64 {
-						min = t
-					}
+				}
+				if err := it.Err(); err != nil {
+					return errors.Wrap(err, "iterate chunk while re-encoding")
 				}
 
 				chks[i].Chunk = newChunk
 				chks[i].MaxTime = t
-				chks[i].MinTime = min
 			}
 		}
 

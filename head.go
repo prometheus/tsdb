@@ -1298,7 +1298,7 @@ func (h *headIndexReader) Series(ref uint64, lbls *labels.Labels, chks *[]chunks
 		if !c.OverlapsClosedInterval(h.mint, h.maxt) {
 			continue
 		}
-		// Set the head chunks as open(being appended to).
+		// Set the head chunks as open (being appended to).
 		maxTime := c.maxTime
 		if s.headChunk == c {
 			maxTime = math.MaxInt64

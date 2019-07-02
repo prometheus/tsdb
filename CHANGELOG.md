@@ -1,7 +1,7 @@
 ## master / unreleased
  - [FEATURE] Provide option to compress WAL records using Snappy. [#609](https://github.com/prometheus/tsdb/pull/609)
  - [BUGFIX] Re-calculate block size when calling `block.Delete`.
- - [BUGFIX] Re-encode all chunks at compaction that are open(being appended to). This avoids writing out corrupt data. It happens when snapshotting with the head included.
+ - [BUGFIX] Re-encode all head chunks at compaction that are open (being appended to) or outside the Maxt block range. This avoids writing out corrupt data. It happens when snapshotting with the head included.
  - [CHANGE] The meta file `BlockStats` no longer holds size information. This is now dynamically calculated and kept in memory. It also includes the meta file size which was not included before.
 
 ## 0.8.0
