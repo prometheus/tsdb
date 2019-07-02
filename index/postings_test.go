@@ -739,7 +739,7 @@ func TestBaseDeltaPostings(t *testing.T) {
 	// t.Log("(baseDeltaPostings) len of 1000 number = ", len(buf.Get()))
 
 	t.Run("Iteration", func(t *testing.T) {
-		bdp := newBaseDeltaPostings(buf.Get(), ls[0], width, len(ls))
+		bdp := newBaseDeltaPostings(buf.Get(), uint64(ls[0]), width, len(ls))
 		for i := 0; i < num; i++ {
 			testutil.Assert(t, bdp.Next() == true, "")
 			testutil.Equals(t, uint64(ls[i]), bdp.At())
@@ -787,7 +787,7 @@ func TestBaseDeltaPostings(t *testing.T) {
 			},
 		}
 
-		bdp := newBaseDeltaPostings(buf.Get(), ls[0], width, len(ls))
+		bdp := newBaseDeltaPostings(buf.Get(), uint64(ls[0]), width, len(ls))
 
 		for _, v := range table {
 			testutil.Equals(t, v.found, bdp.Seek(uint64(v.seek)))
@@ -1243,7 +1243,7 @@ func BenchmarkPostings(b *testing.B) {
 		bench.ReportAllocs()
 		for j := 0; j < bench.N; j++ {
 			// bench.StopTimer()
-			bdp := newBaseDeltaPostings(bufBD.Get(), ls[0], width, len(ls))
+			bdp := newBaseDeltaPostings(bufBD.Get(), uint64(ls[0]), width, len(ls))
 			// bench.StartTimer()
 
 			for i := 0; i < num; i++ {
@@ -1335,7 +1335,7 @@ func BenchmarkPostings(b *testing.B) {
 		bench.ReportAllocs()
 		for j := 0; j < bench.N; j++ {
 			// bench.StopTimer()
-			bdp := newBaseDeltaPostings(bufBD.Get(), ls[0], width, len(ls))
+			bdp := newBaseDeltaPostings(bufBD.Get(), uint64(ls[0]), width, len(ls))
 			// bench.StartTimer()
 
 			for _, v := range table {

@@ -1073,7 +1073,7 @@ func (dec *Decoder) Postings(b []byte) (int, Postings, error) {
 		l := d.Get()
 		return n, newBigEndianPostings(l), d.Err()
 	case 2:
-		base := uint32(d.Uvarint())
+		base := uint64(d.Uvarint())
 		width := int(d.Byte())
 		l := d.Get()
 		return n, newBaseDeltaPostings(l, base, width, n), d.Err()
