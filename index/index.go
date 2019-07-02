@@ -781,9 +781,10 @@ func ReadOffsetTable(bs ByteSlice, off uint64, f func([]string, uint64) error) e
 	d := encoding.NewDecbufAt(bs, int(off), castagnoliTable)
 	cnt := d.Be32()
 
+	keys := make([]string, 0, 2)
 	for d.Err() == nil && d.Len() > 0 && cnt > 0 {
 		keyCount := d.Uvarint()
-		keys := make([]string, 0, keyCount)
+		keys = keys[:0]
 
 		for i := 0; i < keyCount; i++ {
 			keys = append(keys, d.UvarintStr())
