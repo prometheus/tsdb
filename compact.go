@@ -757,12 +757,13 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 		}
 
 		for i, chk := range chks {
-			// Re-encode chunks that are still open(being written to).
-			// The chunk.Bytes() method is not safe for open chunks hence the re-encoding.
-			// This happens only when snapshotting the head block.
-			if chk.MaxTime == math.MaxInt64 {
+			// Re-encode head chunks that are still open(being written to) or
+			// outside the compacted MaxTime range.
+			// The chunk.Bytes() method is not safe for these chunks hence the re-encoding.
+			// This happens when snapshotting the head block.
+			if _, isHeadChunk := chk.Chunk.(*safeChunk); isHeadChunk && (chk.MaxTime > meta.MaxTime || chk.MaxTime == math.MaxInt64) {
 				dranges = append(dranges, Interval{Mint: meta.MaxTime, Maxt: math.MaxInt64})
-			} else if chk.MinTime < meta.MinTime || chk.MaxTime > meta.MaxTime {
+			} else if chk.MinTime < meta.MinTime || chk.MaxTime > meta.MaxTime { // Sanity check for disk blocks.
 				return errors.Errorf("found chunk with minTime: %d maxTime: %d outside of compacted minTime: %d maxTime: %d",
 					chk.MinTime, chk.MaxTime, meta.MinTime, meta.MaxTime)
 			}
@@ -779,12 +780,23 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 				}
 
 				it := &deletedIterator{it: chk.Chunk.Iterator(), intervals: dranges}
+
+				var (
+					min = int64(math.MinInt64)
+					t   int64
+					v   float64
+				)
 				for it.Next() {
-					ts, v := it.At()
-					app.Append(ts, v)
+					t, v = it.At()
+					app.Append(t, v)
+					if min == math.MinInt64 {
+						min = t
+					}
 				}
 
 				chks[i].Chunk = newChunk
+				chks[i].MaxTime = t
+				chks[i].MinTime = min
 			}
 		}
 
