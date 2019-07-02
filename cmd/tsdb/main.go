@@ -75,8 +75,7 @@ func main() {
 			exitWithError(err)
 		}
 		defer func() {
-			err := db.Close()
-			if err != nil {
+			if err := db.Close(); err != nil {
 				exitWithError(err)
 			}
 		}()
@@ -91,8 +90,7 @@ func main() {
 			exitWithError(err)
 		}
 		defer func() {
-			err := db.Close()
-			if err != nil {
+			if err := db.Close(); err != nil {
 				exitWithError(err)
 			}
 		}()
@@ -121,8 +119,7 @@ func main() {
 			exitWithError(err)
 		}
 		defer func() {
-			err := db.Close()
-			if err != nil {
+			if err := db.Close(); err != nil {
 				exitWithError(err)
 			}
 		}()
@@ -598,8 +595,7 @@ func dumpSamples(db *tsdb.DBReadOnly, mint, maxt int64) {
 		exitWithError(err)
 	}
 	defer func() {
-		err := q.Close()
-		if err != nil {
+		if err := q.Close(); err != nil {
 			exitWithError(err)
 		}
 	}()

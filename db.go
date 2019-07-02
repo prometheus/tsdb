@@ -293,7 +293,10 @@ func (db *DBReadOnly) Querier(mint, maxt int64) (Querier, error) {
 		blocks[i] = b
 	}
 
-	var head *Head
+	head, err := NewHead(nil, db.logger, nil, 1)
+	if err != nil {
+		return nil, err
+	}
 	maxBlockTime := int64(math.MinInt64)
 	if len(blocks) > 0 {
 		maxBlockTime = blocks[len(blocks)-1].Meta().MaxTime
@@ -389,7 +392,7 @@ func (db *DBReadOnly) Blocks() ([]BlockReader, error) {
 	return blockReaders, nil
 }
 
-// Close all db blocks to release the locks.
+// Close all block readers.
 func (db *DBReadOnly) Close() error {
 	if db.closed {
 		return errors.New("db already closed")

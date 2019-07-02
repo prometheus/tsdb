@@ -14,7 +14,7 @@
 package testutil
 
 import (
-	"crypto/md5"
+	"crypto/sha256"
 	"io"
 	"io/ioutil"
 	"os"
@@ -149,7 +149,7 @@ func DirSize(path string) (int64, error) {
 
 // DirHash returns a hash of all files attribites and their content within a directory.
 func DirHash(path string) ([]byte, error) {
-	hash := md5.New()
+	hash := sha256.New()
 	err := filepath.Walk(path, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
