@@ -465,13 +465,7 @@ func (r blockIndexReader) LabelValues(names ...string) (index.StringTuples, erro
 
 func (r blockIndexReader) Postings(name, value string, reusePosts index.Postings) (index.Postings, error) {
 	p, err := r.ir.Postings(name, value, reusePosts)
-	if err != nil {
-		// Checking for error before wrapping saves some allocs.
-		// This results in big savings of allocs if this function
-		// is called a lot of time, example during compaction.
-		return p, errors.Wrapf(err, "block: %s", r.b.Meta().ULID)
-	}
-	return p, nil
+	return p, errors.Wrapf(err, "block: %s", r.b.Meta().ULID)
 }
 
 func (r blockIndexReader) SortedPostings(p index.Postings) index.Postings {
@@ -479,13 +473,11 @@ func (r blockIndexReader) SortedPostings(p index.Postings) index.Postings {
 }
 
 func (r blockIndexReader) Series(ref uint64, lset *labels.Labels, chks *[]chunks.Meta) error {
-	if err := r.ir.Series(ref, lset, chks); err != nil {
-		// Checking for error before wrapping saves some allocs.
-		// This results in big savings of allocs if this function
-		// is called a lot of time, example during compaction.
-		return errors.Wrapf(err, "block: %s", r.b.Meta().ULID)
-	}
-	return nil
+	return errors.Wrapf(
+		r.ir.Series(ref, lset, chks),
+		"block: %s",
+		r.b.Meta().ULID,
+	)
 }
 
 func (r blockIndexReader) LabelIndices() ([][]string, error) {
