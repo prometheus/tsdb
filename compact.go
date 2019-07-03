@@ -15,6 +15,7 @@ package tsdb
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"math"
@@ -512,13 +513,13 @@ type instrumentedChunkWriter struct {
 	trange  prometheus.Histogram
 }
 
-func (w *instrumentedChunkWriter) WriteChunks(chunks ...chunks.Meta) error {
+func (w *instrumentedChunkWriter) WriteChunks(b []byte, chunks ...chunks.Meta) ([]byte, error) {
 	for _, c := range chunks {
 		w.size.Observe(float64(len(c.Chunk.Bytes())))
 		w.samples.Observe(float64(c.Chunk.NumSamples()))
 		w.trange.Observe(float64(c.MaxTime - c.MinTime))
 	}
-	return w.ChunkWriter.WriteChunks(chunks...)
+	return w.ChunkWriter.WriteChunks(b, chunks...)
 }
 
 // write creates a new block that is the union of the provided blocks into dir.
@@ -730,6 +731,7 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 		postings = index.NewMemPostings()
 		values   = map[string]stringset{}
 		i        = uint64(0)
+		buf      = make([]byte, binary.MaxVarintLen32)
 	)
 
 	if err := indexw.AddSymbols(allSymbols); err != nil {
@@ -790,7 +792,8 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 				return errors.Wrap(err, "merge overlapping chunks")
 			}
 		}
-		if err := chunkw.WriteChunks(mergedChks...); err != nil {
+		buf, err = chunkw.WriteChunks(buf[:0], mergedChks...)
+		if err != nil {
 			return errors.Wrap(err, "write chunks")
 		}
 
