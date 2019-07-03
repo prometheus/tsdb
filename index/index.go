@@ -961,28 +961,25 @@ func (r *Reader) LabelNames() ([]string, error) {
 type stringTuples struct {
 	length  int      // tuple length
 	entries []string // flattened tuple entries
-	swapBuf []string
 }
 
 func NewStringTuples(entries []string, length int) (*stringTuples, error) {
 	if len(entries)%length != 0 {
 		return nil, errors.Wrap(encoding.ErrInvalidSize, "string tuple list")
 	}
-	return &stringTuples{
-		entries: entries,
-		length:  length,
-		swapBuf: make([]string, length),
-	}, nil
+	return &stringTuples{entries: entries, length: length}, nil
 }
 
 func (t *stringTuples) Len() int                   { return len(t.entries) / t.length }
 func (t *stringTuples) At(i int) ([]string, error) { return t.entries[i : i+t.length], nil }
 
 func (t *stringTuples) Swap(i, j int) {
-	copy(t.swapBuf, t.entries[i:i+t.length])
+	c := make([]string, t.length)
+	copy(c, t.entries[i:i+t.length])
+
 	for k := 0; k < t.length; k++ {
 		t.entries[i+k] = t.entries[j+k]
-		t.entries[j+k] = t.swapBuf[k]
+		t.entries[j+k] = c[k]
 	}
 }
 
