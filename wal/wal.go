@@ -843,5 +843,8 @@ func (w *WAL) Size() (size int64, err error) {
 	if err != nil {
 		return 0, err
 	}
+	if first == -1 || last == -1 {
+		return 0, fmt.Errorf("no segments found in WAL")
+	}
 	return int64((last - first + 1) * w.segmentSize), nil
 }

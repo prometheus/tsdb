@@ -706,9 +706,9 @@ func (db *DB) beyondSizeRetention(blocks []*Block) (deleteable map[ulid.ULID]*Bl
 	deleteable = make(map[ulid.ULID]*Block)
 	walSize, _ := db.Head().wal.Size()
 
-	// Adding the WAL size to the size counter
+	// Initializing the size counter with the WAL size,
 	// as that is part of the retention strategy as well.
-	blocksSize := int64(0) + walSize
+	blocksSize := walSize
 	for i, block := range blocks {
 		blocksSize += block.Size()
 		if blocksSize > db.opts.MaxBytes {
