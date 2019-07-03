@@ -704,7 +704,11 @@ func (db *DB) beyondSizeRetention(blocks []*Block) (deleteable map[ulid.ULID]*Bl
 	}
 
 	deleteable = make(map[ulid.ULID]*Block)
-	blocksSize := int64(0)
+	walSize, _ := db.Head().wal.Size()
+
+	// Adding the WAL size to the size counter
+	// as that is part of the retention strategy as well.
+	blocksSize := int64(0) + walSize
 	for i, block := range blocks {
 		blocksSize += block.Size()
 		if blocksSize > db.opts.MaxBytes {
@@ -774,13 +778,13 @@ func (o Overlaps) String() string {
 				m.ULID.String(),
 				m.MinTime,
 				m.MaxTime,
-				(time.Duration((m.MaxTime-m.MinTime)/1000)*time.Second).String(),
+				(time.Duration((m.MaxTime-m.MinTime)/1000) * time.Second).String(),
 			))
 		}
 		res = append(res, fmt.Sprintf(
 			"[mint: %d, maxt: %d, range: %s, blocks: %d]: %s",
 			r.Min, r.Max,
-			(time.Duration((r.Max-r.Min)/1000)*time.Second).String(),
+			(time.Duration((r.Max-r.Min)/1000) * time.Second).String(),
 			len(overlaps),
 			strings.Join(groups, ", ")),
 		)
