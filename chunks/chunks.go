@@ -55,10 +55,8 @@ type Meta struct {
 }
 
 // writeHash writes the chunk encoding and raw data into the provided hash.
-// 'buf' byte slice is used to avoid allocating new byte slice. Assumes that len(buf) is 0.
-func (cm *Meta) writeHash(h hash.Hash, buf []byte) error {
-	buf = append(buf, byte(cm.Chunk.Encoding()))
-	if _, err := h.Write(buf[:1]); err != nil {
+func (cm *Meta) writeHash(h hash.Hash) error {
+	if _, err := h.Write([]byte{byte(cm.Chunk.Encoding())}); err != nil {
 		return err
 	}
 	if _, err := h.Write(cm.Chunk.Bytes()); err != nil {
@@ -282,7 +280,7 @@ func MergeChunks(a, b chunkenc.Chunk) (*chunkenc.XORChunk, error) {
 	return newChunk, nil
 }
 
-func (w *Writer) WriteChunks(b []byte, chks ...Meta) ([]byte, error) {
+func (w *Writer) WriteChunks(chks ...Meta) error {
 	// Calculate maximum space we need and cut a new segment in case
 	// we don't fit into the current one.
 	maxLen := int64(binary.MaxVarintLen32) // The number of chunks.
@@ -295,15 +293,14 @@ func (w *Writer) WriteChunks(b []byte, chks ...Meta) ([]byte, error) {
 
 	if w.wbuf == nil || w.n > w.segmentSize || newsz > w.segmentSize && maxLen <= w.segmentSize {
 		if err := w.cut(); err != nil {
-			return b, err
+			return err
 		}
 	}
 
-	var seq = uint64(w.seq()) << 32
-	// Ensuring that len of 'b' is at least binary.MaxVarintLen32.
-	for len(b) < binary.MaxVarintLen32 {
-		b = append(b, 0)
-	}
+	var (
+		b   = [binary.MaxVarintLen32]byte{}
+		seq = uint64(w.seq()) << 32
+	)
 	for i := range chks {
 		chk := &chks[i]
 
@@ -312,26 +309,26 @@ func (w *Writer) WriteChunks(b []byte, chks ...Meta) ([]byte, error) {
 		n := binary.PutUvarint(b[:], uint64(len(chk.Chunk.Bytes())))
 
 		if err := w.write(b[:n]); err != nil {
-			return b, err
+			return err
 		}
 		b[0] = byte(chk.Chunk.Encoding())
 		if err := w.write(b[:1]); err != nil {
-			return b, err
+			return err
 		}
 		if err := w.write(chk.Chunk.Bytes()); err != nil {
-			return b, err
+			return err
 		}
 
 		w.crc32.Reset()
-		if err := chk.writeHash(w.crc32, b[:0]); err != nil {
-			return b, err
+		if err := chk.writeHash(w.crc32); err != nil {
+			return err
 		}
 		if err := w.write(w.crc32.Sum(b[:0])); err != nil {
-			return b, err
+			return err
 		}
 	}
 
-	return b, nil
+	return nil
 }
 
 func (w *Writer) seq() int {
