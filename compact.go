@@ -764,15 +764,17 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 			//
 			// Block time range is half-open: [meta.MinTime, meta.MaxTime) and
 			// chunks are closed hence the chk.MaxTime >= meta.MaxTime check.
+			//
+			// TODO think how to avoid the typecasting to verify when it is head block.
 			if _, isHeadChunk := chk.Chunk.(*safeChunk); isHeadChunk && chk.MaxTime >= meta.MaxTime {
 				dranges = append(dranges, Interval{Mint: meta.MaxTime, Maxt: math.MaxInt64})
-			} else if chk.MinTime < meta.MinTime || chk.MaxTime > meta.MaxTime { // Sanity check for disk blocks.
+
+			} else
+			// Sanity check for disk blocks.
+			// chk.MaxTime == meta.MaxTime shouldn't happen as well, but will brake many users so not checking for that.
+			if chk.MinTime < meta.MinTime || chk.MaxTime > meta.MaxTime {
 				return errors.Errorf("found chunk with minTime: %d maxTime: %d outside of compacted minTime: %d maxTime: %d",
 					chk.MinTime, chk.MaxTime, meta.MinTime, meta.MaxTime)
-			} else if chk.MaxTime == meta.MaxTime { // This shouldn't happen as well, but will brake many users so keeping it as a warning only.
-				level.Warn(c.logger).Log("msg", "found chunk at max time boundary",
-					"chunk minTime", chk.MinTime, "chunk maxTime", chk.MaxTime,
-					"compacted minTime", meta.MinTime, "compacted mmaxTime", meta.MaxTime)
 			}
 
 			if len(dranges) > 0 {
