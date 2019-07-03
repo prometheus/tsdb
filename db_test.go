@@ -31,6 +31,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	prom_testutil "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/prometheus/tsdb/chunks"
+	"github.com/prometheus/tsdb/fileutil"
 	"github.com/prometheus/tsdb/index"
 	"github.com/prometheus/tsdb/labels"
 	"github.com/prometheus/tsdb/testutil"
@@ -1113,7 +1114,8 @@ func TestSizeRetention(t *testing.T) {
 	testutil.Ok(t, db.reload())                                       // Reload the db to register the new db size.
 	testutil.Equals(t, len(blocks), len(db.Blocks()))                 // Ensure all blocks are registered.
 	expSize := int64(prom_testutil.ToFloat64(db.metrics.blocksBytes)) // Use the the actual internal metrics.
-	actSize := testutil.DirSize(t, db.Dir())
+	actSize, err := fileutil.DirSize(db.Dir())
+	testutil.Ok(t, err)
 	testutil.Equals(t, expSize, actSize, "registered size doesn't match actual disk size")
 
 	// Decrease the max bytes limit so that a delete is triggered.
@@ -1127,7 +1129,8 @@ func TestSizeRetention(t *testing.T) {
 	actBlocks := db.Blocks()
 	expSize = int64(prom_testutil.ToFloat64(db.metrics.blocksBytes))
 	actRetentCount := int(prom_testutil.ToFloat64(db.metrics.sizeRetentionCount))
-	actSize = testutil.DirSize(t, db.Dir())
+	actSize, err = fileutil.DirSize(db.Dir())
+	testutil.Ok(t, err)
 
 	testutil.Equals(t, 1, actRetentCount, "metric retention count mismatch")
 	testutil.Equals(t, actSize, expSize, "metric db size doesn't match actual disk size")
