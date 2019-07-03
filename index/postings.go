@@ -695,7 +695,7 @@ func (it *bigEndianPostings) Err() error {
 }
 
 // 1 is bigEndian, 2 is baseDelta, 3 is deltaBlock, 4 is baseDeltaBlock, 5 is bitmapPostings, 6 is roaringBitmapPostings.
-const postingsType = 4
+const postingsType = 2
 
 type bitSlice struct {
 	bstream []byte
@@ -763,30 +763,25 @@ func newBaseDeltaPostings(bstream []byte, base uint64, width int, size int) *bas
 	return &baseDeltaPostings{bs: bstream, width: width, base: base, size: size, cur: uint64(base), mask: (uint64(1) << (uint64(width) << 3)) - 1, prel: 8 - width}
 }
 
-func (it *baseDeltaPostings) readBytes(off int) int {
-	val := 0
-	for i := 0; i < it.width; i++ {
-		val = (val << 8) | int(it.bs[off+i])
-	}
-	return val
-}
-
 func (it *baseDeltaPostings) At() uint64 {
 	return it.cur
 }
 
 func (it *baseDeltaPostings) Next() bool {
-	if it.idx < it.size*it.width {
-		if it.idx-it.prel < 0 {
-			it.cur = uint64(it.readBytes(it.idx)) + it.base
-			it.idx += it.width
-			return true
-		}
-		it.cur = binary.BigEndian.Uint64(it.bs[it.idx-it.prel:])&it.mask + it.base
-		it.idx += it.width
-		return true
+	if it.idx >= it.size*it.width {
+		return false
 	}
-	return false
+	if it.idx-it.prel >= 0 {
+		it.cur = binary.BigEndian.Uint64(it.bs[it.idx-it.prel:])&it.mask + it.base
+	} else {
+		it.cur = 0
+		for i := 0; i < it.width; i++ {
+			it.cur = (it.cur << 8) | uint64(it.bs[it.idx+i])
+		}
+		it.cur += it.base
+	}
+	it.idx += it.width
+	return true
 }
 
 func (it *baseDeltaPostings) Seek(x uint64) bool {
@@ -984,7 +979,7 @@ type baseDeltaBlockPostings struct {
 	offset   int // offset in bit.
 	cur      uint64
 	base     uint64
-	mask     uint32
+	mask     uint64
 	prel     int
 }
 
@@ -1010,14 +1005,23 @@ func (it *baseDeltaBlockPostings) Next() bool {
 		it.count = int(val)
 		it.offset += n
 		it.bs.width = int(it.bs.bstream[it.offset])
-		it.mask = (uint32(1) << uint(8 * it.bs.width)) - 1
-		it.prel = 4 - it.bs.width
+		it.mask = (uint64(1) << uint(8 * it.bs.width)) - 1
+		it.prel = 8 - it.bs.width
 		it.offset += 1
 		it.idxBlock = 1
 		return true
 	}
 
-	it.cur = uint64(binary.BigEndian.Uint32(it.bs.bstream[it.offset-it.prel:])&it.mask) + it.base
+	if it.offset-it.prel >= 0 {
+		it.cur = binary.BigEndian.Uint64(it.bs.bstream[it.offset-it.prel:])&it.mask + it.base
+	} else {
+		it.cur = 0
+		for i := 0; i < it.bs.width; i++ {
+			it.cur = (it.cur << 8) | uint64(it.bs.bstream[it.offset+i])
+		}
+		it.cur += it.base
+	}
+	// it.cur = (binary.BigEndian.Uint64(it.bs.bstream[it.offset-it.prel:])&it.mask) + it.base
 	it.offset += it.bs.width
 	it.idxBlock += 1
 	if it.idxBlock == it.count {
@@ -1060,8 +1064,8 @@ func (it *baseDeltaBlockPostings) Seek(x uint64) bool {
 			it.count = int(val)
 			it.offset += n
 			it.bs.width = int(it.bs.bstream[it.offset])
-			it.mask = (uint32(1) << uint(8 * it.bs.width)) - 1
-			it.prel = 4 - it.bs.width
+			it.mask = (uint64(1) << uint(8 * it.bs.width)) - 1
+			it.prel = 8 - it.bs.width
 			it.offset += 1
 			it.idxBlock = 1
 			if x <= it.base {
@@ -1069,11 +1073,11 @@ func (it *baseDeltaBlockPostings) Seek(x uint64) bool {
 			} else {
 				temp := x - it.base
 				j := sort.Search(it.count-it.idxBlock, func(i int) bool {
-					return uint64(binary.BigEndian.Uint32(it.bs.bstream[it.offset+i*it.bs.width-it.prel:])&it.mask) >= temp
+					return (binary.BigEndian.Uint64(it.bs.bstream[it.offset+i*it.bs.width-it.prel:])&it.mask) >= temp
 				})
 				if j < it.count-it.idxBlock {
 					it.offset += j * it.bs.width
-					it.cur = uint64(binary.BigEndian.Uint32(it.bs.bstream[it.offset-it.prel:])&it.mask) + it.base
+					it.cur = (binary.BigEndian.Uint64(it.bs.bstream[it.offset-it.prel:])&it.mask) + it.base
 					it.idxBlock += j + 1
 					if it.idxBlock == it.count {
 						// it.offset = startOff + ((i+1)<<deltaBlockBits)
@@ -1103,8 +1107,8 @@ func (it *baseDeltaBlockPostings) Seek(x uint64) bool {
 		it.count = int(val)
 		it.offset += n
 		it.bs.width = int(it.bs.bstream[it.offset])
-		it.mask = (uint32(1) << uint(8*it.bs.width)) - 1
-		it.prel = 4 - it.bs.width
+		it.mask = (uint64(1) << uint(8*it.bs.width)) - 1
+		it.prel = 8 - it.bs.width
 		it.offset += 1
 		it.idxBlock = 1
 	}
@@ -1113,11 +1117,11 @@ func (it *baseDeltaBlockPostings) Seek(x uint64) bool {
 	} else {
 		temp := x - it.base
 		j := sort.Search(it.count-it.idxBlock, func(i int) bool {
-			return uint64(binary.BigEndian.Uint32(it.bs.bstream[it.offset+i*it.bs.width-it.prel:])&it.mask) >= temp
+			return (binary.BigEndian.Uint64(it.bs.bstream[it.offset+i*it.bs.width-it.prel:])&it.mask) >= temp
 		})
 		if j < it.count-it.idxBlock {
 			it.offset += j * it.bs.width
-			it.cur = uint64(binary.BigEndian.Uint32(it.bs.bstream[it.offset-it.prel:])&it.mask) + it.base
+			it.cur = (binary.BigEndian.Uint64(it.bs.bstream[it.offset-it.prel:])&it.mask) + it.base
 			it.idxBlock += j + 1
 			if it.idxBlock == it.count {
 				// it.offset = startOff + deltaBlockSize
@@ -1172,7 +1176,56 @@ func writeBaseDeltaBlockPostings(e *encoding.Encbuf, arr []uint32) {
 		remaining -= ((bits.Len(uint(len(deltas))) >> 3) + 1)
 		for _, delta := range deltas {
 			for j := max - 1; j >= 0; j-- {
-				e.B = append(e.B, byte((delta >> (8 * uint(j)) & 0xff)))
+				e.B = append(e.B, byte((delta >> (uint(j) << 3) & 0xff)))
+			}
+			remaining -= max
+		}
+
+		if i == len(arr) {
+			break
+		}
+
+		for remaining > 0 {
+			e.PutByte(0)
+			remaining -= 1
+		}
+	}
+}
+
+func writeBaseDeltaBlockPostings64(e *encoding.Encbuf, arr []uint64) {
+	i := 0
+	startLen := len(e.B)
+	deltas := []uint64{}
+	var remaining int
+	var base uint64
+	var max int
+	for i < len(arr) {
+		e.PutUvarint64(arr[i]) // Put base.
+		remaining = deltaBlockSize - (len(e.B)-startLen)%deltaBlockSize - 1
+		deltas = deltas[:0]
+		base = arr[i]
+		max = -1
+		i += 1
+		for i < len(arr) {
+			delta := arr[i] - base
+			cur := (bits.Len64(delta) + 7) >> 3
+			if cur == 0 {
+				cur = 1
+			}
+			if remaining-cur*(len(deltas)+1)-((bits.Len(uint(len(deltas)))>>3)+1) >= 0 {
+				deltas = append(deltas, delta)
+				max = cur
+			} else {
+				break
+			}
+			i += 1
+		}
+		e.PutUvarint64(uint64(len(deltas) + 1))
+		e.PutByte(byte(max))
+		remaining -= ((bits.Len(uint(len(deltas))) >> 3) + 1)
+		for _, delta := range deltas {
+			for j := max - 1; j >= 0; j-- {
+				e.B = append(e.B, byte((delta >> (uint(j) << 3) & 0xff)))
 			}
 			remaining -= max
 		}
