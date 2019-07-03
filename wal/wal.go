@@ -834,3 +834,17 @@ func (r *segmentBufReader) Read(b []byte) (n int, err error) {
 	r.buf.Reset(r.segs[r.cur])
 	return n, nil
 }
+
+// Computing size of the WAL.
+// We do this by counting the number of segments currently used by the WAL,
+// and multiplying it by the size of a segment.
+func (w *WAL) Size() (size int64, err error) {
+	first, last, err := w.Segments()
+	if err != nil {
+		return 0, err
+	}
+	if first == -1 || last == -1 {
+		return 0, fmt.Errorf("no segments found in WAL")
+	}
+	return int64((last - first + 1) * w.segmentSize), nil
+}
