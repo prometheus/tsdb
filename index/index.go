@@ -541,6 +541,9 @@ func (w *Writer) WritePostings(name, value string, it Postings) error {
 			width = 1
 		}
 		w.buf2.PutByte(byte(width))
+		for i := 0; i < 8 - width; i++ {
+			w.buf2.PutByte(0)
+		}
 		for i := 0; i < len(refs); i++ {
 			for j := width - 1; j >= 0; j-- {
 				w.buf2.B = append(w.buf2.B, byte(((refs[i]-refs[0])>>(8*uint(j))&0xff)))

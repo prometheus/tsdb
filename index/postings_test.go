@@ -731,6 +731,9 @@ func TestBaseDeltaPostings(t *testing.T) {
 
 	width := (bits.Len32(ls[len(ls)-1] - ls[0]) + 7) >> 3
 	buf := encoding.Encbuf{}
+	for i := 0; i < 8 - width; i ++ {
+		buf.B = append(buf.B, 0)
+	}
 	for i := 0; i < num; i++ {
 		for j := width - 1; j >= 0; j-- {
 			buf.B = append(buf.B, byte(((ls[i]-ls[0])>>(8*uint(j))&0xff)))
@@ -1094,6 +1097,81 @@ func TestRoaringBitmapPostings(t *testing.T) {
 	})
 }
 
+func TestRoaringBitmapPostings64(t *testing.T) {
+	num := 1000
+	// mock a list as postings
+	ls := make([]uint64, num)
+	ls[0] = 2
+	for i := 1; i < num; i++ {
+		ls[i] = ls[i-1] + uint64(rand.Int63n(15)) + 2
+		// ls[i] = ls[i-1] + 10
+	}
+
+	buf := encoding.Encbuf{}
+	writeRoaringBitmapPostings64(&buf, ls)
+	// t.Log("len", len(buf.Get()))
+
+	t.Run("Iteration", func(t *testing.T) {
+		rbp := newRoaringBitmapPostings(buf.Get())
+		for i := 0; i < num; i++ {
+			testutil.Assert(t, rbp.Next() == true, "")
+			// t.Log("ls[i] =", ls[i], "rbp.At() =", rbp.At())
+			testutil.Equals(t, ls[i], rbp.At())
+		}
+
+		testutil.Assert(t, rbp.Next() == false, "")
+		testutil.Assert(t, rbp.Err() == nil, "")
+	})
+
+	t.Run("Seek", func(t *testing.T) {
+		table := []struct {
+			seek  uint64
+			val   uint64
+			found bool
+		}{
+			{
+				ls[0] - 1, ls[0], true,
+			},
+			{
+				ls[4], ls[4], true,
+			},
+			{
+				ls[500] - 1, ls[500], true,
+			},
+			{
+				ls[600] + 1, ls[601], true,
+			},
+			{
+				ls[600] + 1, ls[601], true,
+			},
+			{
+				ls[600] + 1, ls[601], true,
+			},
+			{
+				ls[0], ls[601], true,
+			},
+			{
+				ls[600], ls[601], true,
+			},
+			{
+				ls[999], ls[999], true,
+			},
+			{
+				ls[999] + 10, ls[999], false,
+			},
+		}
+
+		rbp := newRoaringBitmapPostings(buf.Get())
+
+		for _, v := range table {
+			// t.Log("i", i)
+			testutil.Equals(t, v.found, rbp.Seek(v.seek))
+			testutil.Equals(t, v.val, rbp.At())
+			testutil.Assert(t, rbp.Err() == nil, "")
+		}
+	})
+}
+
 func BenchmarkPostings(b *testing.B) {
 	num := 100000
 	// mock a list as postings
@@ -1115,6 +1193,9 @@ func BenchmarkPostings(b *testing.B) {
 	// baseDeltaPostings.
 	width := (bits.Len32(ls[len(ls)-1] - ls[0]) + 7) >> 3
 	bufBD := encoding.Encbuf{}
+	for i := 0; i < 8 - width; i ++ {
+		bufBD.B = append(bufBD.B, 0)
+	}
 	for i := 0; i < num; i++ {
 		for j := width - 1; j >= 0; j-- {
 			bufBD.B = append(bufBD.B, byte(((ls[i]-ls[0])>>(8*uint(j))&0xff)))
