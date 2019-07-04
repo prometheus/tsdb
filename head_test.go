@@ -148,10 +148,10 @@ func TestHead_ReadWAL(t *testing.T) {
 			s50 := head.series.getByID(50)
 			s100 := head.series.getByID(100)
 
-			testutil.Equals(t, labels.FromStrings("a", "1"), s10.Lset)
-			testutil.Equals(t, (*record.MemSeries)(nil), s11) // Series without samples should be garbage colected at head.Init().
-			testutil.Equals(t, labels.FromStrings("a", "4"), s50.Lset)
-			testutil.Equals(t, labels.FromStrings("a", "3"), s100.Lset)
+			testutil.Equals(t, labels.FromStrings("a", "1"), s10.lset)
+			testutil.Equals(t, (*memSeries)(nil), s11) // Series without samples should be garbage colected at head.Init().
+			testutil.Equals(t, labels.FromStrings("a", "4"), s50.lset)
+			testutil.Equals(t, labels.FromStrings("a", "3"), s100.lset)
 
 			expandChunk := func(c chunkenc.Iterator) (x []sample) {
 				for c.Next() {
@@ -225,38 +225,38 @@ func TestHead_Truncate(t *testing.T) {
 	s3, _ := h.getOrCreate(3, labels.FromStrings("a", "1", "b", "2"))
 	s4, _ := h.getOrCreate(4, labels.FromStrings("a", "2", "b", "2", "c", "1"))
 
-	s1.Chunks = []*record.MemChunk{
+	s1.chunks = []*memChunk{
 		{MinTime: 0, MaxTime: 999},
 		{MinTime: 1000, MaxTime: 1999},
 		{MinTime: 2000, MaxTime: 2999},
 	}
-	s2.Chunks = []*record.MemChunk{
+	s2.chunks = []*memChunk{
 		{MinTime: 1000, MaxTime: 1999},
 		{MinTime: 2000, MaxTime: 2999},
 		{MinTime: 3000, MaxTime: 3999},
 	}
-	s3.Chunks = []*record.MemChunk{
+	s3.chunks = []*memChunk{
 		{MinTime: 0, MaxTime: 999},
 		{MinTime: 1000, MaxTime: 1999},
 	}
-	s4.Chunks = []*record.MemChunk{}
+	s4.chunks = []*memChunk{}
 
 	// Truncation need not be aligned.
 	testutil.Ok(t, h.Truncate(1))
 
 	testutil.Ok(t, h.Truncate(2000))
 
-	testutil.Equals(t, []*record.MemChunk{
+	testutil.Equals(t, []*memChunk{
 		{MinTime: 2000, MaxTime: 2999},
-	}, h.series.getByID(s1.Ref).Chunks)
+	}, h.series.getByID(s1.ref).chunks)
 
-	testutil.Equals(t, []*record.MemChunk{
+	testutil.Equals(t, []*memChunk{
 		{MinTime: 2000, MaxTime: 2999},
 		{MinTime: 3000, MaxTime: 3999},
-	}, h.series.getByID(s2.Ref).Chunks)
+	}, h.series.getByID(s2.ref).chunks)
 
-	testutil.Assert(t, h.series.getByID(s3.Ref) == nil, "")
-	testutil.Assert(t, h.series.getByID(s4.Ref) == nil, "")
+	testutil.Assert(t, h.series.getByID(s3.ref) == nil, "")
+	testutil.Assert(t, h.series.getByID(s4.ref) == nil, "")
 
 	postingsA1, _ := index.ExpandPostings(h.postings.Get("a", "1"))
 	postingsA2, _ := index.ExpandPostings(h.postings.Get("a", "2"))
@@ -265,10 +265,10 @@ func TestHead_Truncate(t *testing.T) {
 	postingsC1, _ := index.ExpandPostings(h.postings.Get("c", "1"))
 	postingsAll, _ := index.ExpandPostings(h.postings.Get("", ""))
 
-	testutil.Equals(t, []uint64{s1.Ref}, postingsA1)
-	testutil.Equals(t, []uint64{s2.Ref}, postingsA2)
-	testutil.Equals(t, []uint64{s1.Ref, s2.Ref}, postingsB1)
-	testutil.Equals(t, []uint64{s1.Ref, s2.Ref}, postingsAll)
+	testutil.Equals(t, []uint64{s1.ref}, postingsA1)
+	testutil.Equals(t, []uint64{s2.ref}, postingsA2)
+	testutil.Equals(t, []uint64{s1.ref, s2.ref}, postingsB1)
+	testutil.Equals(t, []uint64{s1.ref, s2.ref}, postingsAll)
 	testutil.Assert(t, postingsB2 == nil, "")
 	testutil.Assert(t, postingsC1 == nil, "")
 
@@ -290,7 +290,7 @@ func TestHead_Truncate(t *testing.T) {
 // Validate various behaviors brought on by firstChunkID accounting for
 // garbage collected chunks.
 func TestMemSeries_truncateChunks(t *testing.T) {
-	s := record.NewMemSeries(labels.FromStrings("a", "b"), 1, 2000)
+	s := newMemSeries(labels.FromStrings("a", "b"), 1, 2000)
 
 	for i := 0; i < 4000; i += 5 {
 		ok, _ := s.Append(int64(i), float64(i))
@@ -299,7 +299,7 @@ func TestMemSeries_truncateChunks(t *testing.T) {
 
 	// Check that truncate removes half of the chunks and afterwards
 	// that the ID of the last chunk still gives us the same chunk afterwards.
-	countBefore := len(s.Chunks)
+	countBefore := len(s.chunks)
 	lastID := s.ChunkID(countBefore - 1)
 	lastChunk := s.Chunk(lastID)
 
@@ -308,9 +308,9 @@ func TestMemSeries_truncateChunks(t *testing.T) {
 
 	s.TruncateChunksBefore(2000)
 
-	testutil.Equals(t, int64(2000), s.Chunks[0].MinTime)
+	testutil.Equals(t, int64(2000), s.chunks[0].MinTime)
 	testutil.Assert(t, s.Chunk(0) == nil, "first chunks not gone")
-	testutil.Equals(t, countBefore/2, len(s.Chunks))
+	testutil.Equals(t, countBefore/2, len(s.chunks))
 	testutil.Equals(t, lastChunk, s.Chunk(lastID))
 
 	// Validate that the series' sample buffer is applied correctly to the last chunk
@@ -854,7 +854,7 @@ func TestComputeChunkEndTime(t *testing.T) {
 }
 
 func TestMemSeries_append(t *testing.T) {
-	s := record.NewMemSeries(labels.Labels{}, 1, 500)
+	s := newMemSeries(labels.Labels{}, 1, 500)
 
 	// Add first two samples at the very end of a chunk range and the next two
 	// on and after it.
@@ -875,8 +875,8 @@ func TestMemSeries_append(t *testing.T) {
 	testutil.Assert(t, ok, "append failed")
 	testutil.Assert(t, !chunkCreated, "second sample should use same chunk")
 
-	testutil.Assert(t, s.Chunks[0].MinTime == 998 && s.Chunks[0].MaxTime == 999, "wrong chunk range")
-	testutil.Assert(t, s.Chunks[1].MinTime == 1000 && s.Chunks[1].MaxTime == 1001, "wrong chunk range")
+	testutil.Assert(t, s.chunks[0].MinTime == 998 && s.chunks[0].MaxTime == 999, "wrong chunk range")
+	testutil.Assert(t, s.chunks[1].MinTime == 1000 && s.chunks[1].MaxTime == 1001, "wrong chunk range")
 
 	// Fill the range [1000,2000) with many samples. Intermediate chunks should be cut
 	// at approximately 120 samples per chunk.
@@ -885,10 +885,10 @@ func TestMemSeries_append(t *testing.T) {
 		testutil.Assert(t, ok, "append failed")
 	}
 
-	testutil.Assert(t, len(s.Chunks) > 7, "expected intermediate chunks")
+	testutil.Assert(t, len(s.chunks) > 7, "expected intermediate chunks")
 
 	// All chunks but the first and last should now be moderately full.
-	for i, c := range s.Chunks[1 : len(s.Chunks)-1] {
+	for i, c := range s.chunks[1 : len(s.chunks)-1] {
 		testutil.Assert(t, c.Chunk.NumSamples() > 100, "unexpected small chunk %d of length %d", i, c.Chunk.NumSamples())
 	}
 }
@@ -902,7 +902,7 @@ func TestGCChunkAccess(t *testing.T) {
 	h.initTime(0)
 
 	s, _ := h.getOrCreate(1, labels.FromStrings("a", "1"))
-	s.Chunks = []*record.MemChunk{
+	s.chunks = []*memChunk{
 		{MinTime: 0, MaxTime: 999},
 		{MinTime: 1000, MaxTime: 1999},
 	}
@@ -942,7 +942,7 @@ func TestGCSeriesAccess(t *testing.T) {
 	h.initTime(0)
 
 	s, _ := h.getOrCreate(1, labels.FromStrings("a", "1"))
-	s.Chunks = []*record.MemChunk{
+	s.chunks = []*memChunk{
 		{MinTime: 0, MaxTime: 999},
 		{MinTime: 1000, MaxTime: 1999},
 	}
@@ -967,7 +967,7 @@ func TestGCSeriesAccess(t *testing.T) {
 
 	testutil.Ok(t, h.Truncate(2000)) // Remove the series.
 
-	testutil.Equals(t, (*record.MemSeries)(nil), h.series.getByID(1))
+	testutil.Equals(t, (*memSeries)(nil), h.series.getByID(1))
 
 	_, err = cr.Chunk(chunks[0].Ref)
 	testutil.Equals(t, record.ErrNotFound, err)
@@ -1030,7 +1030,7 @@ func TestRemoveSeriesAfterRollbackAndTruncate(t *testing.T) {
 
 	// Truncate again, this time the series should be deleted
 	testutil.Ok(t, h.Truncate(2050))
-	testutil.Equals(t, (*record.MemSeries)(nil), h.series.getByHash(lset.Hash(), lset))
+	testutil.Equals(t, (*memSeries)(nil), h.series.getByHash(lset.Hash(), lset))
 }
 
 func TestHead_LogRollback(t *testing.T) {

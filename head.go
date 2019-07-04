@@ -55,6 +55,7 @@ type Head struct {
 	wal        *wal.WAL
 	logger     log.Logger
 	appendPool sync.Pool
+	seriesPool sync.Pool
 	bytesPool  sync.Pool
 	numSeries  uint64
 
@@ -252,7 +253,7 @@ func (h *Head) processWALSamples(
 	defer close(output)
 
 	// Mitigate lock contention in getByID.
-	refSeries := map[uint64]*record.MemSeries{}
+	refSeries := map[uint64]*memSeries{}
 
 	mint, maxt := int64(math.MaxInt64), int64(math.MinInt64)
 
@@ -382,7 +383,7 @@ func (h *Head) loadWAL(r *wal.Reader, multiRef map[uint64]uint64) (err error) {
 				if !created {
 					// There's already a different Ref for this series.
 					multiRefLock.Lock()
-					multiRef[s.Ref] = series.Ref
+					multiRef[s.Ref] = series.ref
 					multiRefLock.Unlock()
 				}
 
@@ -770,6 +771,7 @@ func (h *Head) appender() *headAppender {
 		mint:         math.MaxInt64,
 		maxt:         math.MinInt64,
 		samples:      h.getAppendBuffer(),
+		sampleSeries: h.getSeriesBuffer(),
 	}
 }
 
@@ -793,6 +795,19 @@ func (h *Head) putAppendBuffer(b []record.RefSample) {
 	h.appendPool.Put(b[:0])
 }
 
+func (h *Head) getSeriesBuffer() []*memSeries {
+	b := h.seriesPool.Get()
+	if b == nil {
+		return make([]*memSeries, 0, 512)
+	}
+	return b.([]*memSeries)
+}
+
+func (h *Head) putSeriesBuffer(b []*memSeries) {
+	//lint:ignore SA6002 safe to ignore and actually fixing it has some performance penalty.
+	h.seriesPool.Put(b[:0])
+}
+
 func (h *Head) getBytesBuffer() []byte {
 	b := h.bytesPool.Get()
 	if b == nil {
@@ -811,8 +826,9 @@ type headAppender struct {
 	minValidTime int64 // No samples below this timestamp are allowed.
 	mint, maxt   int64
 
-	series  []record.RefSeries
-	samples []record.RefSample
+	series       []record.RefSeries
+	samples      []record.RefSample
+	sampleSeries []*memSeries
 }
 
 func (a *headAppender) Add(lset labels.Labels, t int64, v float64) (uint64, error) {
@@ -826,11 +842,11 @@ func (a *headAppender) Add(lset labels.Labels, t int64, v float64) (uint64, erro
 	s, created := a.head.getOrCreate(lset.Hash(), lset)
 	if created {
 		a.series = append(a.series, record.RefSeries{
-			Ref:    s.Ref,
+			Ref:    s.ref,
 			Labels: lset,
 		})
 	}
-	return s.Ref, a.AddFast(s.Ref, t, v)
+	return s.ref, a.AddFast(s.ref, t, v)
 }
 
 func (a *headAppender) AddFast(ref uint64, t int64, v float64) error {
@@ -847,7 +863,7 @@ func (a *headAppender) AddFast(ref uint64, t int64, v float64) error {
 		s.Unlock()
 		return err
 	}
-	s.PendingCommit = true
+	s.pendingCommit = true
 	s.Unlock()
 
 	if t < a.mint {
@@ -858,11 +874,11 @@ func (a *headAppender) AddFast(ref uint64, t int64, v float64) error {
 	}
 
 	a.samples = append(a.samples, record.RefSample{
-		Ref:    ref,
-		T:      t,
-		V:      v,
-		Series: s,
+		Ref: ref,
+		T:   t,
+		V:   v,
 	})
+	a.sampleSeries = append(a.sampleSeries, s)
 	return nil
 }
 
@@ -899,18 +915,20 @@ func (a *headAppender) log() error {
 func (a *headAppender) Commit() error {
 	defer a.head.metrics.activeAppenders.Dec()
 	defer a.head.putAppendBuffer(a.samples)
+	defer a.head.putSeriesBuffer(a.sampleSeries)
 
 	if err := a.log(); err != nil {
 		return errors.Wrap(err, "write to WAL")
 	}
 
+	var series *memSeries
 	total := len(a.samples)
-
-	for _, s := range a.samples {
-		s.Series.Lock()
-		ok, chunkCreated := s.Series.Append(s.T, s.V)
-		s.Series.PendingCommit = false
-		s.Series.Unlock()
+	for i, s := range a.samples {
+		series = a.sampleSeries[i]
+		series.Lock()
+		ok, chunkCreated := series.Append(s.T, s.V)
+		series.pendingCommit = false
+		series.Unlock()
 
 		if !ok {
 			total--
@@ -929,10 +947,12 @@ func (a *headAppender) Commit() error {
 
 func (a *headAppender) Rollback() error {
 	a.head.metrics.activeAppenders.Dec()
-	for _, s := range a.samples {
-		s.Series.Lock()
-		s.Series.PendingCommit = false
-		s.Series.Unlock()
+	var series *memSeries
+	for i := range a.samples {
+		series = a.sampleSeries[i]
+		series.Lock()
+		series.pendingCommit = false
+		series.Unlock()
 	}
 	a.head.putAppendBuffer(a.samples)
 
@@ -1004,7 +1024,7 @@ func (h *Head) chunkRewrite(ref uint64, dranges tombstones.Intervals) (err error
 	ms := h.series.getByID(ref)
 	ms.Lock()
 	defer ms.Unlock()
-	if len(ms.Chunks) == 0 {
+	if len(ms.chunks) == 0 {
 		return nil
 	}
 
@@ -1216,7 +1236,7 @@ func (h *headChunkReader) Chunk(ref uint64) (chunkenc.Chunk, error) {
 
 type safeChunk struct {
 	chunkenc.Chunk
-	s   *record.MemSeries
+	s   *memSeries
 	cid int
 }
 
@@ -1286,7 +1306,7 @@ func (h *headIndexReader) Postings(name, value string) (index.Postings, error) {
 }
 
 func (h *headIndexReader) SortedPostings(p index.Postings) index.Postings {
-	series := make([]*record.MemSeries, 0, 128)
+	series := make([]*memSeries, 0, 128)
 
 	// Fetch all the series only once.
 	for p.Next() {
@@ -1302,13 +1322,13 @@ func (h *headIndexReader) SortedPostings(p index.Postings) index.Postings {
 	}
 
 	sort.Slice(series, func(i, j int) bool {
-		return labels.Compare(series[i].Lset, series[j].Lset) < 0
+		return labels.Compare(series[i].lset, series[j].lset) < 0
 	})
 
 	// Convert back to list.
 	ep := make([]uint64, 0, len(series))
 	for _, p := range series {
-		ep = append(ep, p.Ref)
+		ep = append(ep, p.ref)
 	}
 	return index.NewListPostings(ep)
 }
@@ -1321,21 +1341,21 @@ func (h *headIndexReader) Series(ref uint64, lbls *labels.Labels, chks *[]chunks
 		h.head.metrics.seriesNotFound.Inc()
 		return record.ErrNotFound
 	}
-	*lbls = append((*lbls)[:0], s.Lset...)
+	*lbls = append((*lbls)[:0], s.lset...)
 
 	s.Lock()
 	defer s.Unlock()
 
 	*chks = (*chks)[:0]
 
-	for i, c := range s.Chunks {
+	for i, c := range s.chunks {
 		// Do not expose chunks that are outside of the specified range.
 		if !c.OverlapsClosedInterval(h.mint, h.maxt) {
 			continue
 		}
 		// Set the head chunks as open (being appended to).
 		maxTime := c.MaxTime
-		if s.HeadChunk == c {
+		if s.headChunk == c {
 			maxTime = math.MaxInt64
 		}
 
@@ -1359,7 +1379,7 @@ func (h *headIndexReader) LabelIndices() ([][]string, error) {
 	return res, nil
 }
 
-func (h *Head) getOrCreate(hash uint64, lset labels.Labels) (*record.MemSeries, bool) {
+func (h *Head) getOrCreate(hash uint64, lset labels.Labels) (*memSeries, bool) {
 	// Just using `getOrSet` below would be semantically sufficient, but we'd create
 	// a new series on every sample inserted via Add(), which causes allocations
 	// and makes our series IDs rather random and harder to compress in postings.
@@ -1374,8 +1394,8 @@ func (h *Head) getOrCreate(hash uint64, lset labels.Labels) (*record.MemSeries, 
 	return h.getOrCreateWithID(id, hash, lset)
 }
 
-func (h *Head) getOrCreateWithID(id, hash uint64, lset labels.Labels) (*record.MemSeries, bool) {
-	s := record.NewMemSeries(lset, id, h.chunkRange)
+func (h *Head) getOrCreateWithID(id, hash uint64, lset labels.Labels) (*memSeries, bool) {
+	s := newMemSeries(lset, id, h.chunkRange)
 
 	s, created := h.series.getOrSet(hash, s)
 	if !created {
@@ -1409,21 +1429,21 @@ func (h *Head) getOrCreateWithID(id, hash uint64, lset labels.Labels) (*record.M
 // on top of a regular hashmap and holds a slice of series to resolve hash collisions.
 // Its methods require the hash to be submitted with it to avoid re-computations throughout
 // the code.
-type seriesHashmap map[uint64][]*record.MemSeries
+type seriesHashmap map[uint64][]*memSeries
 
-func (m seriesHashmap) get(hash uint64, lset labels.Labels) *record.MemSeries {
+func (m seriesHashmap) get(hash uint64, lset labels.Labels) *memSeries {
 	for _, s := range m[hash] {
-		if s.Lset.Equals(lset) {
+		if s.lset.Equals(lset) {
 			return s
 		}
 	}
 	return nil
 }
 
-func (m seriesHashmap) set(hash uint64, s *record.MemSeries) {
+func (m seriesHashmap) set(hash uint64, s *memSeries) {
 	l := m[hash]
 	for i, prev := range l {
-		if prev.Lset.Equals(s.Lset) {
+		if prev.lset.Equals(s.lset) {
 			l[i] = s
 			return
 		}
@@ -1432,9 +1452,9 @@ func (m seriesHashmap) set(hash uint64, s *record.MemSeries) {
 }
 
 func (m seriesHashmap) del(hash uint64, lset labels.Labels) {
-	var rem []*record.MemSeries
+	var rem []*memSeries
 	for _, s := range m[hash] {
-		if !s.Lset.Equals(lset) {
+		if !s.lset.Equals(lset) {
 			rem = append(rem, s)
 		}
 	}
@@ -1450,7 +1470,7 @@ func (m seriesHashmap) del(hash uint64, lset labels.Labels) {
 // with the maps was profiled to be slower – likely due to the additional pointer
 // dereferences.
 type stripeSeries struct {
-	series [stripeSize]map[uint64]*record.MemSeries
+	series [stripeSize]map[uint64]*memSeries
 	hashes [stripeSize]seriesHashmap
 	locks  [stripeSize]stripeLock
 }
@@ -1470,7 +1490,7 @@ func newStripeSeries() *stripeSeries {
 	s := &stripeSeries{}
 
 	for i := range s.series {
-		s.series[i] = map[uint64]*record.MemSeries{}
+		s.series[i] = map[uint64]*memSeries{}
 	}
 	for i := range s.hashes {
 		s.hashes[i] = seriesHashmap{}
@@ -1495,7 +1515,7 @@ func (s *stripeSeries) gc(mint int64) (map[uint64]struct{}, int) {
 				series.Lock()
 				rmChunks += series.TruncateChunksBefore(mint)
 
-				if len(series.Chunks) > 0 || series.PendingCommit {
+				if len(series.chunks) > 0 || series.pendingCommit {
 					series.Unlock()
 					continue
 				}
@@ -1505,15 +1525,15 @@ func (s *stripeSeries) gc(mint int64) (map[uint64]struct{}, int) {
 				// series alike.
 				// If we don't hold them all, there's a very small chance that a series receives
 				// samples again while we are half-way into deleting it.
-				j := int(series.Ref & stripeMask)
+				j := int(series.ref & stripeMask)
 
 				if i != j {
 					s.locks[j].Lock()
 				}
 
-				deleted[series.Ref] = struct{}{}
-				s.hashes[i].del(hash, series.Lset)
-				delete(s.series[j], series.Ref)
+				deleted[series.ref] = struct{}{}
+				s.hashes[i].del(hash, series.lset)
+				delete(s.series[j], series.ref)
 
 				if i != j {
 					s.locks[j].Unlock()
@@ -1529,7 +1549,7 @@ func (s *stripeSeries) gc(mint int64) (map[uint64]struct{}, int) {
 	return deleted, rmChunks
 }
 
-func (s *stripeSeries) getByID(id uint64) *record.MemSeries {
+func (s *stripeSeries) getByID(id uint64) *memSeries {
 	i := id & stripeMask
 
 	s.locks[i].RLock()
@@ -1539,7 +1559,7 @@ func (s *stripeSeries) getByID(id uint64) *record.MemSeries {
 	return series
 }
 
-func (s *stripeSeries) getByHash(hash uint64, lset labels.Labels) *record.MemSeries {
+func (s *stripeSeries) getByHash(hash uint64, lset labels.Labels) *memSeries {
 	i := hash & stripeMask
 
 	s.locks[i].RLock()
@@ -1549,25 +1569,283 @@ func (s *stripeSeries) getByHash(hash uint64, lset labels.Labels) *record.MemSer
 	return series
 }
 
-func (s *stripeSeries) getOrSet(hash uint64, series *record.MemSeries) (*record.MemSeries, bool) {
+func (s *stripeSeries) getOrSet(hash uint64, series *memSeries) (*memSeries, bool) {
 	i := hash & stripeMask
 
 	s.locks[i].Lock()
 
-	if prev := s.hashes[i].get(hash, series.Lset); prev != nil {
+	if prev := s.hashes[i].get(hash, series.lset); prev != nil {
 		s.locks[i].Unlock()
 		return prev, false
 	}
 	s.hashes[i].set(hash, series)
 	s.locks[i].Unlock()
 
-	i = series.Ref & stripeMask
+	i = series.ref & stripeMask
 
 	s.locks[i].Lock()
-	s.series[i][series.Ref] = series
+	s.series[i][series.ref] = series
 	s.locks[i].Unlock()
 
 	return series, true
+}
+
+type sample struct {
+	t int64
+	v float64
+}
+
+func (s sample) T() int64 {
+	return s.t
+}
+
+func (s sample) V() float64 {
+	return s.v
+}
+
+// memSeries is the in-memory representation of a series. None of its methods
+// are goroutine safe and it is the caller's responsibility to lock it.
+type memSeries struct {
+	sync.Mutex
+
+	ref       uint64
+	chunks    []*memChunk
+	lset      labels.Labels
+	headChunk *memChunk
+
+	chunkRange   int64
+	firstChunkID int
+
+	nextAt        int64 // Timestamp at which to cut the next chunk.
+	sampleBuf     [4]sample
+	pendingCommit bool // Whether there are samples waiting to be committed to this series.
+
+	app chunkenc.Appender // Current appender for the chunk.
+}
+
+func newMemSeries(lset labels.Labels, id uint64, chunkRange int64) *memSeries {
+	s := &memSeries{
+		lset:       lset,
+		ref:        id,
+		chunkRange: chunkRange,
+		nextAt:     math.MinInt64,
+	}
+	return s
+}
+
+func (s *memSeries) MinTime() int64 {
+	if len(s.chunks) == 0 {
+		return math.MinInt64
+	}
+	return s.chunks[0].MinTime
+}
+
+func (s *memSeries) MaxTime() int64 {
+	c := s.head()
+	if c == nil {
+		return math.MinInt64
+	}
+	return c.MaxTime
+}
+
+func (s *memSeries) cut(mint int64) *memChunk {
+	c := &memChunk{
+		Chunk:   chunkenc.NewXORChunk(),
+		MinTime: mint,
+		MaxTime: math.MinInt64,
+	}
+	s.chunks = append(s.chunks, c)
+	s.headChunk = c
+
+	// Set upper bound on when the next chunk must be started. An earlier timestamp
+	// may be chosen dynamically at a later point.
+	s.nextAt = rangeForTimestamp(mint, s.chunkRange)
+
+	app, err := c.Chunk.Appender()
+	if err != nil {
+		panic(err)
+	}
+	s.app = app
+	return c
+}
+
+func (s *memSeries) ChunksMetas() []chunks.Meta {
+	metas := make([]chunks.Meta, 0, len(s.chunks))
+	for _, chk := range s.chunks {
+		metas = append(metas, chunks.Meta{Chunk: chk.Chunk, MinTime: chk.MinTime, MaxTime: chk.MaxTime})
+	}
+	return metas
+}
+
+// reset re-initialises all the variable in the memSeries except 'lset', 'ref',
+// and 'chunkRange', like how it would appear after 'newmemSeries(...)'.
+func (s *memSeries) Reset() {
+	s.chunks = nil
+	s.headChunk = nil
+	s.firstChunkID = 0
+	s.nextAt = math.MinInt64
+	s.sampleBuf = [4]sample{}
+	s.pendingCommit = false
+	s.app = nil
+}
+
+// Appendable checks whether the given sample is valid for appending to the series.
+func (s *memSeries) Appendable(t int64, v float64) error {
+	c := s.head()
+	if c == nil {
+		return nil
+	}
+
+	if t > c.MaxTime {
+		return nil
+	}
+	if t < c.MaxTime {
+		return record.ErrOutOfOrderSample
+	}
+	// We are allowing exact duplicates as we can encounter them in valid cases
+	// like federation and erroring out at that time would be extremely noisy.
+	if math.Float64bits(s.sampleBuf[3].v) != math.Float64bits(v) {
+		return record.ErrAmendSample
+	}
+	return nil
+}
+
+func (s *memSeries) Chunk(id int) *memChunk {
+	ix := id - s.firstChunkID
+	if ix < 0 || ix >= len(s.chunks) {
+		return nil
+	}
+	return s.chunks[ix]
+}
+
+func (s *memSeries) ChunkID(pos int) int {
+	return pos + s.firstChunkID
+}
+
+// TruncateChunksBefore removes all chunks from the series that have not timestamp
+// at or after mint. Chunk IDs remain unchanged.
+func (s *memSeries) TruncateChunksBefore(mint int64) (removed int) {
+	var k int
+	for i, c := range s.chunks {
+		if c.MaxTime >= mint {
+			break
+		}
+		k = i + 1
+	}
+	s.chunks = append(s.chunks[:0], s.chunks[k:]...)
+	s.firstChunkID += k
+	if len(s.chunks) == 0 {
+		s.headChunk = nil
+	} else {
+		s.headChunk = s.chunks[len(s.chunks)-1]
+	}
+
+	return k
+}
+
+// Append adds the sample (t, v) to the series.
+func (s *memSeries) Append(t int64, v float64) (success, chunkCreated bool) {
+	// Based on Gorilla white papers this offers near-optimal compression ratio
+	// so anything bigger that this has diminishing returns and increases
+	// the time range within which we have to decompress all samples.
+	const samplesPerChunk = 120
+
+	c := s.head()
+
+	if c == nil {
+		c = s.cut(t)
+		chunkCreated = true
+	}
+	numSamples := c.Chunk.NumSamples()
+
+	// Out of order sample.
+	if c.MaxTime >= t {
+		return false, chunkCreated
+	}
+	// If we reach 25% of a chunk's desired sample count, set a definitive time
+	// at which to start the next chunk.
+	// At latest it must happen at the timestamp set when the chunk was cut.
+	if numSamples == samplesPerChunk/4 {
+		s.nextAt = computeChunkEndTime(c.MinTime, c.MaxTime, s.nextAt)
+	}
+	if t >= s.nextAt {
+		c = s.cut(t)
+		chunkCreated = true
+	}
+	s.app.Append(t, v)
+
+	c.MaxTime = t
+
+	s.sampleBuf[0] = s.sampleBuf[1]
+	s.sampleBuf[1] = s.sampleBuf[2]
+	s.sampleBuf[2] = s.sampleBuf[3]
+	s.sampleBuf[3] = sample{t: t, v: v}
+
+	return true, chunkCreated
+}
+
+func (s *memSeries) Iterator(id int) chunkenc.Iterator {
+	c := s.Chunk(id)
+	// TODO(fabxc): Work around! A querier may have retrieved a pointer to a series' chunk,
+	// which got then garbage collected before it got accessed.
+	// We must ensure to not garbage collect as long as any readers still hold a reference.
+	if c == nil {
+		return chunkenc.NewNopIterator()
+	}
+
+	if id-s.firstChunkID < len(s.chunks)-1 {
+		return c.Chunk.Iterator()
+	}
+	// Serve the last 4 samples for the last chunk from the sample buffer
+	// as their compressed bytes may be mutated by added samples.
+	it := &memSafeIterator{
+		Iterator: c.Chunk.Iterator(),
+		i:        -1,
+		total:    c.Chunk.NumSamples(),
+		buf:      s.sampleBuf,
+	}
+	return it
+}
+
+func (s *memSeries) head() *memChunk {
+	return s.headChunk
+}
+
+type memChunk struct {
+	Chunk            chunkenc.Chunk
+	MinTime, MaxTime int64
+}
+
+// Returns true if the chunk overlaps [mint, maxt].
+func (mc *memChunk) OverlapsClosedInterval(mint, maxt int64) bool {
+	return mc.MinTime <= maxt && mint <= mc.MaxTime
+}
+
+type memSafeIterator struct {
+	chunkenc.Iterator
+
+	i     int
+	total int
+	buf   [4]sample
+}
+
+func (it *memSafeIterator) Next() bool {
+	if it.i+1 >= it.total {
+		return false
+	}
+	it.i++
+	if it.total-it.i > 4 {
+		return it.Iterator.Next()
+	}
+	return true
+}
+
+func (it *memSafeIterator) At() (int64, float64) {
+	if it.total-it.i > 4 {
+		return it.Iterator.At()
+	}
+	s := it.buf[4-(it.total-it.i)]
+	return s.t, s.v
 }
 
 // computeChunkEndTime estimates the end timestamp based the beginning of a chunk,

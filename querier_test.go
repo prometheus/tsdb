@@ -190,19 +190,6 @@ func expandSeriesIterator(it SeriesIterator) (r []tsdbutil.Sample, err error) {
 	return r, it.Err()
 }
 
-type sample struct {
-	t int64
-	v float64
-}
-
-func (s sample) T() int64 {
-	return s.t
-}
-
-func (s sample) V() float64 {
-	return s.v
-}
-
 type seriesSamples struct {
 	lset   map[string]string
 	chunks [][]sample
