@@ -1062,7 +1062,6 @@ type chunkSeriesIterator struct {
 
 	i          int
 	cur        chunkenc.Iterator
-	bufXorIter *chunkenc.XORIterator
 	bufDelIter *deletedIterator
 
 	maxt, mint int64
@@ -1086,23 +1085,16 @@ func newChunkSeriesIterator(cs []chunks.Meta, dranges Intervals, mint, maxt int6
 }
 
 func (it *chunkSeriesIterator) resetCurIterator() {
-	if it.bufXorIter != nil {
-		it.bufXorIter.Reset(it.chunks[it.i].Chunk.Bytes())
-		it.cur = it.bufXorIter
-	} else {
-		it.cur = it.chunks[it.i].Chunk.Iterator()
-		if xorIter, ok := it.cur.(*chunkenc.XORIterator); ok {
-			it.bufXorIter = xorIter
-		}
-	}
 	if len(it.intervals) == 0 {
+		it.cur = it.chunks[it.i].Chunk.Iterator(it.cur)
 		return
 	}
 	if it.bufDelIter == nil {
-		it.bufDelIter = &deletedIterator{}
+		it.bufDelIter = &deletedIterator{
+			intervals: it.intervals,
+		}
 	}
-	it.bufDelIter.it = it.cur
-	it.bufDelIter.intervals = it.intervals
+	it.bufDelIter.it = it.chunks[it.i].Chunk.Iterator(it.bufDelIter.it)
 	it.cur = it.bufDelIter
 }
 

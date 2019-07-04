@@ -1,6 +1,6 @@
 ## Master / unreleased
 
- - [FEATURE] `XORIterator` gets a `Reset` method.
+ - [FEATURE] `chunckenc.Chunk.Iterator` method now takes a `chunckenc.Iterator` interface as an argument for reuse.
 
 ## 0.9.1
 
