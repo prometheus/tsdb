@@ -198,7 +198,7 @@ func TestDBAppenderAddRef(t *testing.T) {
 	testutil.Ok(t, err)
 
 	err = app2.AddFast(9999999, 1, 1)
-	testutil.Equals(t, record.ErrNotFound, errors.Cause(err))
+	testutil.Equals(t, ErrNotFound, errors.Cause(err))
 
 	testutil.Ok(t, app2.Commit())
 
@@ -361,7 +361,7 @@ func TestAmendDatapointCausesError(t *testing.T) {
 
 	app = db.Appender()
 	_, err = app.Add(labels.Labels{}, 0, 1)
-	testutil.Equals(t, record.ErrAmendSample, err)
+	testutil.Equals(t, ErrAmendSample, err)
 	testutil.Ok(t, app.Rollback())
 }
 
@@ -395,7 +395,7 @@ func TestNonDuplicateNaNDatapointsCausesAmendError(t *testing.T) {
 
 	app = db.Appender()
 	_, err = app.Add(labels.Labels{}, 0, math.Float64frombits(0x7ff0000000000002))
-	testutil.Equals(t, record.ErrAmendSample, err)
+	testutil.Equals(t, ErrAmendSample, err)
 }
 
 func TestSkippingInvalidValuesInSameTxn(t *testing.T) {

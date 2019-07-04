@@ -22,16 +22,8 @@ import (
 )
 
 var (
-	// ErrOutOfOrderSample is returned if an appended sample has a
-	// timestamp smaller than the most recent sample.
-	ErrOutOfOrderSample = errors.New("out of order sample")
-
-	// ErrNotFound is returned if a looked up resource was not found.
+	// ErrNotFound is returned if a looked up resource was not found. Duplicate ErrNotFound from head.go.
 	ErrNotFound = errors.New("not found")
-
-	// ErrAmendSample is returned if an appended sample has the same timestamp
-	// as the most recent sample but a different value.
-	ErrAmendSample = errors.New("amending sample")
 )
 
 // RefSeries is the series labels with the series ID.

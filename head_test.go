@@ -928,7 +928,7 @@ func TestGCChunkAccess(t *testing.T) {
 	testutil.Ok(t, h.Truncate(1500)) // Remove a chunk.
 
 	_, err = cr.Chunk(chunks[0].Ref)
-	testutil.Equals(t, record.ErrNotFound, err)
+	testutil.Equals(t, ErrNotFound, err)
 	_, err = cr.Chunk(chunks[1].Ref)
 	testutil.Ok(t, err)
 }
@@ -970,9 +970,9 @@ func TestGCSeriesAccess(t *testing.T) {
 	testutil.Equals(t, (*memSeries)(nil), h.series.getByID(1))
 
 	_, err = cr.Chunk(chunks[0].Ref)
-	testutil.Equals(t, record.ErrNotFound, err)
+	testutil.Equals(t, ErrNotFound, err)
 	_, err = cr.Chunk(chunks[1].Ref)
-	testutil.Equals(t, record.ErrNotFound, err)
+	testutil.Equals(t, ErrNotFound, err)
 }
 
 func TestUncommittedSamplesNotLostOnTruncate(t *testing.T) {
@@ -1137,10 +1137,9 @@ func TestWalRepair_DecodingError(t *testing.T) {
 					testutil.Ok(t, err)
 					testutil.Equals(t, 0.0, prom_testutil.ToFloat64(h.metrics.walCorruptionsTotal))
 					initErr := h.Init(math.MinInt64)
-
 					err = errors.Cause(initErr) // So that we can pick up errors even if wrapped.
 					_, corrErr := err.(*wal.CorruptionErr)
-					testutil.Assert(t, corrErr, "reading the wal didn't return corruption error")
+					testutil.Assert(t, corrErr, fmt.Sprintf("reading the wal didn't return corruption error: %s", err))
 					testutil.Ok(t, w.Close())
 				}
 

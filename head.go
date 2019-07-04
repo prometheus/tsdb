@@ -39,9 +39,20 @@ import (
 )
 
 var (
+	// ErrNotFound is returned if a looked up resource was not found.
+	ErrNotFound = errors.Errorf("not found")
+
+	// ErrOutOfOrderSample is returned if an appended sample has a
+	// timestamp smaller than the most recent sample.
+	ErrOutOfOrderSample = errors.New("out of order sample")
+
 	// ErrOutOfBounds is returned if an appended sample is out of the
 	// writable time range.
 	ErrOutOfBounds = errors.New("out of bounds")
+
+	// ErrAmendSample is returned if an appended sample has the same timestamp
+	// as the most recent sample but a different value.
+	ErrAmendSample = errors.New("amending sample")
 
 	// emptyTombstoneReader is a no-op Tombstone Reader.
 	// This is used by head to satisfy the Tombstones() function call.
@@ -501,6 +512,8 @@ func (h *Head) Init(minValidTime int64) error {
 	level.Info(h.logger).Log("msg", "replaying WAL, this may take awhile")
 	// Backfill the checkpoint first if it exists.
 	dir, startFrom, err := wal.LastCheckpoint(h.wal.Dir())
+	// We need to compare err to record.ErrNotFound as that's what
+	// wal.LastCheckpoint would return, not tsdb.ErrNotFound.
 	if err != nil && err != record.ErrNotFound {
 		return errors.Wrap(err, "find last checkpoint")
 	}
@@ -731,7 +744,7 @@ func (a *initAppender) Add(lset labels.Labels, t int64, v float64) (uint64, erro
 
 func (a *initAppender) AddFast(ref uint64, t int64, v float64) error {
 	if a.app == nil {
-		return record.ErrNotFound
+		return ErrNotFound
 	}
 	return a.app.AddFast(ref, t, v)
 }
@@ -856,7 +869,7 @@ func (a *headAppender) AddFast(ref uint64, t int64, v float64) error {
 
 	s := a.head.series.getByID(ref)
 	if s == nil {
-		return errors.Wrap(record.ErrNotFound, "unknown series")
+		return errors.Wrap(ErrNotFound, "unknown series")
 	}
 	s.Lock()
 	if err := s.Appendable(t, v); err != nil {
@@ -1213,7 +1226,7 @@ func (h *headChunkReader) Chunk(ref uint64) (chunkenc.Chunk, error) {
 	s := h.head.series.getByID(sid)
 	// This means that the series has been garbage collected.
 	if s == nil {
-		return nil, record.ErrNotFound
+		return nil, ErrNotFound
 	}
 
 	s.Lock()
@@ -1223,7 +1236,7 @@ func (h *headChunkReader) Chunk(ref uint64) (chunkenc.Chunk, error) {
 	// the specified range.
 	if c == nil || !c.OverlapsClosedInterval(h.mint, h.maxt) {
 		s.Unlock()
-		return nil, record.ErrNotFound
+		return nil, ErrNotFound
 	}
 	s.Unlock()
 
@@ -1339,7 +1352,7 @@ func (h *headIndexReader) Series(ref uint64, lbls *labels.Labels, chks *[]chunks
 
 	if s == nil {
 		h.head.metrics.seriesNotFound.Inc()
-		return record.ErrNotFound
+		return ErrNotFound
 	}
 	*lbls = append((*lbls)[:0], s.lset...)
 
@@ -1700,12 +1713,12 @@ func (s *memSeries) Appendable(t int64, v float64) error {
 		return nil
 	}
 	if t < c.MaxTime {
-		return record.ErrOutOfOrderSample
+		return ErrOutOfOrderSample
 	}
 	// We are allowing exact duplicates as we can encounter them in valid cases
 	// like federation and erroring out at that time would be extremely noisy.
 	if math.Float64bits(s.sampleBuf[3].v) != math.Float64bits(v) {
-		return record.ErrAmendSample
+		return ErrAmendSample
 	}
 	return nil
 }

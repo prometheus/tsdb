@@ -29,7 +29,6 @@ import (
 	"github.com/prometheus/tsdb/chunks"
 	"github.com/prometheus/tsdb/index"
 	"github.com/prometheus/tsdb/labels"
-	"github.com/prometheus/tsdb/record"
 	"github.com/prometheus/tsdb/testutil"
 	"github.com/prometheus/tsdb/tombstones"
 	"github.com/prometheus/tsdb/tsdbutil"
@@ -1405,7 +1404,7 @@ func (m mockIndex) SortedPostings(p index.Postings) index.Postings {
 func (m mockIndex) Series(ref uint64, lset *labels.Labels, chks *[]chunks.Meta) error {
 	s, ok := m.series[ref]
 	if !ok {
-		return record.ErrNotFound
+		return ErrNotFound
 	}
 	*lset = append((*lset)[:0], s.l...)
 	*chks = append((*chks)[:0], s.chunks...)
