@@ -39,43 +39,14 @@ const (
 	consumer           = "consumer"
 )
 
+type watcherMetrics struct {
+	recordsRead           *prometheus.CounterVec
+	recordDecodeFails     *prometheus.CounterVec
+	samplesSentPreTailing *prometheus.CounterVec
+	currentSegment        *prometheus.GaugeVec
+}
+
 var (
-	watcherRecordsRead = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "prometheus",
-			Subsystem: "wal_watcher",
-			Name:      "records_read_total",
-			Help:      "Number of records read by the WAL watcher from the WAL.",
-		},
-		[]string{consumer, "type"},
-	)
-	watcherRecordDecodeFails = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "prometheus",
-			Subsystem: "wal_watcher",
-			Name:      "record_decode_failures_total",
-			Help:      "Number of records read by the WAL watcher that resulted in an error when decoding.",
-		},
-		[]string{consumer},
-	)
-	watcherSamplesSentPreTailing = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "prometheus",
-			Subsystem: "wal_watcher",
-			Name:      "samples_sent_pre_tailing_total",
-			Help:      "Number of sample records read by the WAL watcher and sent to remote write during replay of existing WAL.",
-		},
-		[]string{consumer},
-	)
-	watcherCurrentSegment = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Namespace: "prometheus",
-			Subsystem: "wal_watcher",
-			Name:      "current_segment",
-			Help:      "Current segment the WAL watcher is reading records from.",
-		},
-		[]string{consumer},
-	)
 	lrMetrics = NewLiveReaderMetrics(prometheus.DefaultRegisterer)
 )
 
@@ -86,12 +57,12 @@ func FromTime(t time.Time) int64 {
 	return t.Unix()*1000 + int64(t.Nanosecond())/int64(time.Millisecond)
 }
 
-func init() {
-	prometheus.MustRegister(watcherRecordsRead)
-	prometheus.MustRegister(watcherRecordDecodeFails)
-	prometheus.MustRegister(watcherSamplesSentPreTailing)
-	prometheus.MustRegister(watcherCurrentSegment)
-}
+// func init() {
+// 	prometheus.MustRegister(watcherRecordsRead)
+// 	prometheus.MustRegister(watcherRecordDecodeFails)
+// 	prometheus.MustRegister(watcherSamplesSentPreTailing)
+// 	prometheus.MustRegister(watcherCurrentSegment)
+// }
 
 type writeTo interface {
 	Append([]record.RefSample) bool
@@ -106,7 +77,7 @@ type Watcher struct {
 	logger         log.Logger
 	walDir         string
 	lastCheckpoint string
-	reg            prometheus.Registerer
+	metrics        *watcherMetrics
 
 	startTime int64
 
@@ -122,27 +93,70 @@ type Watcher struct {
 	maxSegment int
 }
 
+func NewWatcherMetrics(reg prometheus.Registerer) *watcherMetrics {
+	m := &watcherMetrics{
+		recordsRead: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Namespace: "prometheus",
+				Subsystem: "wal_watcher",
+				Name:      "records_read_total",
+				Help:      "Number of records read by the WAL watcher from the WAL.",
+			},
+			[]string{consumer, "type"},
+		),
+		recordDecodeFails: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Namespace: "prometheus",
+				Subsystem: "wal_watcher",
+				Name:      "record_decode_failures_total",
+				Help:      "Number of records read by the WAL watcher that resulted in an error when decoding.",
+			},
+			[]string{consumer},
+		),
+		samplesSentPreTailing: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Namespace: "prometheus",
+				Subsystem: "wal_watcher",
+				Name:      "samples_sent_pre_tailing_total",
+				Help:      "Number of sample records read by the WAL watcher and sent to remote write during replay of existing WAL.",
+			},
+			[]string{consumer},
+		),
+		currentSegment: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Namespace: "prometheus",
+				Subsystem: "wal_watcher",
+				Name:      "current_segment",
+				Help:      "Current segment the WAL watcher is reading records from.",
+			},
+			[]string{consumer},
+		),
+	}
+
+	if reg != nil {
+		reg.Register(m.recordsRead)
+		reg.Register(m.recordDecodeFails)
+		reg.Register(m.samplesSentPreTailing)
+		reg.Register(m.currentSegment)
+	}
+
+	return m
+}
+
 // NewWatcher creates a new WAL watcher for a given WriteTo.
-func NewWatcher(logger log.Logger, reg prometheus.Registerer, name string, writer writeTo, walDir string) *Watcher {
+func NewWatcher(logger log.Logger, metrics *watcherMetrics, name string, writer writeTo, walDir string) *Watcher {
 	if logger == nil {
 		logger = log.NewNopLogger()
 	}
-	if reg != nil {
-		// We can't use MustRegister because Watcher's are recreated on config changes within Prometheus.
-		reg.Register(watcherRecordsRead)
-		reg.Register(watcherRecordDecodeFails)
-		reg.Register(watcherSamplesSentPreTailing)
-		reg.Register(watcherCurrentSegment)
-	}
 
 	return &Watcher{
-		logger: logger,
-		reg:    reg,
-		writer: writer,
-		walDir: path.Join(walDir, "wal"),
-		name:   name,
-		quit:   make(chan struct{}),
-		done:   make(chan struct{}),
+		logger:  logger,
+		metrics: metrics,
+		writer:  writer,
+		walDir:  path.Join(walDir, "wal"),
+		name:    name,
+		quit:    make(chan struct{}),
+		done:    make(chan struct{}),
 
 		maxSegment: -1,
 	}
@@ -152,10 +166,10 @@ func (w *Watcher) setMetrics() {
 	// Setup the WAL Watchers metrics. We do this here rather than in the
 	// constructor because of the ordering of creating Queue Managers's,
 	// stopping them, and then starting new ones in storage/remote/storage.go ApplyConfig.
-	w.recordsReadMetric = watcherRecordsRead.MustCurryWith(prometheus.Labels{consumer: w.name})
-	w.recordDecodeFailsMetric = watcherRecordDecodeFails.WithLabelValues(w.name)
-	w.samplesSentPreTailing = watcherSamplesSentPreTailing.WithLabelValues(w.name)
-	w.currentSegmentMetric = watcherCurrentSegment.WithLabelValues(w.name)
+	w.recordsReadMetric = w.metrics.recordsRead.MustCurryWith(prometheus.Labels{consumer: w.name})
+	w.recordDecodeFailsMetric = w.metrics.recordDecodeFails.WithLabelValues(w.name)
+	w.samplesSentPreTailing = w.metrics.samplesSentPreTailing.WithLabelValues(w.name)
+	w.currentSegmentMetric = w.metrics.currentSegment.WithLabelValues(w.name)
 }
 
 // Start the Watcher.
@@ -172,11 +186,11 @@ func (w *Watcher) Stop() {
 	<-w.done
 
 	// Records read metric has series and samples.
-	watcherRecordsRead.DeleteLabelValues(w.name, "series")
-	watcherRecordsRead.DeleteLabelValues(w.name, "samples")
-	watcherRecordDecodeFails.DeleteLabelValues(w.name)
-	watcherSamplesSentPreTailing.DeleteLabelValues(w.name)
-	watcherCurrentSegment.DeleteLabelValues(w.name)
+	w.metrics.recordsRead.DeleteLabelValues(w.name, "series")
+	w.metrics.recordsRead.DeleteLabelValues(w.name, "samples")
+	w.metrics.recordDecodeFails.DeleteLabelValues(w.name)
+	w.metrics.samplesSentPreTailing.DeleteLabelValues(w.name)
+	w.metrics.currentSegment.DeleteLabelValues(w.name)
 
 	level.Info(w.logger).Log("msg", "WAL watcher stopped", "queue", w.name)
 }
