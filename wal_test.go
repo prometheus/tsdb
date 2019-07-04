@@ -512,7 +512,7 @@ func TestMigrateWAL_Fuzz(t *testing.T) {
 	testutil.Ok(t, err)
 
 	// We can properly write some new data after migration.
-	var enc record.RecordEncoder
+	var enc record.Encoder
 	testutil.Ok(t, w.Log(enc.Samples([]record.RefSample{
 		{Ref: 500, T: 1, V: 1},
 	}, nil)))
@@ -525,21 +525,21 @@ func TestMigrateWAL_Fuzz(t *testing.T) {
 
 	r := wal.NewReader(sr)
 	var res []interface{}
-	var dec record.RecordDecoder
+	var dec record.Decoder
 
 	for r.Next() {
 		rec := r.Record()
 
 		switch dec.Type(rec) {
-		case record.RecordSeries:
+		case record.Series:
 			s, err := dec.Series(rec, nil)
 			testutil.Ok(t, err)
 			res = append(res, s)
-		case record.RecordSamples:
+		case record.Samples:
 			s, err := dec.Samples(rec, nil)
 			testutil.Ok(t, err)
 			res = append(res, s)
-		case record.RecordTombstones:
+		case record.Tombstones:
 			s, err := dec.Tombstones(rec, nil)
 			testutil.Ok(t, err)
 			res = append(res, s)

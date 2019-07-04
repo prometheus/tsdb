@@ -25,8 +25,8 @@ import (
 )
 
 func TestRecord_EncodeDecode(t *testing.T) {
-	var enc RecordEncoder
-	var dec RecordDecoder
+	var enc Encoder
+	var dec Decoder
 
 	series := []RefSeries{
 		{
@@ -78,8 +78,8 @@ func TestRecord_EncodeDecode(t *testing.T) {
 // TestRecord_Corruputed ensures that corrupted records return the correct error.
 // Bugfix check for pull/521 and pull/523.
 func TestRecord_Corruputed(t *testing.T) {
-	var enc RecordEncoder
-	var dec RecordDecoder
+	var enc Encoder
+	var dec Decoder
 
 	t.Run("Test corrupted series record", func(t *testing.T) {
 		series := []RefSeries{

@@ -102,7 +102,7 @@ func TestTailSamples(t *testing.T) {
 	err = os.Mkdir(wdir, 0777)
 	testutil.Ok(t, err)
 
-	enc := record.RecordEncoder{}
+	enc := record.Encoder{}
 	w, err := NewSize(nil, prometheus.DefaultRegisterer, wdir, 128*pageSize, false)
 	testutil.Ok(t, err)
 
@@ -135,7 +135,7 @@ func TestTailSamples(t *testing.T) {
 	testutil.Ok(t, err)
 
 	wt := newWriteToMock()
-	watcher := NewWALWatcher(nil, nil, "", wt, dir)
+	watcher := NewWatcher(nil, nil, "", wt, dir)
 	watcher.startTime = now.UnixNano()
 
 	// Set the Watcher's metrics so they're not nil pointers.
@@ -176,7 +176,7 @@ func TestReadToEndNoCheckpoint(t *testing.T) {
 
 	var recs [][]byte
 
-	enc := record.RecordEncoder{}
+	enc := record.Encoder{}
 
 	for i := 0; i < seriesCount; i++ {
 		series := enc.Series([]record.RefSeries{
@@ -210,7 +210,7 @@ func TestReadToEndNoCheckpoint(t *testing.T) {
 	testutil.Ok(t, err)
 
 	wt := newWriteToMock()
-	watcher := NewWALWatcher(nil, nil, "", wt, dir)
+	watcher := NewWatcher(nil, nil, "", wt, dir)
 	go watcher.Start()
 
 	expected := seriesCount
@@ -236,7 +236,7 @@ func TestReadToEndWithCheckpoint(t *testing.T) {
 	err = os.Mkdir(wdir, 0777)
 	testutil.Ok(t, err)
 
-	enc := record.RecordEncoder{}
+	enc := record.Encoder{}
 	w, err := NewSize(nil, nil, wdir, segmentSize, false)
 	testutil.Ok(t, err)
 
@@ -292,7 +292,7 @@ func TestReadToEndWithCheckpoint(t *testing.T) {
 	_, _, err = w.Segments()
 	testutil.Ok(t, err)
 	wt := newWriteToMock()
-	watcher := NewWALWatcher(nil, nil, "", wt, dir)
+	watcher := NewWatcher(nil, nil, "", wt, dir)
 	go watcher.Start()
 
 	expected := seriesCount * 2
@@ -318,7 +318,7 @@ func TestReadCheckpoint(t *testing.T) {
 
 	os.Create(SegmentName(wdir, 30))
 
-	enc := record.RecordEncoder{}
+	enc := record.Encoder{}
 	w, err := NewSize(nil, nil, wdir, 128*pageSize, false)
 	testutil.Ok(t, err)
 
@@ -353,7 +353,7 @@ func TestReadCheckpoint(t *testing.T) {
 	testutil.Ok(t, err)
 
 	wt := newWriteToMock()
-	watcher := NewWALWatcher(nil, nil, "", wt, dir)
+	watcher := NewWatcher(nil, nil, "", wt, dir)
 	// watcher.
 	go watcher.Start()
 
@@ -380,7 +380,7 @@ func TestReadCheckpointMultipleSegments(t *testing.T) {
 	err = os.Mkdir(wdir, 0777)
 	testutil.Ok(t, err)
 
-	enc := record.RecordEncoder{}
+	enc := record.Encoder{}
 	w, err := NewSize(nil, nil, wdir, pageSize, false)
 	testutil.Ok(t, err)
 
@@ -415,7 +415,7 @@ func TestReadCheckpointMultipleSegments(t *testing.T) {
 	}, 0)
 
 	wt := newWriteToMock()
-	watcher := NewWALWatcher(nil, nil, "", wt, dir)
+	watcher := NewWatcher(nil, nil, "", wt, dir)
 	watcher.maxSegment = -1
 
 	// Set the Watcher's metrics so they're not nil pointers.
@@ -443,7 +443,7 @@ func TestCheckpointSeriesReset(t *testing.T) {
 	err = os.Mkdir(wdir, 0777)
 	testutil.Ok(t, err)
 
-	enc := record.RecordEncoder{}
+	enc := record.Encoder{}
 	w, err := NewSize(nil, nil, wdir, segmentSize, false)
 	testutil.Ok(t, err)
 
@@ -475,7 +475,7 @@ func TestCheckpointSeriesReset(t *testing.T) {
 	testutil.Ok(t, err)
 
 	wt := newWriteToMock()
-	watcher := NewWALWatcher(nil, nil, "", wt, dir)
+	watcher := NewWatcher(nil, nil, "", wt, dir)
 	watcher.maxSegment = -1
 	go watcher.Start()
 

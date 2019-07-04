@@ -153,8 +153,8 @@ func Checkpoint(w *WAL, from, to int, keep func(id uint64) bool, mint int64) (*C
 		series  []record.RefSeries
 		samples []record.RefSample
 		tstones []tombstones.Stone
-		dec     record.RecordDecoder
-		enc     record.RecordEncoder
+		dec     record.Decoder
+		enc     record.Encoder
 		buf     []byte
 		recs    [][]byte
 	)
@@ -168,7 +168,7 @@ func Checkpoint(w *WAL, from, to int, keep func(id uint64) bool, mint int64) (*C
 		rec := r.Record()
 
 		switch dec.Type(rec) {
-		case record.RecordSeries:
+		case record.Series:
 			series, err = dec.Series(rec, series)
 			if err != nil {
 				return nil, errors.Wrap(err, "decode series")
@@ -186,7 +186,7 @@ func Checkpoint(w *WAL, from, to int, keep func(id uint64) bool, mint int64) (*C
 			stats.TotalSeries += len(series)
 			stats.DroppedSeries += len(series) - len(repl)
 
-		case record.RecordSamples:
+		case record.Samples:
 			samples, err = dec.Samples(rec, samples)
 			if err != nil {
 				return nil, errors.Wrap(err, "decode samples")
@@ -204,7 +204,7 @@ func Checkpoint(w *WAL, from, to int, keep func(id uint64) bool, mint int64) (*C
 			stats.TotalSamples += len(samples)
 			stats.DroppedSamples += len(samples) - len(repl)
 
-		case record.RecordTombstones:
+		case record.Tombstones:
 			tstones, err = dec.Tombstones(rec, tstones)
 			if err != nil {
 				return nil, errors.Wrap(err, "decode deletes")

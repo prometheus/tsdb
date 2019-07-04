@@ -363,7 +363,7 @@ func (h *Head) loadWAL(r *wal.Reader, multiRef map[uint64]uint64) (err error) {
 	}
 
 	var (
-		dec       record.RecordDecoder
+		dec       record.Decoder
 		series    []record.RefSeries
 		samples   []record.RefSample
 		tstones   []tombstones.Stone
@@ -379,7 +379,7 @@ func (h *Head) loadWAL(r *wal.Reader, multiRef map[uint64]uint64) (err error) {
 		rec := r.Record()
 
 		switch dec.Type(rec) {
-		case record.RecordSeries:
+		case record.Series:
 			series, err = dec.Series(rec, series)
 			if err != nil {
 				return &wal.CorruptionErr{
@@ -402,7 +402,7 @@ func (h *Head) loadWAL(r *wal.Reader, multiRef map[uint64]uint64) (err error) {
 					h.lastSeriesID = s.Ref
 				}
 			}
-		case record.RecordSamples:
+		case record.Samples:
 			samples, err = dec.Samples(rec, samples)
 			s := samples
 			if err != nil {
@@ -443,7 +443,7 @@ func (h *Head) loadWAL(r *wal.Reader, multiRef map[uint64]uint64) (err error) {
 				samples = samples[m:]
 			}
 			samples = s // Keep whole slice for reuse.
-		case record.RecordTombstones:
+		case record.Tombstones:
 			tstones, err = dec.Tombstones(rec, tstones)
 			if err != nil {
 				return &wal.CorruptionErr{
@@ -904,7 +904,7 @@ func (a *headAppender) log() error {
 	defer func() { a.head.putBytesBuffer(buf) }()
 
 	var rec []byte
-	var enc record.RecordEncoder
+	var enc record.Encoder
 
 	if len(a.series) > 0 {
 		rec = enc.Series(a.series, buf)
@@ -1010,7 +1010,7 @@ func (h *Head) Delete(mint, maxt int64, ms ...labels.Matcher) error {
 	if p.Err() != nil {
 		return p.Err()
 	}
-	var enc record.RecordEncoder
+	var enc record.Encoder
 	if h.wal != nil {
 		// Although we don't store the stones in the head
 		// we need to write them to the WAL to mark these as deleted

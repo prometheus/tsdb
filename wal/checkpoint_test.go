@@ -94,7 +94,7 @@ func TestCheckpoint(t *testing.T) {
 				testutil.Ok(t, os.RemoveAll(dir))
 			}()
 
-			var enc record.RecordEncoder
+			var enc record.Encoder
 			// Create a dummy segment to bump the initial number.
 			seg, err := CreateSegment(dir, 100)
 			testutil.Ok(t, err)
@@ -165,7 +165,7 @@ func TestCheckpoint(t *testing.T) {
 			testutil.Ok(t, err)
 			defer sr.Close()
 
-			var dec record.RecordDecoder
+			var dec record.Decoder
 			var series []record.RefSeries
 			r := NewReader(sr)
 
@@ -173,10 +173,10 @@ func TestCheckpoint(t *testing.T) {
 				rec := r.Record()
 
 				switch dec.Type(rec) {
-				case record.RecordSeries:
+				case record.Series:
 					series, err = dec.Series(rec, series)
 					testutil.Ok(t, err)
-				case record.RecordSamples:
+				case record.Samples:
 					samples, err := dec.Samples(rec, nil)
 					testutil.Ok(t, err)
 					for _, s := range samples {

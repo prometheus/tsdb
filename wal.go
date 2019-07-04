@@ -1255,7 +1255,7 @@ func MigrateWAL(logger log.Logger, dir string) (err error) {
 	rdr := w.Reader()
 
 	var (
-		enc record.RecordEncoder
+		enc record.Encoder
 		b   []byte
 	)
 	decErr := rdr.Read(

@@ -53,7 +53,7 @@ func BenchmarkCreateSeries(b *testing.B) {
 }
 
 func populateTestWAL(t testing.TB, w *wal.WAL, recs []interface{}) {
-	var enc record.RecordEncoder
+	var enc record.Encoder
 	for _, r := range recs {
 		switch v := r.(type) {
 		case []record.RefSeries:
@@ -71,22 +71,22 @@ func readTestWAL(t testing.TB, dir string) (recs []interface{}) {
 	testutil.Ok(t, err)
 	defer sr.Close()
 
-	var dec record.RecordDecoder
+	var dec record.Decoder
 	r := wal.NewReader(sr)
 
 	for r.Next() {
 		rec := r.Record()
 
 		switch dec.Type(rec) {
-		case record.RecordSeries:
+		case record.Series:
 			series, err := dec.Series(rec, nil)
 			testutil.Ok(t, err)
 			recs = append(recs, series)
-		case record.RecordSamples:
+		case record.Samples:
 			samples, err := dec.Samples(rec, nil)
 			testutil.Ok(t, err)
 			recs = append(recs, samples)
-		case record.RecordTombstones:
+		case record.Tombstones:
 			tstones, err := dec.Tombstones(rec, nil)
 			testutil.Ok(t, err)
 			recs = append(recs, tstones)
@@ -1067,7 +1067,7 @@ func TestHead_LogRollback(t *testing.T) {
 // TestWalRepair_DecodingError ensures that a repair is run for an error
 // when decoding a record.
 func TestWalRepair_DecodingError(t *testing.T) {
-	var enc record.RecordEncoder
+	var enc record.Encoder
 	for name, test := range map[string]struct {
 		corrFunc  func(rec []byte) []byte // Func that applies the corruption to a record.
 		rec       []byte
@@ -1079,7 +1079,7 @@ func TestWalRepair_DecodingError(t *testing.T) {
 				// Do not modify the base record because it is Logged multiple times.
 				res := make([]byte, len(rec))
 				copy(res, rec)
-				res[0] = byte(record.RecordInvalid)
+				res[0] = byte(record.Invalid)
 				return res
 			},
 			enc.Series([]record.RefSeries{{Ref: 1, Labels: labels.FromStrings("a", "b")}}, []byte{}),

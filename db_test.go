@@ -1472,7 +1472,7 @@ func TestInitializeHeadTimestamp(t *testing.T) {
 		w, err := wal.New(nil, nil, path.Join(dir, "wal"), false)
 		testutil.Ok(t, err)
 
-		var enc record.RecordEncoder
+		var enc record.Encoder
 		err = w.Log(
 			enc.Series([]record.RefSeries{
 				{Ref: 123, Labels: labels.FromStrings("a", "1")},
@@ -1522,7 +1522,7 @@ func TestInitializeHeadTimestamp(t *testing.T) {
 		w, err := wal.New(nil, nil, path.Join(dir, "wal"), false)
 		testutil.Ok(t, err)
 
-		var enc record.RecordEncoder
+		var enc record.Encoder
 		err = w.Log(
 			enc.Series([]record.RefSeries{
 				{Ref: 123, Labels: labels.FromStrings("a", "1")},
