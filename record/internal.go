@@ -14,10 +14,7 @@ package record
 
 import (
 	"errors"
-	"os"
-	"path/filepath"
 
-	"github.com/prometheus/tsdb/fileutil"
 	"github.com/prometheus/tsdb/labels"
 )
 
@@ -37,41 +34,4 @@ type RefSample struct {
 	Ref uint64
 	T   int64
 	V   float64
-}
-
-func rangeForTimestamp(t int64, width int64) (maxt int64) {
-	return (t/width)*width + width
-}
-
-// computeChunkEndTime estimates the end timestamp based the beginning of a chunk,
-// its current timestamp and the upper bound up to which we insert data.
-// It assumes that the time range is 1/4 full.
-func computeChunkEndTime(start, cur, max int64) int64 {
-	a := (max - start) / ((cur - start + 1) * 4)
-	if a == 0 {
-		return max
-	}
-	return start + (max-start)/a
-}
-
-// RenameFile renames the file from, removing to if it already exists before doing the rename.
-func RenameFile(from, to string) error {
-	if err := os.RemoveAll(to); err != nil {
-		return err
-	}
-	if err := os.Rename(from, to); err != nil {
-		return err
-	}
-
-	// Directory was renamed; sync parent dir to persist rename.
-	pdir, err := fileutil.OpenDir(filepath.Dir(to))
-	if err != nil {
-		return err
-	}
-
-	if err = pdir.Sync(); err != nil {
-		pdir.Close()
-		return err
-	}
-	return pdir.Close()
 }
