@@ -100,9 +100,6 @@ func TestDB_reloadOrder(t *testing.T) {
 
 	testutil.Ok(t, db.reload())
 	blocks := db.Blocks()
-	for _, b := range blocks {
-		b.meta.Stats.NumBytes = 0
-	}
 	testutil.Equals(t, 3, len(blocks))
 	testutil.Equals(t, metas[1].MinTime, blocks[0].Meta().MinTime)
 	testutil.Equals(t, metas[1].MaxTime, blocks[0].Meta().MaxTime)
@@ -490,6 +487,62 @@ func TestDB_Snapshot(t *testing.T) {
 	}
 	testutil.Ok(t, seriesSet.Err())
 	testutil.Equals(t, 1000.0, sum)
+}
+
+// TestDB_Snapshot_ChunksOutsideOfCompactedRange ensures that a snapshot removes chunks samples
+// that are outside the set block time range.
+// See https://github.com/prometheus/prometheus/issues/5105
+func TestDB_Snapshot_ChunksOutsideOfCompactedRange(t *testing.T) {
+	db, delete := openTestDB(t, nil)
+	defer delete()
+
+	app := db.Appender()
+	mint := int64(1414141414000)
+	for i := 0; i < 1000; i++ {
+		_, err := app.Add(labels.FromStrings("foo", "bar"), mint+int64(i), 1.0)
+		testutil.Ok(t, err)
+	}
+	testutil.Ok(t, app.Commit())
+	testutil.Ok(t, app.Rollback())
+
+	snap, err := ioutil.TempDir("", "snap")
+	testutil.Ok(t, err)
+
+	// Hackingly introduce "race", by having lower max time then maxTime in last chunk.
+	db.head.maxTime = db.head.maxTime - 10
+
+	defer func() {
+		testutil.Ok(t, os.RemoveAll(snap))
+	}()
+	testutil.Ok(t, db.Snapshot(snap, true))
+	testutil.Ok(t, db.Close())
+
+	// Reopen DB from snapshot.
+	db, err = Open(snap, nil, nil, nil)
+	testutil.Ok(t, err)
+	defer func() { testutil.Ok(t, db.Close()) }()
+
+	querier, err := db.Querier(mint, mint+1000)
+	testutil.Ok(t, err)
+	defer func() { testutil.Ok(t, querier.Close()) }()
+
+	// Sum values.
+	seriesSet, err := querier.Select(labels.NewEqualMatcher("foo", "bar"))
+	testutil.Ok(t, err)
+
+	sum := 0.0
+	for seriesSet.Next() {
+		series := seriesSet.At().Iterator()
+		for series.Next() {
+			_, v := series.At()
+			sum += v
+		}
+		testutil.Ok(t, series.Err())
+	}
+	testutil.Ok(t, seriesSet.Err())
+
+	// Since we snapshotted with MaxTime - 10, so expect 10 less samples.
+	testutil.Equals(t, 1000.0-10, sum)
 }
 
 func TestDB_SnapshotWithDelete(t *testing.T) {
@@ -933,7 +986,7 @@ func TestTombstoneCleanFail(t *testing.T) {
 	// totalBlocks should be >=2 so we have enough blocks to trigger compaction failure.
 	totalBlocks := 2
 	for i := 0; i < totalBlocks; i++ {
-		blockDir := createBlock(t, db.Dir(), genSeries(1, 1, 0, 0))
+		blockDir := createBlock(t, db.Dir(), genSeries(1, 1, 0, 1))
 		block, err := OpenBlock(nil, blockDir, nil)
 		testutil.Ok(t, err)
 		// Add some some fake tombstones to trigger the compaction.
@@ -977,7 +1030,7 @@ func (c *mockCompactorFailing) Write(dest string, b BlockReader, mint, maxt int6
 		return ulid.ULID{}, fmt.Errorf("the compactor already did the maximum allowed blocks so it is time to fail")
 	}
 
-	block, err := OpenBlock(nil, createBlock(c.t, dest, genSeries(1, 1, 0, 0)), nil)
+	block, err := OpenBlock(nil, createBlock(c.t, dest, genSeries(1, 1, 0, 1)), nil)
 	testutil.Ok(c.t, err)
 	testutil.Ok(c.t, block.Close()) // Close block as we won't be using anywhere.
 	c.blocks = append(c.blocks, block)
@@ -1060,7 +1113,8 @@ func TestSizeRetention(t *testing.T) {
 	testutil.Ok(t, db.reload())                                       // Reload the db to register the new db size.
 	testutil.Equals(t, len(blocks), len(db.Blocks()))                 // Ensure all blocks are registered.
 	expSize := int64(prom_testutil.ToFloat64(db.metrics.blocksBytes)) // Use the the actual internal metrics.
-	actSize := dbDiskSize(db.Dir())
+	actSize, err := testutil.DirSize(db.Dir())
+	testutil.Ok(t, err)
 	testutil.Equals(t, expSize, actSize, "registered size doesn't match actual disk size")
 
 	// Decrease the max bytes limit so that a delete is triggered.
@@ -1074,7 +1128,8 @@ func TestSizeRetention(t *testing.T) {
 	actBlocks := db.Blocks()
 	expSize = int64(prom_testutil.ToFloat64(db.metrics.blocksBytes))
 	actRetentCount := int(prom_testutil.ToFloat64(db.metrics.sizeRetentionCount))
-	actSize = dbDiskSize(db.Dir())
+	actSize, err = testutil.DirSize(db.Dir())
+	testutil.Ok(t, err)
 
 	testutil.Equals(t, 1, actRetentCount, "metric retention count mismatch")
 	testutil.Equals(t, actSize, expSize, "metric db size doesn't match actual disk size")
@@ -1083,20 +1138,6 @@ func TestSizeRetention(t *testing.T) {
 	testutil.Equals(t, expBlocks[0].MaxTime, actBlocks[0].meta.MaxTime, "maxT mismatch of the first block")
 	testutil.Equals(t, expBlocks[len(expBlocks)-1].MaxTime, actBlocks[len(actBlocks)-1].meta.MaxTime, "maxT mismatch of the last block")
 
-}
-
-func dbDiskSize(dir string) int64 {
-	var statSize int64
-	filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
-		// Include only index,tombstone and chunks.
-		if filepath.Dir(path) == chunkDir(filepath.Dir(filepath.Dir(path))) ||
-			info.Name() == indexFilename ||
-			info.Name() == tombstoneFilename {
-			statSize += info.Size()
-		}
-		return nil
-	})
-	return statSize
 }
 
 func TestNotMatcherSelectsLabelsUnsetSeries(t *testing.T) {

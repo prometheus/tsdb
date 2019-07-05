@@ -16,6 +16,7 @@ package tsdb
 import (
 	"context"
 	"encoding/binary"
+
 	"errors"
 	"io/ioutil"
 	"math/rand"
@@ -26,6 +27,7 @@ import (
 
 	"github.com/go-kit/kit/log"
 	"github.com/prometheus/tsdb/chunks"
+	"github.com/prometheus/tsdb/labels"
 	"github.com/prometheus/tsdb/testutil"
 	"github.com/prometheus/tsdb/tsdbutil"
 )
@@ -40,9 +42,10 @@ func TestBlockMetaMustNeverBeVersion2(t *testing.T) {
 		testutil.Ok(t, os.RemoveAll(dir))
 	}()
 
-	testutil.Ok(t, writeMetaFile(log.NewNopLogger(), dir, &BlockMeta{}))
+	_, err = writeMetaFile(log.NewNopLogger(), dir, &BlockMeta{})
+	testutil.Ok(t, err)
 
-	meta, err := readMetaFile(dir)
+	meta, _, err := readMetaFile(dir)
 	testutil.Ok(t, err)
 	testutil.Assert(t, meta.Version != 2, "meta.json version must never be 2")
 }
@@ -54,7 +57,7 @@ func TestSetCompactionFailed(t *testing.T) {
 		testutil.Ok(t, os.RemoveAll(tmpdir))
 	}()
 
-	blockDir := createBlock(t, tmpdir, genSeries(1, 1, 0, 0))
+	blockDir := createBlock(t, tmpdir, genSeries(1, 1, 0, 1))
 	b, err := OpenBlock(nil, blockDir, nil)
 	testutil.Ok(t, err)
 	testutil.Equals(t, false, b.meta.Compaction.Failed)
@@ -131,7 +134,7 @@ func TestCorruptedChunk(t *testing.T) {
 				testutil.Ok(t, os.RemoveAll(tmpdir))
 			}()
 
-			blockDir := createBlock(t, tmpdir, genSeries(1, 1, 0, 0))
+			blockDir := createBlock(t, tmpdir, genSeries(1, 1, 0, 1))
 			files, err := sequenceFiles(chunkDir(blockDir))
 			testutil.Ok(t, err)
 			testutil.Assert(t, len(files) > 0, "No chunk created.")
@@ -149,6 +152,60 @@ func TestCorruptedChunk(t *testing.T) {
 	}
 }
 
+// TestBlockSize ensures that the block size is calculated correctly.
+func TestBlockSize(t *testing.T) {
+	tmpdir, err := ioutil.TempDir("", "test_blockSize")
+	testutil.Ok(t, err)
+	defer func() {
+		testutil.Ok(t, os.RemoveAll(tmpdir))
+	}()
+
+	var (
+		blockInit    *Block
+		expSizeInit  int64
+		blockDirInit string
+	)
+
+	// Create a block and compare the reported size vs actual disk size.
+	{
+		blockDirInit = createBlock(t, tmpdir, genSeries(10, 1, 1, 100))
+		blockInit, err = OpenBlock(nil, blockDirInit, nil)
+		testutil.Ok(t, err)
+		defer func() {
+			testutil.Ok(t, blockInit.Close())
+		}()
+		expSizeInit = blockInit.Size()
+		actSizeInit, err := testutil.DirSize(blockInit.Dir())
+		testutil.Ok(t, err)
+		testutil.Equals(t, expSizeInit, actSizeInit)
+	}
+
+	// Delete some series and check the sizes again.
+	{
+		testutil.Ok(t, blockInit.Delete(1, 10, labels.NewMustRegexpMatcher("", ".*")))
+		expAfterDelete := blockInit.Size()
+		testutil.Assert(t, expAfterDelete > expSizeInit, "after a delete the block size should be bigger as the tombstone file should grow %v > %v", expAfterDelete, expSizeInit)
+		actAfterDelete, err := testutil.DirSize(blockDirInit)
+		testutil.Ok(t, err)
+		testutil.Equals(t, expAfterDelete, actAfterDelete, "after a delete reported block size doesn't match actual disk size")
+
+		c, err := NewLeveledCompactor(context.Background(), nil, log.NewNopLogger(), []int64{0}, nil)
+		testutil.Ok(t, err)
+		blockDirAfterCompact, err := c.Compact(tmpdir, []string{blockInit.Dir()}, nil)
+		testutil.Ok(t, err)
+		blockAfterCompact, err := OpenBlock(nil, filepath.Join(tmpdir, blockDirAfterCompact.String()), nil)
+		testutil.Ok(t, err)
+		defer func() {
+			testutil.Ok(t, blockAfterCompact.Close())
+		}()
+		expAfterCompact := blockAfterCompact.Size()
+		actAfterCompact, err := testutil.DirSize(blockAfterCompact.Dir())
+		testutil.Ok(t, err)
+		testutil.Assert(t, actAfterDelete > actAfterCompact, "after a delete and compaction the block size should be smaller %v,%v", actAfterDelete, actAfterCompact)
+		testutil.Equals(t, expAfterCompact, actAfterCompact, "after a delete and compaction reported block size doesn't match actual disk size")
+	}
+}
+
 // createBlock creates a block with given set of series and returns its dir.
 func createBlock(tb testing.TB, dir string, series []Series) string {
 	head := createHead(tb, series)
@@ -157,7 +214,9 @@ func createBlock(tb testing.TB, dir string, series []Series) string {
 
 	testutil.Ok(tb, os.MkdirAll(dir, 0777))
 
-	ulid, err := compactor.Write(dir, head, head.MinTime(), head.MaxTime(), nil)
+	// Add +1 millisecond to block maxt because block intervals are half-open: [b.MinTime, b.MaxTime).
+	// Because of this block intervals are always +1 than the total samples it includes.
+	ulid, err := compactor.Write(dir, head, head.MinTime(), head.MaxTime()+1, nil)
 	testutil.Ok(tb, err)
 	return filepath.Join(dir, ulid.String())
 }
@@ -209,7 +268,7 @@ func genSeries(totalSeries, labelCount int, mint, maxt int64) []Series {
 			lbls[defaultLabelName+strconv.Itoa(j)] = defaultLabelValue + strconv.Itoa(j)
 		}
 		samples := make([]tsdbutil.Sample, 0, maxt-mint+1)
-		for t := mint; t <= maxt; t++ {
+		for t := mint; t < maxt; t++ {
 			samples = append(samples, sample{t: t, v: rand.Float64()})
 		}
 		series[i] = newSeries(lbls, samples)
