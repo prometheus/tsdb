@@ -111,6 +111,8 @@ func (c *XORChunk) iterator(it Iterator) *xorIterator {
 		return xorIter
 	}
 	return &xorIterator{
+		// The first 2 bytes contain chunk headers.
+		// We skip that for actual samples.
 		br:       newBReader(c.b.bytes()[2:]),
 		numTotal: binary.BigEndian.Uint16(c.b.bytes()),
 	}
@@ -248,6 +250,8 @@ func (it *xorIterator) Err() error {
 }
 
 func (it *xorIterator) Reset(b []byte) {
+	// The first 2 bytes contain chunk headers.
+	// We skip that for actual samples.
 	it.br = newBReader(b[2:])
 	it.numTotal = binary.BigEndian.Uint16(b)
 
