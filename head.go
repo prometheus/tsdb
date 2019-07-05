@@ -1754,10 +1754,11 @@ func (s *memSeries) iterator(id int, it chunkenc.Iterator) chunkenc.Iterator {
 	// Serve the last 4 samples for the last chunk from the sample buffer
 	// as their compressed bytes may be mutated by added samples.
 	if msIter, ok := it.(*memSafeIterator); ok {
-		msIter.Iterator = c.chunk.Iterator(nil)
+		msIter.Iterator = c.chunk.Iterator(msIter.Iterator)
 		msIter.i = -1
 		msIter.total = c.chunk.NumSamples()
 		msIter.buf = s.sampleBuf
+		return msIter
 	}
 	return &memSafeIterator{
 		Iterator: c.chunk.Iterator(it),
