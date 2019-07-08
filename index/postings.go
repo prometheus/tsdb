@@ -695,7 +695,7 @@ func (it *bigEndianPostings) Err() error {
 }
 
 // 1 is bigEndian, 2 is baseDelta, 3 is deltaBlock, 4 is baseDeltaBlock, 5 is bitmapPostings, 6 is roaringBitmapPostings.
-const postingsType = 2
+const postingsType = 7
 
 type bitSlice struct {
 	bstream []byte
@@ -1401,7 +1401,8 @@ func newRoaringBitmapPostings(bstream []byte) *roaringBitmapPostings {
 	x := binary.BigEndian.Uint32(bstream)
 	// return &roaringBitmapPostings{bs: bstream[4:], numBlock: int(binary.BigEndian.Uint32(bstream[4+int(x):])), footerAddr: int(x), width: int(bstream[8+int(x)])}
 	// return &roaringBitmapPostings{bs: bstream[4:], numBlock: (len(bstream)-int(x))/4 - 1, footerAddr: int(x)}
-	return &roaringBitmapPostings{bs: bstream[4:], numBlock: (len(bstream) - int(x) - 5) / int(bstream[4+int(x)]), footerAddr: int(x), width: int(bstream[4+int(x)]), addrMask: uint32((1 << (8 * uint(bstream[4+int(x)]))) - 1)}
+	// return &roaringBitmapPostings{bs: bstream[4:], numBlock: (len(bstream) - int(x) - 5) / int(bstream[4+int(x)]), footerAddr: int(x), width: int(bstream[4+int(x)]), addrMask: uint32((1 << (8 * uint(bstream[4+int(x)]))) - 1)}
+	return &roaringBitmapPostings{bs: bstream[8:], numBlock: int(binary.BigEndian.Uint32(bstream[4:])), footerAddr: int(x), width: int(bstream[8+int(x)]), addrMask: uint32((1 << (8 * uint(bstream[8+int(x)]))) - 1)}
 }
 
 func (it *roaringBitmapPostings) At() uint64 {
@@ -1730,6 +1731,7 @@ func writeRoaringBitmapPostings(e *encoding.Encbuf, arr []uint32) {
 	var vals []uint32            // The converted values in the current block.
 	startOff := len(e.Get())
 	e.PutBE32(0) // Footer starting offset.
+	e.PutBE32(0) // Number of blocks.
 	for idx < len(arr) {
 		curKey = arr[idx] >> bitmapBits // Key of block.
 		curVal = arr[idx] & mask        // Value inside block.
@@ -1749,8 +1751,9 @@ func writeRoaringBitmapPostings(e *encoding.Encbuf, arr []uint32) {
 	writeRoaringBitmapBlock(e, vals, key, thres, bitmapSize, valueSize)
 
 	// Put footer starting offset.
-	binary.BigEndian.PutUint32(e.B[startOff:], uint32(len(e.B)-4-startOff))
-	width := bits.Len32(startingOffs[len(startingOffs)-1] - 4 - uint32(startOff))
+	binary.BigEndian.PutUint32(e.B[startOff:], uint32(len(e.B)-8-startOff))
+	binary.BigEndian.PutUint32(e.B[startOff+4:], uint32(len(startingOffs)))
+	width := bits.Len32(startingOffs[len(startingOffs)-1] - 8 - uint32(startOff))
 	if width == 0 {
 		// key 0 will result in 0 width.
 		width += 1
@@ -1763,7 +1766,7 @@ func writeRoaringBitmapPostings(e *encoding.Encbuf, arr []uint32) {
 
 	e.PutByte(byte((width + 7) / 8))
 	for _, off := range startingOffs {
-		putBytes(e, off-4-uint32(startOff), (width+7)/8)
+		putBytes(e, off-8-uint32(startOff), (width+7)/8)
 	}
 
 	// for _, off := range startingOffs {
@@ -1784,6 +1787,7 @@ func writeRoaringBitmapPostings64(e *encoding.Encbuf, arr []uint64) {
 	var vals []uint64         // The converted values in the current block.
 	startOff := len(e.Get())
 	e.PutBE32(0) // Footer starting offset.
+	e.PutBE32(0) // Number of blocks.
 	for idx < len(arr) {
 		curKey = arr[idx] >> bitmapBits // Key of block.
 		curVal = arr[idx] & mask        // Value inside block.
@@ -1803,8 +1807,9 @@ func writeRoaringBitmapPostings64(e *encoding.Encbuf, arr []uint64) {
 	writeRoaringBitmapBlock64(e, vals, key, thres, bitmapSize, valueSize)
 
 	// Put footer starting offset.
-	binary.BigEndian.PutUint32(e.B[startOff:], uint32(len(e.B)-4-startOff))
-	width := bits.Len32(startingOffs[len(startingOffs)-1] - 4 - uint32(startOff))
+	binary.BigEndian.PutUint32(e.B[startOff:], uint32(len(e.B)-8-startOff))
+	binary.BigEndian.PutUint32(e.B[startOff+4:], uint32(len(startingOffs)))
+	width := bits.Len32(startingOffs[len(startingOffs)-1] - 8 - uint32(startOff))
 	if width == 0 {
 		// key 0 will result in 0 width.
 		width += 1
@@ -1812,6 +1817,417 @@ func writeRoaringBitmapPostings64(e *encoding.Encbuf, arr []uint64) {
 
 	e.PutByte(byte((width + 7) / 8))
 	for _, off := range startingOffs {
-		putBytes(e, off-4-uint32(startOff), (width+7)/8)
+		putBytes(e, off-8-uint32(startOff), (width+7)/8)
+	}
+}
+
+type baseDeltaBlock8Postings struct {
+	bs         []byte
+	cur        uint64
+	inside     bool
+	idx        int // The current offset inside the bs.
+	footerAddr int
+	key        uint64
+	numBlock   int
+	blockIdx   int
+	nextBlock  int
+	width      int
+	prel       int
+	addrMask   uint32
+}
+
+func newBaseDeltaBlock8Postings(bstream []byte) *baseDeltaBlock8Postings {
+	if len(bstream) <= 4 {
+		return nil
+	}
+	x := binary.BigEndian.Uint32(bstream)
+	width := int(bstream[8+int(x)])
+	return &baseDeltaBlock8Postings{bs: bstream[8:], numBlock: int(binary.BigEndian.Uint32(bstream[4:])), footerAddr: int(x), width: width, prel: 4 - width, addrMask: uint32((1 << (8 * uint(width))) - 1)}
+}
+
+func (it *baseDeltaBlock8Postings) At() uint64 {
+	return it.cur
+}
+
+func (it *baseDeltaBlock8Postings) Next() bool {
+	if it.inside { // Already entered the block.
+		if it.idx < it.nextBlock {
+			it.cur = it.key | uint64(it.bs[it.idx])
+			it.idx += 1
+			return true
+		}
+		it.blockIdx += 1
+		it.inside = false
+		return it.Next()
+	} else { // Not yet entered the block.
+		if it.idx < it.footerAddr {
+			val, size := binary.Uvarint(it.bs[it.idx:])
+			it.key = val << bitmapBits
+			it.idx += size
+			it.inside = true
+			if it.blockIdx != it.numBlock-1 {
+				it.nextBlock = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+1+(it.blockIdx+1)*it.width-it.prel:]) & it.addrMask)
+			} else {
+				it.nextBlock = it.footerAddr
+			}
+			it.cur = it.key | uint64(it.bs[it.idx])
+			it.idx += 1
+			return true
+		} else {
+			return false
+		}
+	}
+}
+
+func (it *baseDeltaBlock8Postings) seekInBlock(x uint64) bool {
+	curVal := byte(x & rbpValueMask)
+	num := it.nextBlock - it.idx
+	j := sort.Search(num, func(i int) bool {
+		return it.bs[it.idx+i] >= curVal
+	})
+	if j == num {
+		// Fast-path to the next block.
+		// The first element in next block should be >= x.
+		it.idx = it.nextBlock
+		it.blockIdx += 1
+		if it.idx < it.footerAddr {
+			val, size := binary.Uvarint(it.bs[it.idx:])
+			it.key = val << bitmapBits
+			it.idx += size
+			it.inside = true
+			if it.blockIdx != it.numBlock-1 {
+				it.nextBlock = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+1+(it.blockIdx+1)*it.width-it.prel:]) & it.addrMask)
+			} else {
+				it.nextBlock = it.footerAddr
+			}
+			it.cur = it.key | uint64(it.bs[it.idx])
+			it.idx += 1
+			return true
+		} else {
+			return false
+		}
+	}
+	it.cur = it.key | uint64(it.bs[it.idx+j])
+	it.idx += j + 1
+	return true
+}
+
+func (it *baseDeltaBlock8Postings) Seek(x uint64) bool {
+	if it.cur >= x {
+		return true
+	}
+	curKey := x >> bitmapBits
+	if it.inside && it.key>>bitmapBits == curKey {
+		// Fast path.
+		return it.seekInBlock(x)
+	} else {
+		i := sort.Search(it.numBlock-it.blockIdx, func(i int) bool {
+			off := int(binary.BigEndian.Uint32(it.bs[it.footerAddr+1+(it.blockIdx+i)*it.width-it.prel:]) & it.addrMask)
+			k, _ := binary.Uvarint(it.bs[off:])
+			return k >= curKey
+		})
+		if i == it.numBlock-it.blockIdx {
+			return false
+		}
+		it.blockIdx += i
+		if i != 0 { // i > 0.
+			it.inside = false
+			it.idx = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+1+it.blockIdx*it.width-it.prel:]) & it.addrMask)
+		}
+	}
+	val, size := binary.Uvarint(it.bs[it.idx:])
+	// If the key of current block doesn't match, directly go to the next block.
+	if val != curKey {
+		if it.blockIdx == it.numBlock-1 {
+			return false
+		} else {
+			it.blockIdx += 1
+			it.idx = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+1+it.blockIdx*it.width-it.prel:]) & it.addrMask)
+			val, size := binary.Uvarint(it.bs[it.idx:])
+			it.key = val << bitmapBits
+			it.idx += size
+			it.inside = true
+			if it.blockIdx != it.numBlock-1 {
+				it.nextBlock = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+1+(it.blockIdx+1)*it.width-it.prel:]) & it.addrMask)
+			} else {
+				it.nextBlock = it.footerAddr
+			}
+			it.cur = it.key | uint64(it.bs[it.idx])
+			it.idx += 1
+			return true
+		}
+	}
+	it.key = val << bitmapBits
+	it.idx += size
+	it.inside = true
+
+	if it.blockIdx != it.numBlock-1 {
+		it.nextBlock = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+1+(it.blockIdx+1)*it.width-it.prel:]) & it.addrMask)
+	} else {
+		it.nextBlock = it.footerAddr
+	}
+	return it.seekInBlock(x)
+}
+
+func (it *baseDeltaBlock8Postings) Err() error {
+	return nil
+}
+
+func writeBaseDelta8Block(e *encoding.Encbuf, vals []uint32, key uint32, valueSize int) {
+	e.PutUvarint32(key)
+	c := make([]byte, 4)
+	for _, val := range vals {
+		binary.BigEndian.PutUint32(c[:], val)
+		for i := 4 - valueSize; i < 4; i++ {
+			e.PutByte(c[i])
+		}
+	}
+}
+
+func writeBaseDeltaBlock8Postings(e *encoding.Encbuf, arr []uint32) {
+	key := uint32(0xffffffff)                   // The initial key should be unique.
+	valueSize := bitmapBits >> 3                // The size of the element in array in bytes.
+	mask := uint32((1 << uint(bitmapBits)) - 1) // Mask for the elements in the block.
+	var curKey uint32
+	var curVal uint32
+	var idx int               // Index of current element in arr.
+	var startingOffs []uint32 // The starting offsets of each block.
+	var vals []uint32         // The converted values in the current block.
+	startOff := len(e.Get())
+	e.PutBE32(0) // Footer starting offset.
+	e.PutBE32(0) // Number of blocks.
+	for idx < len(arr) {
+		curKey = arr[idx] >> bitmapBits // Key of block.
+		curVal = arr[idx] & mask        // Value inside block.
+		if curKey != key {
+			// Move to next block.
+			if idx != 0 {
+				startingOffs = append(startingOffs, uint32(len(e.B)))
+				writeBaseDelta8Block(e, vals, key, valueSize)
+				vals = vals[:0]
+			}
+			key = curKey
+		}
+		vals = append(vals, curVal)
+		idx += 1
+	}
+	startingOffs = append(startingOffs, uint32(len(e.B)))
+	writeBaseDelta8Block(e, vals, key, valueSize)
+
+	// Put footer starting offset.
+	binary.BigEndian.PutUint32(e.B[startOff:], uint32(len(e.B)-8-startOff))
+	binary.BigEndian.PutUint32(e.B[startOff+4:], uint32(len(startingOffs)))
+	width := bits.Len32(startingOffs[len(startingOffs)-1] - 8 - uint32(startOff))
+	if width == 0 {
+		// key 0 will result in 0 width.
+		width += 1
+	}
+
+	e.PutByte(byte((width + 7) / 8))
+	for _, off := range startingOffs {
+		putBytes(e, off-8-uint32(startOff), (width+7)/8)
+	}
+}
+
+type baseDeltaBlock16Postings struct {
+	bs         []byte
+	cur        uint64
+	inside     bool
+	idx        int // The current offset inside the bs.
+	footerAddr int
+	key        uint64
+	numBlock   int
+	blockIdx   int // The current block idx.
+	nextBlock  int
+	width      int
+	prel       int
+	addrMask   uint32
+}
+
+func newBaseDeltaBlock16Postings(bstream []byte) *baseDeltaBlock16Postings {
+	x := binary.BigEndian.Uint32(bstream) // Read the footer address.
+	width := int(bstream[8+int(x)])
+	return &baseDeltaBlock16Postings{bs: bstream[8:], numBlock: int(binary.BigEndian.Uint32(bstream[4:])), footerAddr: int(x), width: width, prel: 4 - width, addrMask: uint32((1 << (8 * uint(width))) - 1)}
+}
+
+func (it *baseDeltaBlock16Postings) At() uint64 {
+	return it.cur
+}
+
+func (it *baseDeltaBlock16Postings) Next() bool {
+	if it.inside { // Already entered the block.
+		if it.idx < it.nextBlock {
+			it.cur = it.key | uint64(binary.BigEndian.Uint16(it.bs[it.idx:]))
+			it.idx += 2
+			return true
+		}
+		it.blockIdx += 1 // Go to the next block.
+	}
+	// Currently not entered any block.
+	if it.idx < it.footerAddr {
+		val, size := binary.Uvarint(it.bs[it.idx:]) // Read the key.
+		it.key = val << 16
+		it.idx += size
+		it.inside = true
+		if it.blockIdx != it.numBlock-1 {
+			it.nextBlock = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+1+(it.blockIdx+1)*it.width-it.prel:]) & it.addrMask)
+		} else {
+			it.nextBlock = it.footerAddr
+		}
+		it.cur = it.key | uint64(binary.BigEndian.Uint16(it.bs[it.idx:]))
+		it.idx += 2
+		return true
+	} else {
+		return false
+	}
+}
+
+func (it *baseDeltaBlock16Postings) seekInBlock(x uint64) bool {
+	curVal := x & 0xffff
+	num := (it.nextBlock - it.idx) >> 1
+	j := sort.Search(num, func(i int) bool {
+		return uint64(binary.BigEndian.Uint16(it.bs[it.idx+(i<<1):])) >= curVal
+	})
+	if j == num {
+		// Fast-path to the next block.
+		// The first element in next block should be >= x.
+		it.idx = it.nextBlock
+		it.blockIdx += 1
+		if it.idx < it.footerAddr {
+			val, size := binary.Uvarint(it.bs[it.idx:])
+			it.key = val << 16
+			it.idx += size
+			it.inside = true
+			if it.blockIdx != it.numBlock-1 {
+				it.nextBlock = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+1+(it.blockIdx+1)*it.width-it.prel:]) & it.addrMask)
+			} else {
+				it.nextBlock = it.footerAddr
+			}
+			it.cur = it.key | uint64(binary.BigEndian.Uint16(it.bs[it.idx:]))
+			it.idx += 2
+			return true
+		} else {
+			return false
+		}
+	}
+	it.cur = it.key | uint64(binary.BigEndian.Uint16(it.bs[it.idx+(j<<1):]))
+	it.idx += (j + 1) << 1
+	return true
+}
+
+func (it *baseDeltaBlock16Postings) Seek(x uint64) bool {
+	if it.cur >= x {
+		return true
+	}
+	curKey := x >> 16
+	if it.inside && it.key>>16 == curKey {
+		// Fast path for x in current block.
+		return it.seekInBlock(x)
+	} else {
+		i := sort.Search(it.numBlock-it.blockIdx, func(i int) bool {
+			off := int(binary.BigEndian.Uint32(it.bs[it.footerAddr+1+(it.blockIdx+i)*it.width-it.prel:]) & it.addrMask)
+			k, _ := binary.Uvarint(it.bs[off:])
+			return k >= curKey
+		})
+		if i == it.numBlock-it.blockIdx {
+			return false
+		}
+		it.blockIdx += i
+		if i != 0 { // i > 0.
+			it.inside = false
+			it.idx = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+1+it.blockIdx*it.width-it.prel:]) & it.addrMask)
+		}
+	}
+	val, size := binary.Uvarint(it.bs[it.idx:])
+	// If the key of current block doesn't match, directly go to the next block
+	// because the first value of the next block should be >= x.
+	if val != curKey {
+		if it.blockIdx == it.numBlock-1 {
+			return false
+		} else {
+			it.blockIdx += 1
+			it.idx = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+1+it.blockIdx*it.width-it.prel:]) & it.addrMask)
+			val, size := binary.Uvarint(it.bs[it.idx:])
+			it.key = val << 16
+			it.idx += size
+			it.inside = true
+			if it.blockIdx != it.numBlock-1 {
+				it.nextBlock = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+1+(it.blockIdx+1)*it.width-it.prel:]) & it.addrMask)
+			} else {
+				it.nextBlock = it.footerAddr
+			}
+			it.cur = it.key | uint64(binary.BigEndian.Uint16(it.bs[it.idx:]))
+			it.idx += 2
+			return true
+		}
+	}
+	it.key = val << 16
+	it.idx += size
+	it.inside = true
+
+	if it.blockIdx != it.numBlock-1 {
+		it.nextBlock = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+1+(it.blockIdx+1)*it.width-it.prel:]) & it.addrMask)
+	} else {
+		it.nextBlock = it.footerAddr
+	}
+	return it.seekInBlock(x)
+}
+
+func (it *baseDeltaBlock16Postings) Err() error {
+	return nil
+}
+
+func writeBaseDelta16Block(e *encoding.Encbuf, vals []uint32, key uint32, valueSize int) {
+	e.PutUvarint32(key)
+	c := make([]byte, 4)
+	for _, val := range vals {
+		binary.BigEndian.PutUint32(c[:], val)
+		for i := 4 - valueSize; i < 4; i++ {
+			e.PutByte(c[i])
+		}
+	}
+}
+
+func writeBaseDeltaBlock16Postings(e *encoding.Encbuf, arr []uint32) {
+	key := uint32(0xffffffff)           // The initial key should be unique.
+	valueSize := 16 >> 3                // The size of the element in array in bytes.
+	mask := uint32((1 << uint(16)) - 1) // Mask for the elements in the block.
+	var curKey uint32
+	var curVal uint32
+	var idx int               // Index of current element in arr.
+	var startingOffs []uint32 // The starting offsets of each block.
+	var vals []uint32         // The converted values in the current block.
+	startOff := len(e.Get())
+	e.PutBE32(0) // Footer starting offset.
+	e.PutBE32(0) // Number of blocks.
+	for idx < len(arr) {
+		curKey = arr[idx] >> 16  // Key of block.
+		curVal = arr[idx] & mask // Value inside block.
+		if curKey != key {
+			// Move to next block.
+			if idx != 0 {
+				startingOffs = append(startingOffs, uint32(len(e.B)))
+				writeBaseDelta16Block(e, vals, key, valueSize)
+				vals = vals[:0]
+			}
+			key = curKey
+		}
+		vals = append(vals, curVal)
+		idx += 1
+	}
+	startingOffs = append(startingOffs, uint32(len(e.B)))
+	writeBaseDelta16Block(e, vals, key, valueSize)
+
+	binary.BigEndian.PutUint32(e.B[startOff:], uint32(len(e.B)-8-startOff)) // Put footer starting offset.
+	binary.BigEndian.PutUint32(e.B[startOff+4:], uint32(len(startingOffs))) // Put number of blocks.
+	width := bits.Len32(startingOffs[len(startingOffs)-1] - 8 - uint32(startOff))
+	if width == 0 {
+		// key 0 will result in 0 width.
+		width += 1
+	}
+
+	e.PutByte(byte((width + 7) / 8))
+	for _, off := range startingOffs {
+		putBytes(e, off-8-uint32(startOff), (width+7)/8)
 	}
 }

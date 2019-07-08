@@ -566,6 +566,8 @@ func (w *Writer) WritePostings(name, value string, it Postings) error {
 		// 	w.buf2.PutByte(1)
 		// 	writeRoaringBitmapPostings(&w.buf2, refs)
 		// }
+	case 7:
+		writeBaseDeltaBlock16Postings(&w.buf2, refs)
 	}
 
 	w.uint32s = refs
@@ -1099,6 +1101,9 @@ func (dec *Decoder) Postings(b []byte) (int, Postings, error) {
 		// } else {
 		// 	return n, newRoaringBitmapPostings(l), d.Err()
 		// }
+	case 7:
+		l := d.Get()
+		return n, newBaseDeltaBlock16Postings(l), d.Err()
 	default:
 		return n, EmptyPostings(), d.Err()
 	}
