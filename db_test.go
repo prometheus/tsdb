@@ -1113,8 +1113,7 @@ func TestSizeRetention(t *testing.T) {
 	testutil.Ok(t, db.reload())                                       // Reload the db to register the new db size.
 	testutil.Equals(t, len(blocks), len(db.Blocks()))                 // Ensure all blocks are registered.
 	expSize := int64(prom_testutil.ToFloat64(db.metrics.blocksBytes)) // Use the the actual internal metrics.
-	actSize, err := testutil.DirSize(db.Dir())
-	testutil.Ok(t, err)
+	actSize := testutil.DirSize(t, db.Dir())
 	testutil.Equals(t, expSize, actSize, "registered size doesn't match actual disk size")
 
 	// Decrease the max bytes limit so that a delete is triggered.
@@ -1128,8 +1127,7 @@ func TestSizeRetention(t *testing.T) {
 	actBlocks := db.Blocks()
 	expSize = int64(prom_testutil.ToFloat64(db.metrics.blocksBytes))
 	actRetentCount := int(prom_testutil.ToFloat64(db.metrics.sizeRetentionCount))
-	actSize, err = testutil.DirSize(db.Dir())
-	testutil.Ok(t, err)
+	actSize = testutil.DirSize(t, db.Dir())
 
 	testutil.Equals(t, 1, actRetentCount, "metric retention count mismatch")
 	testutil.Equals(t, actSize, expSize, "metric db size doesn't match actual disk size")
@@ -2274,8 +2272,7 @@ func TestDBReadOnly(t *testing.T) {
 		testutil.Ok(t, err)
 		dbWritable.DisableCompactions()
 
-		dbSizeBeforeAppend, err := testutil.DirSize(dbWritable.Dir())
-		testutil.Ok(t, err)
+		dbSizeBeforeAppend := testutil.DirSize(t, dbWritable.Dir())
 		app := dbWritable.Appender()
 		_, err = app.Add(labels.FromStrings("foo", "bar"), dbWritable.Head().MaxTime()+1, 0)
 		testutil.Ok(t, err)
@@ -2283,8 +2280,7 @@ func TestDBReadOnly(t *testing.T) {
 		expSeriesCount++
 
 		expBlocks = dbWritable.Blocks()
-		expDbSize, err := testutil.DirSize(dbWritable.Dir())
-		testutil.Ok(t, err)
+		expDbSize := testutil.DirSize(t, dbWritable.Dir())
 		testutil.Assert(t, expDbSize > dbSizeBeforeAppend, "db size didn't increase after an append")
 
 		q, err := dbWritable.Querier(math.MinInt64, math.MaxInt64)
@@ -2292,8 +2288,7 @@ func TestDBReadOnly(t *testing.T) {
 		expSeries = query(t, q, matchAll)
 
 		testutil.Ok(t, dbWritable.Close()) // Close here to allow getting the dir hash for windows.
-		expDBHash, err = testutil.DirHash(dbWritable.Dir())
-		testutil.Ok(t, err)
+		expDBHash = testutil.DirHash(t, dbWritable.Dir())
 	}
 
 	// Open a read only db and ensure that the API returns the same result as the normal DB.
@@ -2314,8 +2309,7 @@ func TestDBReadOnly(t *testing.T) {
 		q, err := dbReadOnly.Querier(math.MinInt64, math.MaxInt64)
 		testutil.Ok(t, err)
 		readOnlySeries := query(t, q, matchAll)
-		readOnlyDBHash, err := testutil.DirHash(dbDir)
-		testutil.Ok(t, err)
+		readOnlyDBHash := testutil.DirHash(t, dbDir)
 
 		testutil.Equals(t, expSeriesCount, len(readOnlySeries), "total series mismatch")
 		testutil.Equals(t, expSeries, readOnlySeries, "series mismatch")

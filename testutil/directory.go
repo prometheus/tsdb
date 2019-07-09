@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"testing"
 )
 
 const (
@@ -133,56 +134,49 @@ func NewTemporaryDirectory(name string, t T) (handler TemporaryDirectory) {
 }
 
 // DirSize returns the size in bytes of all files in a directory.
-func DirSize(path string) (int64, error) {
+func DirSize(t *testing.T, path string) int64 {
 	var size int64
 	err := filepath.Walk(path, func(_ string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
+		Ok(t, err)
 		if !info.IsDir() {
 			size += info.Size()
 		}
 		return nil
 	})
-	return size, err
+	Ok(t, err)
+	return size
 }
 
 // DirHash returns a hash of all files attribites and their content within a directory.
-func DirHash(path string) ([]byte, error) {
+func DirHash(t *testing.T, path string) []byte {
 	hash := sha256.New()
 	err := filepath.Walk(path, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
+		Ok(t, err)
+
 		if info.IsDir() {
 			return nil
 		}
 		f, err := os.Open(path)
-		if err != nil {
-			return err
-		}
+		Ok(t, err)
 		defer f.Close()
 
-		if _, err := io.Copy(hash, f); err != nil {
-			return err
-		}
+		_, err = io.Copy(hash, f)
+		Ok(t, err)
 
-		if _, err := io.WriteString(hash, strconv.Itoa(int(info.Size()))); err != nil {
-			return err
-		}
-		if _, err := io.WriteString(hash, info.Name()); err != nil {
-			return err
-		}
+		_, err = io.WriteString(hash, strconv.Itoa(int(info.Size())))
+		Ok(t, err)
+
+		_, err = io.WriteString(hash, info.Name())
+		Ok(t, err)
+
 		modTime, err := info.ModTime().GobEncode()
-		if err != nil {
-			return err
-		}
-		if _, err := io.WriteString(hash, string(modTime)); err != nil {
-			return err
-		}
+		Ok(t, err)
 
+		_, err = io.WriteString(hash, string(modTime))
+		Ok(t, err)
 		return nil
 	})
+	Ok(t, err)
 
-	return hash.Sum(nil), err
+	return hash.Sum(nil)
 }
