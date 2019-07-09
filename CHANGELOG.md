@@ -1,6 +1,6 @@
 ## Master / unreleased
 
- - [ENHANCEMENT] Reuse byte buffer in `WriteChunks` and `writeHash` to reduce allocs. #653
+ - [FEATURE] `chunckenc.Chunk.Iterator` method now takes a `chunckenc.Iterator` interface as an argument for reuse.
 
 ## 0.9.1
 
@@ -20,6 +20,7 @@
  - [ENHANCEMENT] Improved postings intersection matching.
  - [ENHANCEMENT] Reduced disk usage for WAL for small setups.
  - [ENHANCEMENT] Optimize queries using regexp for set lookups.
+
 
 ## 0.8.0
 
