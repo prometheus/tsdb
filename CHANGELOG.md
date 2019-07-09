@@ -1,8 +1,6 @@
 ## Master / unreleased
 
  - [FEATURE] `chunckenc.Chunk.Iterator` method now takes a `chunckenc.Iterator` interface as an argument for reuse.
- - [ENHANCEMENT] `hashEntry` is broken down into `labelIndexHashEntry` and `postingsHashEntry` for optimizing allocs.
-   - `writeOffsetTable` was broken down into `writeLabelIndexesOffsetTable` and `writePostingsOffsetTable` in the process of breaking down `hashEntry`.
 
 ## 0.9.1
 
