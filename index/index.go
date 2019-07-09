@@ -961,7 +961,6 @@ func NewStringTuples(entries []string, length int) (*stringTuples, error) {
 	return &stringTuples{
 		entries: entries,
 		length:  length,
-		swapBuf: make([]string, length),
 	}, nil
 }
 
@@ -969,6 +968,9 @@ func (t *stringTuples) Len() int                   { return len(t.entries) / t.l
 func (t *stringTuples) At(i int) ([]string, error) { return t.entries[i : i+t.length], nil }
 
 func (t *stringTuples) Swap(i, j int) {
+	if t.swapBuf == nil {
+		t.swapBuf = make([]string, t.length)
+	}
 	copy(t.swapBuf, t.entries[i:i+t.length])
 	for k := 0; k < t.length; k++ {
 		t.entries[i+k] = t.entries[j+k]
