@@ -109,12 +109,9 @@ type StringTuples interface {
 type ChunkWriter interface {
 	// WriteChunks writes several chunks. The Chunk field of the ChunkMetas
 	// must be populated.
-	// b is the byte buffer that can be used by WriteChunks.
-	// The returned []byte buffer is 'b' if the size was enough.
-	// Else a new buffer is allocated and that is returned instead.
 	// After returning successfully, the Ref fields in the ChunkMetas
 	// are set and can be used to retrieve the chunks from the written data.
-	WriteChunks(b []byte, chunks ...chunks.Meta) ([]byte, error)
+	WriteChunks(chunks ...chunks.Meta) error
 
 	// Close writes any required finalization and closes the resources
 	// associated with the underlying writer.
