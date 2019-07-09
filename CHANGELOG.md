@@ -1,5 +1,7 @@
 ## Master / unreleased
 
+ - [ENHANCEMENT] Reuse string buffer in `stringTuples.Swap` to reduce allocs. #654
+
 ## 0.9.1
 
  - [CHANGE] LiveReader metrics are now injected rather than global.
