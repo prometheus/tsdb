@@ -1,5 +1,7 @@
 ## Master / unreleased
 
+ - [ENHANCEMENT] Reuse byte buffer in `WriteChunks` and `writeHash` to reduce allocs. #653
+
 ## 0.9.1
 
  - [CHANGE] LiveReader metrics are now injected rather than global.
