@@ -282,7 +282,7 @@ func (h *Head) processWALSamples(
 				}
 				refSeries[s.Ref] = ms
 			}
-			_, chunkCreated := ms.Append(s.T, s.V)
+			_, chunkCreated := ms.append(s.T, s.V)
 			if chunkCreated {
 				h.metrics.chunksCreated.Inc()
 				h.metrics.chunks.Inc()
@@ -872,7 +872,7 @@ func (a *headAppender) AddFast(ref uint64, t int64, v float64) error {
 		return errors.Wrap(ErrNotFound, "unknown series")
 	}
 	s.Lock()
-	if err := s.Appendable(t, v); err != nil {
+	if err := s.appendable(t, v); err != nil {
 		s.Unlock()
 		return err
 	}
@@ -939,7 +939,7 @@ func (a *headAppender) Commit() error {
 	for i, s := range a.samples {
 		series = a.sampleSeries[i]
 		series.Lock()
-		ok, chunkCreated := series.Append(s.T, s.V)
+		ok, chunkCreated := series.append(s.T, s.V)
 		series.pendingCommit = false
 		series.Unlock()
 
@@ -968,6 +968,7 @@ func (a *headAppender) Rollback() error {
 		series.Unlock()
 	}
 	a.head.putAppendBuffer(a.samples)
+	a.head.putSeriesBuffer(a.sampleSeries)
 
 	// Series are created in the head memory regardless of rollback. Thus we have
 	// to log them to the WAL in any case.
@@ -993,7 +994,7 @@ func (h *Head) Delete(mint, maxt int64, ms ...labels.Matcher) error {
 	for p.Next() {
 		series := h.series.getByID(p.At())
 
-		t0, t1 := series.MinTime(), series.MaxTime()
+		t0, t1 := series.minTime(), series.maxTime()
 		if t0 == math.MinInt64 || t1 == math.MinInt64 {
 			continue
 		}
@@ -1041,14 +1042,14 @@ func (h *Head) chunkRewrite(ref uint64, dranges tombstones.Intervals) (err error
 		return nil
 	}
 
-	metas := ms.ChunksMetas()
+	metas := ms.chunksMetas()
 	mint, maxt := metas[0].MinTime, metas[len(metas)-1].MaxTime
 	it := newChunkSeriesIterator(metas, dranges, mint, maxt)
 
-	ms.Reset()
+	ms.reset()
 	for it.Next() {
 		t, v := it.At()
-		ok, _ := ms.Append(t, v)
+		ok, _ := ms.append(t, v)
 		if !ok {
 			level.Warn(h.logger).Log("msg", "failed to add sample during delete")
 		}
@@ -1230,7 +1231,7 @@ func (h *headChunkReader) Chunk(ref uint64) (chunkenc.Chunk, error) {
 	}
 
 	s.Lock()
-	c := s.Chunk(int(cid))
+	c := s.chunk(int(cid))
 
 	// This means that the chunk has been garbage collected or is outside
 	// the specified range.
@@ -1241,7 +1242,7 @@ func (h *headChunkReader) Chunk(ref uint64) (chunkenc.Chunk, error) {
 	s.Unlock()
 
 	return &safeChunk{
-		Chunk: c.Chunk,
+		Chunk: c.chunk,
 		s:     s,
 		cid:   int(cid),
 	}, nil
@@ -1367,7 +1368,7 @@ func (h *headIndexReader) Series(ref uint64, lbls *labels.Labels, chks *[]chunks
 			continue
 		}
 		// Set the head chunks as open (being appended to).
-		maxTime := c.MaxTime
+		maxTime := c.maxTime
 		if s.headChunk == c {
 			maxTime = math.MaxInt64
 		}
@@ -1526,7 +1527,7 @@ func (s *stripeSeries) gc(mint int64) (map[uint64]struct{}, int) {
 		for hash, all := range s.hashes[i] {
 			for _, series := range all {
 				series.Lock()
-				rmChunks += series.TruncateChunksBefore(mint)
+				rmChunks += series.truncateChunksBefore(mint)
 
 				if len(series.chunks) > 0 || series.pendingCommit {
 					series.Unlock()
@@ -1621,11 +1622,10 @@ func (s sample) V() float64 {
 type memSeries struct {
 	sync.Mutex
 
-	ref       uint64
-	chunks    []*memChunk
-	lset      labels.Labels
-	headChunk *memChunk
-
+	ref          uint64
+	chunks       []*memChunk
+	lset         labels.Labels
+	headChunk    *memChunk
 	chunkRange   int64
 	firstChunkID int
 
@@ -1646,26 +1646,26 @@ func newMemSeries(lset labels.Labels, id uint64, chunkRange int64) *memSeries {
 	return s
 }
 
-func (s *memSeries) MinTime() int64 {
+func (s *memSeries) minTime() int64 {
 	if len(s.chunks) == 0 {
 		return math.MinInt64
 	}
-	return s.chunks[0].MinTime
+	return s.chunks[0].minTime
 }
 
-func (s *memSeries) MaxTime() int64 {
+func (s *memSeries) maxTime() int64 {
 	c := s.head()
 	if c == nil {
 		return math.MinInt64
 	}
-	return c.MaxTime
+	return c.maxTime
 }
 
 func (s *memSeries) cut(mint int64) *memChunk {
 	c := &memChunk{
-		Chunk:   chunkenc.NewXORChunk(),
-		MinTime: mint,
-		MaxTime: math.MinInt64,
+		chunk:   chunkenc.NewXORChunk(),
+		minTime: mint,
+		maxTime: math.MinInt64,
 	}
 	s.chunks = append(s.chunks, c)
 	s.headChunk = c
@@ -1674,7 +1674,7 @@ func (s *memSeries) cut(mint int64) *memChunk {
 	// may be chosen dynamically at a later point.
 	s.nextAt = rangeForTimestamp(mint, s.chunkRange)
 
-	app, err := c.Chunk.Appender()
+	app, err := c.chunk.Appender()
 	if err != nil {
 		panic(err)
 	}
@@ -1682,17 +1682,17 @@ func (s *memSeries) cut(mint int64) *memChunk {
 	return c
 }
 
-func (s *memSeries) ChunksMetas() []chunks.Meta {
+func (s *memSeries) chunksMetas() []chunks.Meta {
 	metas := make([]chunks.Meta, 0, len(s.chunks))
 	for _, chk := range s.chunks {
-		metas = append(metas, chunks.Meta{Chunk: chk.Chunk, MinTime: chk.MinTime, MaxTime: chk.MaxTime})
+		metas = append(metas, chunks.Meta{Chunk: chk.chunk, MinTime: chk.minTime, MaxTime: chk.maxTime})
 	}
 	return metas
 }
 
 // reset re-initialises all the variable in the memSeries except 'lset', 'ref',
 // and 'chunkRange', like how it would appear after 'newmemSeries(...)'.
-func (s *memSeries) Reset() {
+func (s *memSeries) reset() {
 	s.chunks = nil
 	s.headChunk = nil
 	s.firstChunkID = 0
@@ -1703,16 +1703,16 @@ func (s *memSeries) Reset() {
 }
 
 // Appendable checks whether the given sample is valid for appending to the series.
-func (s *memSeries) Appendable(t int64, v float64) error {
+func (s *memSeries) appendable(t int64, v float64) error {
 	c := s.head()
 	if c == nil {
 		return nil
 	}
 
-	if t > c.MaxTime {
+	if t > c.maxTime {
 		return nil
 	}
-	if t < c.MaxTime {
+	if t < c.maxTime {
 		return ErrOutOfOrderSample
 	}
 	// We are allowing exact duplicates as we can encounter them in valid cases
@@ -1723,7 +1723,7 @@ func (s *memSeries) Appendable(t int64, v float64) error {
 	return nil
 }
 
-func (s *memSeries) Chunk(id int) *memChunk {
+func (s *memSeries) chunk(id int) *memChunk {
 	ix := id - s.firstChunkID
 	if ix < 0 || ix >= len(s.chunks) {
 		return nil
@@ -1731,16 +1731,16 @@ func (s *memSeries) Chunk(id int) *memChunk {
 	return s.chunks[ix]
 }
 
-func (s *memSeries) ChunkID(pos int) int {
+func (s *memSeries) chunkID(pos int) int {
 	return pos + s.firstChunkID
 }
 
 // TruncateChunksBefore removes all chunks from the series that have not timestamp
 // at or after mint. Chunk IDs remain unchanged.
-func (s *memSeries) TruncateChunksBefore(mint int64) (removed int) {
+func (s *memSeries) truncateChunksBefore(mint int64) (removed int) {
 	var k int
 	for i, c := range s.chunks {
-		if c.MaxTime >= mint {
+		if c.maxTime >= mint {
 			break
 		}
 		k = i + 1
@@ -1757,7 +1757,7 @@ func (s *memSeries) TruncateChunksBefore(mint int64) (removed int) {
 }
 
 // Append adds the sample (t, v) to the series.
-func (s *memSeries) Append(t int64, v float64) (success, chunkCreated bool) {
+func (s *memSeries) append(t int64, v float64) (success, chunkCreated bool) {
 	// Based on Gorilla white papers this offers near-optimal compression ratio
 	// so anything bigger that this has diminishing returns and increases
 	// the time range within which we have to decompress all samples.
@@ -1769,17 +1769,17 @@ func (s *memSeries) Append(t int64, v float64) (success, chunkCreated bool) {
 		c = s.cut(t)
 		chunkCreated = true
 	}
-	numSamples := c.Chunk.NumSamples()
+	numSamples := c.chunk.NumSamples()
 
 	// Out of order sample.
-	if c.MaxTime >= t {
+	if c.maxTime >= t {
 		return false, chunkCreated
 	}
 	// If we reach 25% of a chunk's desired sample count, set a definitive time
 	// at which to start the next chunk.
 	// At latest it must happen at the timestamp set when the chunk was cut.
 	if numSamples == samplesPerChunk/4 {
-		s.nextAt = computeChunkEndTime(c.MinTime, c.MaxTime, s.nextAt)
+		s.nextAt = computeChunkEndTime(c.minTime, c.maxTime, s.nextAt)
 	}
 	if t >= s.nextAt {
 		c = s.cut(t)
@@ -1787,7 +1787,7 @@ func (s *memSeries) Append(t int64, v float64) (success, chunkCreated bool) {
 	}
 	s.app.Append(t, v)
 
-	c.MaxTime = t
+	c.maxTime = t
 
 	s.sampleBuf[0] = s.sampleBuf[1]
 	s.sampleBuf[1] = s.sampleBuf[2]
@@ -1795,70 +1795,6 @@ func (s *memSeries) Append(t int64, v float64) (success, chunkCreated bool) {
 	s.sampleBuf[3] = sample{t: t, v: v}
 
 	return true, chunkCreated
-}
-
-func (s *memSeries) Iterator(id int) chunkenc.Iterator {
-	c := s.Chunk(id)
-	// TODO(fabxc): Work around! A querier may have retrieved a pointer to a series' chunk,
-	// which got then garbage collected before it got accessed.
-	// We must ensure to not garbage collect as long as any readers still hold a reference.
-	if c == nil {
-		return chunkenc.NewNopIterator()
-	}
-
-	if id-s.firstChunkID < len(s.chunks)-1 {
-		return c.Chunk.Iterator()
-	}
-	// Serve the last 4 samples for the last chunk from the sample buffer
-	// as their compressed bytes may be mutated by added samples.
-	it := &memSafeIterator{
-		Iterator: c.Chunk.Iterator(),
-		i:        -1,
-		total:    c.Chunk.NumSamples(),
-		buf:      s.sampleBuf,
-	}
-	return it
-}
-
-func (s *memSeries) head() *memChunk {
-	return s.headChunk
-}
-
-type memChunk struct {
-	Chunk            chunkenc.Chunk
-	MinTime, MaxTime int64
-}
-
-// Returns true if the chunk overlaps [mint, maxt].
-func (mc *memChunk) OverlapsClosedInterval(mint, maxt int64) bool {
-	return mc.MinTime <= maxt && mint <= mc.MaxTime
-}
-
-type memSafeIterator struct {
-	chunkenc.Iterator
-
-	i     int
-	total int
-	buf   [4]sample
-}
-
-func (it *memSafeIterator) Next() bool {
-	if it.i+1 >= it.total {
-		return false
-	}
-	it.i++
-	if it.total-it.i > 4 {
-		return it.Iterator.Next()
-	}
-	return true
-}
-
-func (it *memSafeIterator) At() (int64, float64) {
-	if it.total-it.i > 4 {
-		return it.Iterator.At()
-	}
-	s := it.buf[4-(it.total-it.i)]
-	return s.t, s.v
 }
 
 // computeChunkEndTime estimates the end timestamp based the beginning of a chunk,

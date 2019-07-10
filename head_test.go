@@ -226,18 +226,18 @@ func TestHead_Truncate(t *testing.T) {
 	s4, _ := h.getOrCreate(4, labels.FromStrings("a", "2", "b", "2", "c", "1"))
 
 	s1.chunks = []*memChunk{
-		{MinTime: 0, MaxTime: 999},
-		{MinTime: 1000, MaxTime: 1999},
-		{MinTime: 2000, MaxTime: 2999},
+		{minTime: 0, maxTime: 999},
+		{minTime: 1000, maxTime: 1999},
+		{minTime: 2000, maxTime: 2999},
 	}
 	s2.chunks = []*memChunk{
-		{MinTime: 1000, MaxTime: 1999},
-		{MinTime: 2000, MaxTime: 2999},
-		{MinTime: 3000, MaxTime: 3999},
+		{minTime: 1000, maxTime: 1999},
+		{minTime: 2000, maxTime: 2999},
+		{minTime: 3000, maxTime: 3999},
 	}
 	s3.chunks = []*memChunk{
-		{MinTime: 0, MaxTime: 999},
-		{MinTime: 1000, MaxTime: 1999},
+		{minTime: 0, maxTime: 999},
+		{minTime: 1000, maxTime: 1999},
 	}
 	s4.chunks = []*memChunk{}
 
@@ -247,12 +247,12 @@ func TestHead_Truncate(t *testing.T) {
 	testutil.Ok(t, h.Truncate(2000))
 
 	testutil.Equals(t, []*memChunk{
-		{MinTime: 2000, MaxTime: 2999},
+		{minTime: 2000, maxTime: 2999},
 	}, h.series.getByID(s1.ref).chunks)
 
 	testutil.Equals(t, []*memChunk{
-		{MinTime: 2000, MaxTime: 2999},
-		{MinTime: 3000, MaxTime: 3999},
+		{minTime: 2000, maxTime: 2999},
+		{minTime: 3000, maxTime: 3999},
 	}, h.series.getByID(s2.ref).chunks)
 
 	testutil.Assert(t, h.series.getByID(s3.ref) == nil, "")
@@ -293,25 +293,25 @@ func TestMemSeries_truncateChunks(t *testing.T) {
 	s := newMemSeries(labels.FromStrings("a", "b"), 1, 2000)
 
 	for i := 0; i < 4000; i += 5 {
-		ok, _ := s.Append(int64(i), float64(i))
+		ok, _ := s.append(int64(i), float64(i))
 		testutil.Assert(t, ok == true, "sample append failed")
 	}
 
 	// Check that truncate removes half of the chunks and afterwards
 	// that the ID of the last chunk still gives us the same chunk afterwards.
 	countBefore := len(s.chunks)
-	lastID := s.ChunkID(countBefore - 1)
-	lastChunk := s.Chunk(lastID)
+	lastID := s.chunkID(countBefore - 1)
+	lastChunk := s.chunk(lastID)
 
-	testutil.Assert(t, s.Chunk(0) != nil, "")
+	testutil.Assert(t, s.chunk(0) != nil, "")
 	testutil.Assert(t, lastChunk != nil, "")
 
-	s.TruncateChunksBefore(2000)
+	s.truncateChunksBefore(2000)
 
-	testutil.Equals(t, int64(2000), s.chunks[0].MinTime)
-	testutil.Assert(t, s.Chunk(0) == nil, "first chunks not gone")
+	testutil.Equals(t, int64(2000), s.chunks[0].minTime)
+	testutil.Assert(t, s.chunk(0) == nil, "first chunks not gone")
 	testutil.Equals(t, countBefore/2, len(s.chunks))
-	testutil.Equals(t, lastChunk, s.Chunk(lastID))
+	testutil.Equals(t, lastChunk, s.chunk(lastID))
 
 	// Validate that the series' sample buffer is applied correctly to the last chunk
 	// after truncation.
@@ -859,29 +859,29 @@ func TestMemSeries_append(t *testing.T) {
 	// Add first two samples at the very end of a chunk range and the next two
 	// on and after it.
 	// New chunk must correctly be cut at 1000.
-	ok, chunkCreated := s.Append(998, 1)
+	ok, chunkCreated := s.append(998, 1)
 	testutil.Assert(t, ok, "append failed")
 	testutil.Assert(t, chunkCreated, "first sample created chunk")
 
-	ok, chunkCreated = s.Append(999, 2)
+	ok, chunkCreated = s.append(999, 2)
 	testutil.Assert(t, ok, "append failed")
 	testutil.Assert(t, !chunkCreated, "second sample should use same chunk")
 
-	ok, chunkCreated = s.Append(1000, 3)
+	ok, chunkCreated = s.append(1000, 3)
 	testutil.Assert(t, ok, "append failed")
 	testutil.Assert(t, chunkCreated, "expected new chunk on boundary")
 
-	ok, chunkCreated = s.Append(1001, 4)
+	ok, chunkCreated = s.append(1001, 4)
 	testutil.Assert(t, ok, "append failed")
 	testutil.Assert(t, !chunkCreated, "second sample should use same chunk")
 
-	testutil.Assert(t, s.chunks[0].MinTime == 998 && s.chunks[0].MaxTime == 999, "wrong chunk range")
-	testutil.Assert(t, s.chunks[1].MinTime == 1000 && s.chunks[1].MaxTime == 1001, "wrong chunk range")
+	testutil.Assert(t, s.chunks[0].minTime == 998 && s.chunks[0].maxTime == 999, "wrong chunk range")
+	testutil.Assert(t, s.chunks[1].minTime == 1000 && s.chunks[1].maxTime == 1001, "wrong chunk range")
 
 	// Fill the range [1000,2000) with many samples. Intermediate chunks should be cut
 	// at approximately 120 samples per chunk.
 	for i := 1; i < 1000; i++ {
-		ok, _ := s.Append(1001+int64(i), float64(i))
+		ok, _ := s.append(1001+int64(i), float64(i))
 		testutil.Assert(t, ok, "append failed")
 	}
 
@@ -889,7 +889,7 @@ func TestMemSeries_append(t *testing.T) {
 
 	// All chunks but the first and last should now be moderately full.
 	for i, c := range s.chunks[1 : len(s.chunks)-1] {
-		testutil.Assert(t, c.Chunk.NumSamples() > 100, "unexpected small chunk %d of length %d", i, c.Chunk.NumSamples())
+		testutil.Assert(t, c.chunk.NumSamples() > 100, "unexpected small chunk %d of length %d", i, c.chunk.NumSamples())
 	}
 }
 
@@ -903,8 +903,8 @@ func TestGCChunkAccess(t *testing.T) {
 
 	s, _ := h.getOrCreate(1, labels.FromStrings("a", "1"))
 	s.chunks = []*memChunk{
-		{MinTime: 0, MaxTime: 999},
-		{MinTime: 1000, MaxTime: 1999},
+		{minTime: 0, maxTime: 999},
+		{minTime: 1000, maxTime: 1999},
 	}
 
 	idx := h.indexRange(0, 1500)
@@ -943,8 +943,8 @@ func TestGCSeriesAccess(t *testing.T) {
 
 	s, _ := h.getOrCreate(1, labels.FromStrings("a", "1"))
 	s.chunks = []*memChunk{
-		{MinTime: 0, MaxTime: 999},
-		{MinTime: 1000, MaxTime: 1999},
+		{minTime: 0, maxTime: 999},
+		{minTime: 1000, maxTime: 1999},
 	}
 
 	idx := h.indexRange(0, 2000)

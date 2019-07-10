@@ -38,6 +38,24 @@ const (
 	Tombstones Type = 3
 )
 
+var (
+	// ErrNotFound is returned if a looked up resource was not found. Duplicate ErrNotFound from head.go.
+	ErrNotFound = errors.New("not found")
+)
+
+// RefSeries is the series labels with the series ID.
+type RefSeries struct {
+	Ref    uint64
+	Labels labels.Labels
+}
+
+// RefSample is a timestamp/value pair associated with a reference to a series.
+type RefSample struct {
+	Ref uint64
+	T   int64
+	V   float64
+}
+
 // Decoder decodes series, sample, and tombstone records.
 // The zero value is ready to use.
 type Decoder struct {

@@ -1070,7 +1070,7 @@ type chunkSeriesIterator struct {
 	intervals tombstones.Intervals
 }
 
-func newChunkSeriesIterator(cs []chunks.Meta, dranges Intervals, mint, maxt int64) *chunkSeriesIterator {
+func newChunkSeriesIterator(cs []chunks.Meta, dranges tombstones.Intervals, mint, maxt int64) *chunkSeriesIterator {
 	csi := &chunkSeriesIterator{
 		chunks: cs,
 		i:      0,
