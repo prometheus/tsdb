@@ -509,7 +509,7 @@ func (w *Writer) HintPostingsWriteCount(hint int) {
 	if hint <= 0 || cap(w.postings) >= hint {
 		return
 	}
-	w.postings = append(make([]hashEntry, 0, hint), w.postings...)
+	w.postings = append(make([]postingsHashEntry, 0, hint), w.postings...)
 }
 
 func (w *Writer) WritePostings(name, value string, it Postings) error {
