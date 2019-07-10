@@ -868,15 +868,15 @@ func (c *LeveledCompactor) writePostings(indexw IndexWriter, values map[string]s
 		}
 	}
 
-	s := make([]string, 0, maxNumValues)
+	labelValuesBuf := make([]string, 0, maxNumValues)
 	for n, v := range values {
-		s = s[:0]
+		labelValuesBuf = labelValuesBuf[:0]
 		names = append(names, n)
 
-		for x := range v {
-			s = append(s, x)
+		for val := range v {
+			labelValuesBuf = append(labelValuesBuf, val)
 		}
-		if err := indexw.WriteLabelIndex([]string{n}, s); err != nil {
+		if err := indexw.WriteLabelIndex([]string{n}, labelValuesBuf); err != nil {
 			return errors.Wrap(err, "write label index")
 		}
 	}
@@ -891,30 +891,40 @@ func (c *LeveledCompactor) writePostings(indexw IndexWriter, values map[string]s
 	var bigEndianPost index.Postings = index.NewBigEndianPostings(nil)
 	var listPost = index.NewListPostings(nil).(*index.ListPostings)
 	for _, n := range names {
-		s = s[:0]
+		labelValuesBuf = labelValuesBuf[:0]
 		if n == apkName {
-			s = append(s, apkValue)
+			labelValuesBuf = append(labelValuesBuf, apkValue)
 		} else {
 			for v := range values[n] {
-				s = append(s, v)
+				labelValuesBuf = append(labelValuesBuf, v)
 			}
-			sort.Strings(s)
+			sort.Strings(labelValuesBuf)
 		}
 
-		for _, v := range s {
+		for _, v := range labelValuesBuf {
 			postingBuf = postingBuf[:0]
 			for i, ir := range indexReaders {
 				bigEndianPost, err = ir.Postings(n, v, bigEndianPost)
 				if err != nil {
 					return errors.Wrap(err, "read postings")
 				}
+				sMap := seriesMap[i]
+				idx, lastIdx := -1, -1
 				for bigEndianPost.Next() {
-					newVal, ok := seriesMap[i][bigEndianPost.At()]
+					newVal, ok := sMap[bigEndianPost.At()]
 					if !ok {
 						continue
 					}
 					// idx is the index at which newVal exists or index at which we need to insert.
-					idx := sort.Search(len(postingBuf), func(i int) bool { return postingBuf[i] >= newVal })
+					// 'bigEndianPost' consists postings in sorted order w.r.t. the series labels.
+					// Hence the mapped series will also be in ascending order including the postings.
+					// So we need not look at/before 'lastIdx' in 'postingBuf'.
+					for idx = lastIdx + 1; idx < len(postingBuf); idx++ {
+						if postingBuf[idx] >= newVal {
+							break
+						}
+					}
+					lastIdx = idx
 					if idx == len(postingBuf) {
 						postingBuf = append(postingBuf, newVal)
 					} else if postingBuf[idx] != newVal {
