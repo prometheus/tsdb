@@ -57,7 +57,6 @@ type Meta struct {
 }
 
 // writeHash writes the chunk encoding and raw data into the provided hash.
-// 'buf' byte slice is used to avoid allocating new byte slice. Assumes that len(buf) is 0.
 func (cm *Meta) writeHash(h hash.Hash, buf []byte) error {
 	buf = append(buf[:0], byte(cm.Chunk.Encoding()))
 	if _, err := h.Write(buf[:1]); err != nil {
