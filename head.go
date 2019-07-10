@@ -64,6 +64,7 @@ type Head struct {
 	logger     log.Logger
 	appendPool sync.Pool
 	bytesPool  sync.Pool
+	numSeries  uint64
 
 	minTime, maxTime int64 // Current min and max of the samples included in the head.
 	minValidTime     int64 // Mint allowed to be added to the head. It shouldn't be lower than the maxt of the last persisted block.
@@ -698,6 +699,10 @@ func (h *rangeHead) MaxTime() int64 {
 	return h.maxt
 }
 
+func (h *rangeHead) NumSeries() uint64 {
+	return h.head.NumSeries()
+}
+
 // initAppender is a helper to initialize the time bounds of the head
 // upon the first sample it receives.
 type initAppender struct {
@@ -1025,6 +1030,8 @@ func (h *Head) gc() {
 	h.metrics.series.Sub(float64(seriesRemoved))
 	h.metrics.chunksRemoved.Add(float64(chunksRemoved))
 	h.metrics.chunks.Sub(float64(chunksRemoved))
+	// Ref: https://golang.org/pkg/sync/atomic/#AddUint64
+	atomic.AddUint64(&h.numSeries, ^uint64(seriesRemoved-1))
 
 	// Remove deleted series IDs from the postings lists.
 	h.postings.Delete(deleted)
@@ -1109,6 +1116,11 @@ func (h *Head) MinTime() int64 {
 // MaxTime returns the highest timestamp seen in data of the head.
 func (h *Head) MaxTime() int64 {
 	return atomic.LoadInt64(&h.maxTime)
+}
+
+// NumSeries returns the number of active series in the head.
+func (h *Head) NumSeries() uint64 {
+	return atomic.LoadUint64(&h.numSeries)
 }
 
 // compactable returns whether the head has a compactable range.
@@ -1349,6 +1361,7 @@ func (h *Head) getOrCreateWithID(id, hash uint64, lset labels.Labels) (*memSerie
 
 	h.metrics.series.Inc()
 	h.metrics.seriesCreated.Inc()
+	atomic.AddUint64(&h.numSeries, 1)
 
 	h.postings.Add(id, lset)
 

@@ -460,6 +460,7 @@ func (erringBReader) Chunks() (ChunkReader, error)         { return nil, errors.
 func (erringBReader) Tombstones() (TombstoneReader, error) { return nil, errors.New("tombstones") }
 func (erringBReader) MinTime() int64                       { return 0 }
 func (erringBReader) MaxTime() int64                       { return 0 }
+func (erringBReader) NumSeries() uint64                    { return 0 }
 
 type nopChunkWriter struct{}
 
