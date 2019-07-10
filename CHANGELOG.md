@@ -1,6 +1,7 @@
 ## Master / unreleased
 
  - [FEATURE] `chunckenc.Chunk.Iterator` method now takes a `chunckenc.Iterator` interface as an argument for reuse.
+ - [FEATURE] `BlockReader` interface gets `NumSeries()` method.
 
 ## 0.9.1
 
