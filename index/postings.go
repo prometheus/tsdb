@@ -780,6 +780,9 @@ func (it *baseDeltaPostings) Next() bool {
 
 func (it *baseDeltaPostings) Seek(x uint64) bool {
 	if it.cur >= x {
+		if it.cur == it.base {
+			it.idx += it.width
+		}
 		return true
 	}
 
@@ -2039,15 +2042,16 @@ type baseDeltaBlock16Postings struct {
 	numBlock   int
 	blockIdx   int // The current block idx.
 	nextBlock  int
-	width      int
-	prel       int
-	addrMask   uint32
+	// width      int
+	// prel       int
+	// addrMask   uint32
 }
 
 func newBaseDeltaBlock16Postings(bstream []byte) *baseDeltaBlock16Postings {
 	x := binary.BigEndian.Uint32(bstream) // Read the footer address.
-	width := int(bstream[8+int(x)])
-	return &baseDeltaBlock16Postings{bs: bstream[8:], numBlock: int(binary.BigEndian.Uint32(bstream[4:])), footerAddr: int(x), width: width, prel: 4 - width, addrMask: uint32((1 << (8 * uint(width))) - 1)}
+	// width := int(bstream[8+int(x)])
+	// return &baseDeltaBlock16Postings{bs: bstream[8:], numBlock: int(binary.BigEndian.Uint32(bstream[4:])), footerAddr: int(x), width: width, prel: 4 - width, addrMask: uint32((1 << (8 * uint(width))) - 1)}
+	return &baseDeltaBlock16Postings{bs: bstream[8:], numBlock: int(binary.BigEndian.Uint32(bstream[4:])), footerAddr: int(x)}
 }
 
 func (it *baseDeltaBlock16Postings) At() uint64 {
@@ -2069,11 +2073,12 @@ func (it *baseDeltaBlock16Postings) Next() bool {
 		it.key = val << 16
 		it.idx += size
 		it.inside = true
-		if it.blockIdx != it.numBlock-1 {
-			it.nextBlock = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+1+(it.blockIdx+1)*it.width-it.prel:]) & it.addrMask)
-		} else {
-			it.nextBlock = it.footerAddr
-		}
+		// if it.blockIdx != it.numBlock-1 {
+			// it.nextBlock = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+1+(it.blockIdx+1)*it.width-it.prel:]) & it.addrMask)
+			it.nextBlock = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+((it.blockIdx+1)<<2):]))
+		// } else {
+		// 	it.nextBlock = it.footerAddr
+		// }
 		it.cur = it.key | uint64(binary.BigEndian.Uint16(it.bs[it.idx:]))
 		it.idx += 2
 		return true
@@ -2098,11 +2103,12 @@ func (it *baseDeltaBlock16Postings) seekInBlock(x uint64) bool {
 			it.key = val << 16
 			it.idx += size
 			it.inside = true
-			if it.blockIdx != it.numBlock-1 {
-				it.nextBlock = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+1+(it.blockIdx+1)*it.width-it.prel:]) & it.addrMask)
-			} else {
-				it.nextBlock = it.footerAddr
-			}
+			// if it.blockIdx != it.numBlock-1 {
+				// it.nextBlock = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+1+(it.blockIdx+1)*it.width-it.prel:]) & it.addrMask)
+				it.nextBlock = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+((it.blockIdx+1)<<2):]))
+			// } else {
+			// 	it.nextBlock = it.footerAddr
+			// }
 			it.cur = it.key | uint64(binary.BigEndian.Uint16(it.bs[it.idx:]))
 			it.idx += 2
 			return true
@@ -2125,7 +2131,8 @@ func (it *baseDeltaBlock16Postings) Seek(x uint64) bool {
 		return it.seekInBlock(x)
 	} else {
 		i := sort.Search(it.numBlock-it.blockIdx, func(i int) bool {
-			off := int(binary.BigEndian.Uint32(it.bs[it.footerAddr+1+(it.blockIdx+i)*it.width-it.prel:]) & it.addrMask)
+			// off := int(binary.BigEndian.Uint32(it.bs[it.footerAddr+1+(it.blockIdx+i)*it.width-it.prel:]) & it.addrMask)
+			off := int(binary.BigEndian.Uint32(it.bs[it.footerAddr+((it.blockIdx+i)<<2):]))
 			k, _ := binary.Uvarint(it.bs[off:])
 			return k >= curKey
 		})
@@ -2135,7 +2142,8 @@ func (it *baseDeltaBlock16Postings) Seek(x uint64) bool {
 		it.blockIdx += i
 		if i != 0 { // i > 0.
 			it.inside = false
-			it.idx = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+1+it.blockIdx*it.width-it.prel:]) & it.addrMask)
+			// it.idx = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+1+it.blockIdx*it.width-it.prel:]) & it.addrMask)
+			it.idx = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+((it.blockIdx)<<2):]))
 		}
 	}
 	val, size := binary.Uvarint(it.bs[it.idx:])
@@ -2146,16 +2154,18 @@ func (it *baseDeltaBlock16Postings) Seek(x uint64) bool {
 			return false
 		} else {
 			it.blockIdx += 1
-			it.idx = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+1+it.blockIdx*it.width-it.prel:]) & it.addrMask)
+			// it.idx = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+1+it.blockIdx*it.width-it.prel:]) & it.addrMask)
+			it.idx = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+((it.blockIdx)<<2):]))
 			val, size := binary.Uvarint(it.bs[it.idx:])
 			it.key = val << 16
 			it.idx += size
 			it.inside = true
-			if it.blockIdx != it.numBlock-1 {
-				it.nextBlock = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+1+(it.blockIdx+1)*it.width-it.prel:]) & it.addrMask)
-			} else {
-				it.nextBlock = it.footerAddr
-			}
+			// if it.blockIdx != it.numBlock-1 {
+				// it.nextBlock = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+1+(it.blockIdx+1)*it.width-it.prel:]) & it.addrMask)
+				it.nextBlock = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+((it.blockIdx+1)<<2):]))
+			// } else {
+			// 	it.nextBlock = it.footerAddr
+			// }
 			it.cur = it.key | uint64(binary.BigEndian.Uint16(it.bs[it.idx:]))
 			it.idx += 2
 			return true
@@ -2165,11 +2175,12 @@ func (it *baseDeltaBlock16Postings) Seek(x uint64) bool {
 	it.idx += size
 	it.inside = true
 
-	if it.blockIdx != it.numBlock-1 {
-		it.nextBlock = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+1+(it.blockIdx+1)*it.width-it.prel:]) & it.addrMask)
-	} else {
-		it.nextBlock = it.footerAddr
-	}
+	// if it.blockIdx != it.numBlock-1 {
+		// it.nextBlock = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+1+(it.blockIdx+1)*it.width-it.prel:]) & it.addrMask)
+		it.nextBlock = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+((it.blockIdx+1)<<2):]))
+	// } else {
+	// 	it.nextBlock = it.footerAddr
+	// }
 	return it.seekInBlock(x)
 }
 
@@ -2217,6 +2228,209 @@ func writeBaseDeltaBlock16Postings(e *encoding.Encbuf, arr []uint32) {
 	}
 	startingOffs = append(startingOffs, uint32(len(e.B)))
 	writeBaseDelta16Block(e, vals, key, valueSize)
+	startingOffs = append(startingOffs, uint32(len(e.B)))
+
+	binary.BigEndian.PutUint32(e.B[startOff:], uint32(len(e.B)-8-startOff)) // Put footer starting offset.
+	binary.BigEndian.PutUint32(e.B[startOff+4:], uint32(len(startingOffs)-1)) // Put number of blocks.
+	// width := bits.Len32(startingOffs[len(startingOffs)-1] - 8 - uint32(startOff))
+	// if width == 0 {
+	// 	// key 0 will result in 0 width.
+	// 	width += 1
+	// }
+
+	// e.PutByte(byte((width + 7) / 8))
+	// for _, off := range startingOffs {
+	// 	putBytes(e, off-8-uint32(startOff), (width+7)/8)
+	// }
+	for _, off := range startingOffs {
+		e.PutBE32(off-8-uint32(startOff))
+	}
+}
+
+type baseDeltaBlock16PostingsV2 struct {
+	bs         []byte
+	cur        uint64
+	inside     bool
+	idx        int // The current offset inside the bs.
+	footerAddr int
+	base       uint64
+	numBlock   int
+	blockIdx   int // The current block idx.
+	nextBlock  int
+	width      int
+	prel       int
+	addrMask   uint32
+}
+
+func newBaseDeltaBlock16PostingsV2(bstream []byte) *baseDeltaBlock16PostingsV2 {
+	x := binary.BigEndian.Uint32(bstream) // Read the footer address.
+	width := int(bstream[8+int(x)])
+	return &baseDeltaBlock16PostingsV2{bs: bstream[8:], numBlock: int(binary.BigEndian.Uint32(bstream[4:])), footerAddr: int(x), width: width, prel: 4 - width, addrMask: uint32((1 << (8 * uint(width))) - 1)}
+}
+
+func (it *baseDeltaBlock16PostingsV2) At() uint64 {
+	return it.cur
+}
+
+func (it *baseDeltaBlock16PostingsV2) Next() bool {
+	if it.inside { // Already entered the block.
+		if it.idx < it.nextBlock {
+			it.cur = it.base + uint64(binary.BigEndian.Uint16(it.bs[it.idx:]))
+			it.idx += 2
+			return true
+		}
+		it.blockIdx += 1 // Go to the next block.
+	}
+	// Currently not entered any block.
+	if it.idx < it.footerAddr {
+		val, size := binary.Uvarint(it.bs[it.idx:]) // Read the base.
+		it.base = val
+		it.idx += size
+		it.inside = true
+		if it.blockIdx != it.numBlock-1 {
+			it.nextBlock = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+1+(it.blockIdx+1)*it.width-it.prel:]) & it.addrMask)
+		} else {
+			it.nextBlock = it.footerAddr
+		}
+		it.cur = it.base
+		return true
+	} else {
+		return false
+	}
+}
+
+func (it *baseDeltaBlock16PostingsV2) seekInBlock(x uint64) bool {
+	temp := x - it.base
+	num := (it.nextBlock - it.idx) >> 1
+	j := sort.Search(num, func(i int) bool {
+		return uint64(binary.BigEndian.Uint16(it.bs[it.idx+(i<<1):])) >= temp
+	})
+	if j == num {
+		// Fast-path to the next block.
+		// The first element in next block should be >= x.
+		it.idx = it.nextBlock
+		it.blockIdx += 1
+		if it.idx < it.footerAddr {
+			val, size := binary.Uvarint(it.bs[it.idx:])
+			it.base = val
+			it.idx += size
+			it.inside = true
+			if it.blockIdx != it.numBlock-1 {
+				it.nextBlock = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+1+(it.blockIdx+1)*it.width-it.prel:]) & it.addrMask)
+			} else {
+				it.nextBlock = it.footerAddr
+			}
+			it.cur = it.base
+			return true
+		} else {
+			return false
+		}
+	}
+	it.cur = it.base + uint64(binary.BigEndian.Uint16(it.bs[it.idx+(j<<1):]))
+	it.idx += (j + 1) << 1
+	return true
+}
+
+func (it *baseDeltaBlock16PostingsV2) Seek(x uint64) bool {
+	if it.cur >= x {
+		return true
+	}
+	if it.inside && bits.Len64(x - it.base) <= 16 {
+		// Fast path for x in current block.
+		return it.seekInBlock(x)
+	} else {
+		i := sort.Search(it.numBlock-it.blockIdx, func(i int) bool {
+			off := int(binary.BigEndian.Uint32(it.bs[it.footerAddr+1+(it.blockIdx+i)*it.width-it.prel:]) & it.addrMask)
+			k, _ := binary.Uvarint(it.bs[off:])
+			return k > x
+		})
+		if i > 0 {
+			i -= 1
+		}
+		it.blockIdx += i
+		if i != 0 { // i > 0.
+			it.inside = false
+			it.idx = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+1+it.blockIdx*it.width-it.prel:]) & it.addrMask)
+		}
+	}
+	val, size := binary.Uvarint(it.bs[it.idx:])
+	it.base = val
+	it.idx += size
+	it.inside = true
+	if it.blockIdx != it.numBlock-1 {
+		it.nextBlock = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+1+(it.blockIdx+1)*it.width-it.prel:]) & it.addrMask)
+	} else {
+		it.nextBlock = it.footerAddr
+	}
+	if it.base >= x {
+		it.cur = it.base
+		return true
+	}
+
+	// If the length of the diff larger than 16, directly go to the next block
+	// because the first value of the next block should be >= x.
+	if bits.Len64(x - val) > 16 {
+		if it.blockIdx == it.numBlock-1 {
+			return false
+		} else {
+			it.blockIdx += 1
+			it.idx = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+1+it.blockIdx*it.width-it.prel:]) & it.addrMask)
+			val, size := binary.Uvarint(it.bs[it.idx:])
+			it.base = val
+			it.idx += size
+			it.inside = true
+			if it.blockIdx != it.numBlock-1 {
+				it.nextBlock = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+1+(it.blockIdx+1)*it.width-it.prel:]) & it.addrMask)
+			} else {
+				it.nextBlock = it.footerAddr
+			}
+			it.cur = it.base + uint64(binary.BigEndian.Uint16(it.bs[it.idx:]))
+			it.idx += 2
+			return true
+		}
+	}
+	return it.seekInBlock(x)
+}
+
+func (it *baseDeltaBlock16PostingsV2) Err() error {
+	return nil
+}
+
+func writeBaseDelta16BlockV2(e *encoding.Encbuf, vals []uint32, base uint32) {
+	e.PutUvarint32(base)
+	c := make([]byte, 2)
+	for _, val := range vals {
+		binary.BigEndian.PutUint16(c[:], uint16(val))
+		e.PutByte(c[0])
+		e.PutByte(c[1])
+	}
+}
+
+func writeBaseDeltaBlock16PostingsV2(e *encoding.Encbuf, arr []uint32) {
+	var base uint32
+	var idx int               // Index of current element in arr.
+	var startingOffs []uint32 // The starting offsets of each block.
+	var vals []uint32         // The converted values in the current block.
+	startOff := len(e.Get())
+	e.PutBE32(0) // Footer starting offset.
+	e.PutBE32(0) // Number of blocks.
+	base = arr[idx]
+	idx += 1
+	for idx < len(arr) {
+		delta := arr[idx] - base
+		if bits.Len32(delta) > 16 {
+			startingOffs = append(startingOffs, uint32(len(e.B)))
+			writeBaseDelta16BlockV2(e, vals, base)
+			base = arr[idx]
+			idx += 1
+			vals = vals[:0]
+			continue
+		}
+		vals = append(vals, delta)
+		idx += 1
+	}
+	startingOffs = append(startingOffs, uint32(len(e.B)))
+	writeBaseDelta16BlockV2(e, vals, base)
 
 	binary.BigEndian.PutUint32(e.B[startOff:], uint32(len(e.B)-8-startOff)) // Put footer starting offset.
 	binary.BigEndian.PutUint32(e.B[startOff+4:], uint32(len(startingOffs))) // Put number of blocks.
