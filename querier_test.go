@@ -635,7 +635,7 @@ func TestBaseChunkSeries(t *testing.T) {
 		}
 
 		bcs := &baseChunkSeries{
-			p:          index.NewListPostings(tc.postings),
+			p:          index.NewListPostings(tc.postings...),
 			index:      mi,
 			tombstones: newMemTombstones(),
 		}
@@ -1385,7 +1385,7 @@ func (m mockIndex) LabelValues(names ...string) (index.StringTuples, error) {
 
 func (m mockIndex) Postings(name, value string, _ index.Postings) (index.Postings, error) {
 	l := labels.Label{Name: name, Value: value}
-	return index.NewListPostings(m.postings[l]), nil
+	return index.NewListPostings(m.postings[l]...), nil
 }
 
 func (m mockIndex) SortedPostings(p index.Postings) index.Postings {
@@ -1397,7 +1397,7 @@ func (m mockIndex) SortedPostings(p index.Postings) index.Postings {
 	sort.Slice(ep, func(i, j int) bool {
 		return labels.Compare(m.series[ep[i]].l, m.series[ep[j]].l) < 0
 	})
-	return index.NewListPostings(ep)
+	return index.NewListPostings(ep...)
 }
 
 func (m mockIndex) Series(ref uint64, lset *labels.Labels, chks *[]chunks.Meta) error {

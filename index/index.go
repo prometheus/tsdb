@@ -1072,7 +1072,7 @@ type Decoder struct {
 func (dec *Decoder) Postings(b []byte, reusePosts Postings) (int, Postings, error) {
 	d := encoding.Decbuf{B: b}
 	n := d.Be32int()
-	if bep, ok := reusePosts.(*bigEndianPostings); ok {
+	if bep, ok := reusePosts.(*BigEndianPostings); ok {
 		bep.Reset(d.Get())
 		return n, bep, d.Err()
 	}

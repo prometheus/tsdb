@@ -92,7 +92,7 @@ func (p *MemPostings) Get(name, value string) Postings {
 	if lp == nil {
 		return EmptyPostings()
 	}
-	return newListPostings(lp...)
+	return NewListPostings(lp...)
 }
 
 // All returns a postings list over all documents ever added.
@@ -202,7 +202,7 @@ func (p *MemPostings) Iter(f func(labels.Label, Postings) error) error {
 
 	for n, e := range p.m {
 		for v, p := range e {
-			if err := f(labels.Label{Name: n, Value: v}, newListPostings(p...)); err != nil {
+			if err := f(labels.Label{Name: n, Value: v}, NewListPostings(p...)); err != nil {
 				return err
 			}
 		}
@@ -598,11 +598,7 @@ type ListPostings struct {
 	cur  uint64
 }
 
-func NewListPostings(list []uint64) Postings {
-	return newListPostings(list...)
-}
-
-func newListPostings(list ...uint64) *ListPostings {
+func NewListPostings(list ...uint64) *ListPostings {
 	return &ListPostings{list: list}
 }
 
@@ -651,22 +647,22 @@ func (it *ListPostings) Reset(list []uint64) {
 	it.list = list
 }
 
-// bigEndianPostings implements the Postings interface over a byte stream of
+// BigEndianPostings implements the Postings interface over a byte stream of
 // big endian numbers.
-type bigEndianPostings struct {
+type BigEndianPostings struct {
 	list []byte
 	cur  uint32
 }
 
-func NewBigEndianPostings(list []byte) *bigEndianPostings {
-	return &bigEndianPostings{list: list}
+func NewBigEndianPostings(list []byte) *BigEndianPostings {
+	return &BigEndianPostings{list: list}
 }
 
-func (it *bigEndianPostings) At() uint64 {
+func (it *BigEndianPostings) At() uint64 {
 	return uint64(it.cur)
 }
 
-func (it *bigEndianPostings) Next() bool {
+func (it *BigEndianPostings) Next() bool {
 	if len(it.list) >= 4 {
 		it.cur = binary.BigEndian.Uint32(it.list)
 		it.list = it.list[4:]
@@ -675,7 +671,7 @@ func (it *bigEndianPostings) Next() bool {
 	return false
 }
 
-func (it *bigEndianPostings) Seek(x uint64) bool {
+func (it *BigEndianPostings) Seek(x uint64) bool {
 	if uint64(it.cur) >= x {
 		return true
 	}
@@ -695,11 +691,11 @@ func (it *bigEndianPostings) Seek(x uint64) bool {
 	return false
 }
 
-func (it *bigEndianPostings) Err() error {
+func (it *BigEndianPostings) Err() error {
 	return nil
 }
 
-func (it *bigEndianPostings) Reset(list []byte) {
+func (it *BigEndianPostings) Reset(list []byte) {
 	it.cur = 0
 	it.list = list
 }

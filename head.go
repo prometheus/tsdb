@@ -1287,7 +1287,7 @@ func (h *headIndexReader) SortedPostings(p index.Postings) index.Postings {
 	for _, p := range series {
 		ep = append(ep, p.ref)
 	}
-	return index.NewListPostings(ep)
+	return index.NewListPostings(ep...)
 }
 
 // Series returns the series for the given reference.

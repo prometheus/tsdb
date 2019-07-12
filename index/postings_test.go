@@ -62,8 +62,8 @@ func TestMemPostings_ensureOrder(t *testing.T) {
 }
 
 func TestIntersect(t *testing.T) {
-	a := newListPostings(1, 2, 3)
-	b := newListPostings(2, 3, 4)
+	a := NewListPostings(1, 2, 3)
+	b := NewListPostings(2, 3, 4)
 
 	var cases = []struct {
 		in []Postings
@@ -104,51 +104,51 @@ func TestIntersect(t *testing.T) {
 		},
 		{
 			in: []Postings{
-				newListPostings(1, 2, 3, 4, 5),
-				newListPostings(6, 7, 8, 9, 10),
+				NewListPostings(1, 2, 3, 4, 5),
+				NewListPostings(6, 7, 8, 9, 10),
 			},
-			res: newListPostings(),
+			res: NewListPostings(),
 		},
 		{
 			in: []Postings{
-				newListPostings(1, 2, 3, 4, 5),
-				newListPostings(4, 5, 6, 7, 8),
+				NewListPostings(1, 2, 3, 4, 5),
+				NewListPostings(4, 5, 6, 7, 8),
 			},
-			res: newListPostings(4, 5),
+			res: NewListPostings(4, 5),
 		},
 		{
 			in: []Postings{
-				newListPostings(1, 2, 3, 4, 9, 10),
-				newListPostings(1, 4, 5, 6, 7, 8, 10, 11),
+				NewListPostings(1, 2, 3, 4, 9, 10),
+				NewListPostings(1, 4, 5, 6, 7, 8, 10, 11),
 			},
-			res: newListPostings(1, 4, 10),
+			res: NewListPostings(1, 4, 10),
 		},
 		{
 			in: []Postings{
-				newListPostings(1),
-				newListPostings(0, 1),
+				NewListPostings(1),
+				NewListPostings(0, 1),
 			},
-			res: newListPostings(1),
+			res: NewListPostings(1),
 		},
 		{
 			in: []Postings{
-				newListPostings(1),
+				NewListPostings(1),
 			},
-			res: newListPostings(1),
+			res: NewListPostings(1),
 		},
 		{
 			in: []Postings{
-				newListPostings(1),
-				newListPostings(),
+				NewListPostings(1),
+				NewListPostings(),
 			},
-			res: newListPostings(),
+			res: NewListPostings(),
 		},
 		{
 			in: []Postings{
-				newListPostings(),
-				newListPostings(),
+				NewListPostings(),
+				NewListPostings(),
 			},
-			res: newListPostings(),
+			res: NewListPostings(),
 		},
 	}
 
@@ -210,7 +210,7 @@ func TestMultiIntersect(t *testing.T) {
 	for _, c := range cases {
 		ps := make([]Postings, 0, len(c.p))
 		for _, postings := range c.p {
-			ps = append(ps, newListPostings(postings...))
+			ps = append(ps, NewListPostings(postings...))
 		}
 
 		res, err := ExpandPostings(Intersect(ps...))
@@ -240,10 +240,10 @@ func BenchmarkIntersect(t *testing.B) {
 			d = append(d, uint64(i))
 		}
 
-		i1 := newListPostings(a...)
-		i2 := newListPostings(b...)
-		i3 := newListPostings(c...)
-		i4 := newListPostings(d...)
+		i1 := NewListPostings(a...)
+		i2 := NewListPostings(b...)
+		i3 := NewListPostings(c...)
+		i4 := NewListPostings(d...)
 
 		bench.ResetTimer()
 		bench.ReportAllocs()
@@ -270,10 +270,10 @@ func BenchmarkIntersect(t *testing.B) {
 			d = append(d, uint64(i))
 		}
 
-		i1 := newListPostings(a...)
-		i2 := newListPostings(b...)
-		i3 := newListPostings(c...)
-		i4 := newListPostings(d...)
+		i1 := NewListPostings(a...)
+		i2 := NewListPostings(b...)
+		i3 := NewListPostings(c...)
+		i4 := NewListPostings(d...)
 
 		bench.ResetTimer()
 		bench.ReportAllocs()
@@ -294,7 +294,7 @@ func BenchmarkIntersect(t *testing.B) {
 			for j := 1; j < 100; j++ {
 				temp = append(temp, uint64(j))
 			}
-			its = append(its, newListPostings(temp...))
+			its = append(its, NewListPostings(temp...))
 		}
 
 		bench.ResetTimer()
@@ -308,9 +308,9 @@ func BenchmarkIntersect(t *testing.B) {
 }
 
 func TestMultiMerge(t *testing.T) {
-	i1 := newListPostings(1, 2, 3, 4, 5, 6, 1000, 1001)
-	i2 := newListPostings(2, 4, 5, 6, 7, 8, 999, 1001)
-	i3 := newListPostings(1, 2, 5, 6, 7, 8, 1001, 1200)
+	i1 := NewListPostings(1, 2, 3, 4, 5, 6, 1000, 1001)
+	i2 := NewListPostings(2, 4, 5, 6, 7, 8, 999, 1001)
+	i3 := NewListPostings(1, 2, 5, 6, 7, 8, 1001, 1200)
 
 	res, err := ExpandPostings(Merge(i1, i2, i3))
 	testutil.Ok(t, err)
@@ -329,16 +329,16 @@ func TestMergedPostings(t *testing.T) {
 		},
 		{
 			in: []Postings{
-				newListPostings(),
-				newListPostings(),
+				NewListPostings(),
+				NewListPostings(),
 			},
 			res: EmptyPostings(),
 		},
 		{
 			in: []Postings{
-				newListPostings(),
+				NewListPostings(),
 			},
-			res: newListPostings(),
+			res: NewListPostings(),
 		},
 		{
 			in: []Postings{
@@ -351,46 +351,46 @@ func TestMergedPostings(t *testing.T) {
 		},
 		{
 			in: []Postings{
-				newListPostings(1, 2, 3, 4, 5),
-				newListPostings(6, 7, 8, 9, 10),
+				NewListPostings(1, 2, 3, 4, 5),
+				NewListPostings(6, 7, 8, 9, 10),
 			},
-			res: newListPostings(1, 2, 3, 4, 5, 6, 7, 8, 9, 10),
+			res: NewListPostings(1, 2, 3, 4, 5, 6, 7, 8, 9, 10),
 		},
 		{
 			in: []Postings{
-				newListPostings(1, 2, 3, 4, 5),
-				newListPostings(4, 5, 6, 7, 8),
+				NewListPostings(1, 2, 3, 4, 5),
+				NewListPostings(4, 5, 6, 7, 8),
 			},
-			res: newListPostings(1, 2, 3, 4, 5, 6, 7, 8),
+			res: NewListPostings(1, 2, 3, 4, 5, 6, 7, 8),
 		},
 		{
 			in: []Postings{
-				newListPostings(1, 2, 3, 4, 9, 10),
-				newListPostings(1, 4, 5, 6, 7, 8, 10, 11),
+				NewListPostings(1, 2, 3, 4, 9, 10),
+				NewListPostings(1, 4, 5, 6, 7, 8, 10, 11),
 			},
-			res: newListPostings(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11),
+			res: NewListPostings(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11),
 		},
 		{
 			in: []Postings{
-				newListPostings(1, 2, 3, 4, 9, 10),
+				NewListPostings(1, 2, 3, 4, 9, 10),
 				EmptyPostings(),
-				newListPostings(1, 4, 5, 6, 7, 8, 10, 11),
+				NewListPostings(1, 4, 5, 6, 7, 8, 10, 11),
 			},
-			res: newListPostings(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11),
+			res: NewListPostings(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11),
 		},
 		{
 			in: []Postings{
-				newListPostings(1, 2),
-				newListPostings(),
+				NewListPostings(1, 2),
+				NewListPostings(),
 			},
-			res: newListPostings(1, 2),
+			res: NewListPostings(1, 2),
 		},
 		{
 			in: []Postings{
-				newListPostings(1, 2),
+				NewListPostings(1, 2),
 				EmptyPostings(),
 			},
-			res: newListPostings(1, 2),
+			res: NewListPostings(1, 2),
 		},
 	}
 
@@ -464,8 +464,8 @@ func TestMergedPostingsSeek(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		a := newListPostings(c.a...)
-		b := newListPostings(c.b...)
+		a := NewListPostings(c.a...)
+		b := NewListPostings(c.b...)
 
 		p := Merge(a, b)
 
@@ -526,8 +526,8 @@ func TestRemovedPostings(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		a := newListPostings(c.a...)
-		b := newListPostings(c.b...)
+		a := NewListPostings(c.a...)
+		b := NewListPostings(c.b...)
 
 		res, err := ExpandPostings(newRemovedPostings(a, b))
 		testutil.Ok(t, err)
@@ -546,8 +546,8 @@ func TestRemovedNextStackoverflow(t *testing.T) {
 		remove = append(remove, i)
 	}
 
-	flp := newListPostings(full...)
-	rlp := newListPostings(remove...)
+	flp := NewListPostings(full...)
+	rlp := NewListPostings(remove...)
 	rp := newRemovedPostings(flp, rlp)
 	gotElem := false
 	for rp.Next() {
@@ -625,8 +625,8 @@ func TestRemovedPostingsSeek(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		a := newListPostings(c.a...)
-		b := newListPostings(c.b...)
+		a := NewListPostings(c.a...)
+		b := NewListPostings(c.b...)
 
 		p := newRemovedPostings(a, b)
 
@@ -721,11 +721,11 @@ func TestBigEndian(t *testing.T) {
 func TestIntersectWithMerge(t *testing.T) {
 	// One of the reproducible cases for:
 	// https://github.com/prometheus/prometheus/issues/2616
-	a := newListPostings(21, 22, 23, 24, 25, 30)
+	a := NewListPostings(21, 22, 23, 24, 25, 30)
 
 	b := Merge(
-		newListPostings(10, 20, 30),
-		newListPostings(15, 26, 30),
+		NewListPostings(10, 20, 30),
+		NewListPostings(15, 26, 30),
 	)
 
 	p := Intersect(a, b)
@@ -750,39 +750,39 @@ func TestWithoutPostings(t *testing.T) {
 		},
 		{
 			base: EmptyPostings(),
-			drop: newListPostings(1, 2),
+			drop: NewListPostings(1, 2),
 
 			res: EmptyPostings(),
 		},
 		{
-			base: newListPostings(1, 2),
+			base: NewListPostings(1, 2),
 			drop: EmptyPostings(),
 
-			res: newListPostings(1, 2),
+			res: NewListPostings(1, 2),
 		},
 		{
-			base: newListPostings(),
-			drop: newListPostings(),
+			base: NewListPostings(),
+			drop: NewListPostings(),
 
-			res: newListPostings(),
+			res: NewListPostings(),
 		},
 		{
-			base: newListPostings(1, 2, 3),
-			drop: newListPostings(),
+			base: NewListPostings(1, 2, 3),
+			drop: NewListPostings(),
 
-			res: newListPostings(1, 2, 3),
+			res: NewListPostings(1, 2, 3),
 		},
 		{
-			base: newListPostings(1, 2, 3),
-			drop: newListPostings(4, 5, 6),
+			base: NewListPostings(1, 2, 3),
+			drop: NewListPostings(4, 5, 6),
 
-			res: newListPostings(1, 2, 3),
+			res: NewListPostings(1, 2, 3),
 		},
 		{
-			base: newListPostings(1, 2, 3),
-			drop: newListPostings(3, 4, 5),
+			base: NewListPostings(1, 2, 3),
+			drop: NewListPostings(3, 4, 5),
 
-			res: newListPostings(1, 2),
+			res: NewListPostings(1, 2),
 		},
 	}
 

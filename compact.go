@@ -889,7 +889,7 @@ func (c *LeveledCompactor) writePostings(indexw IndexWriter, values map[string]s
 
 	postingBuf := make([]uint64, 0, 1000000)
 	var bigEndianPost index.Postings = index.NewBigEndianPostings(nil)
-	var listPost = index.NewListPostings(nil).(*index.ListPostings)
+	var listPost = index.NewListPostings()
 	for _, n := range names {
 		labelValuesBuf = labelValuesBuf[:0]
 		if n == apkName {

@@ -113,7 +113,7 @@ func (m mockIndex) LabelValues(names ...string) (StringTuples, error) {
 
 func (m mockIndex) Postings(name, value string) (Postings, error) {
 	l := labels.Label{Name: name, Value: value}
-	return NewListPostings(m.postings[l]), nil
+	return NewListPostings(m.postings[l]...), nil
 }
 
 func (m mockIndex) SortedPostings(p Postings) Postings {
@@ -125,7 +125,7 @@ func (m mockIndex) SortedPostings(p Postings) Postings {
 	sort.Slice(ep, func(i, j int) bool {
 		return labels.Compare(m.series[ep[i]].l, m.series[ep[j]].l) < 0
 	})
-	return NewListPostings(ep)
+	return NewListPostings(ep...)
 }
 
 func (m mockIndex) Series(ref uint64, lset *labels.Labels, chks *[]chunks.Meta) error {
@@ -212,7 +212,7 @@ func TestIndexRW_Postings(t *testing.T) {
 	testutil.Ok(t, iw.AddSeries(3, series[2]))
 	testutil.Ok(t, iw.AddSeries(4, series[3]))
 
-	err = iw.WritePostings("a", "1", newListPostings(1, 2, 3, 4))
+	err = iw.WritePostings("a", "1", NewListPostings(1, 2, 3, 4))
 	testutil.Ok(t, err)
 
 	testutil.Ok(t, iw.Close())
@@ -323,9 +323,9 @@ func TestPersistence_index_e2e(t *testing.T) {
 	for i := range all {
 		all[i] = uint64(i)
 	}
-	err = iw.WritePostings("", "", newListPostings(all...))
+	err = iw.WritePostings("", "", NewListPostings(all...))
 	testutil.Ok(t, err)
-	testutil.Ok(t, mi.WritePostings("", "", newListPostings(all...)))
+	testutil.Ok(t, mi.WritePostings("", "", NewListPostings(all...)))
 
 	for n, e := range postings.m {
 		for v := range e {
