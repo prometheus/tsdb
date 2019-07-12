@@ -887,9 +887,8 @@ func (c *LeveledCompactor) writePostings(indexw IndexWriter, values map[string]s
 		idxw.HintPostingsWriteCount(numLabelValues)
 	}
 
-	postingBuf := make([]uint64, 0, 1000000)
+	remapPostings := index.NewRemappedPostings(seriesMap, 1e6)
 	var bigEndianPost index.Postings = index.NewBigEndianPostings(nil)
-	var listPost = index.NewListPostings()
 	for _, n := range names {
 		labelValuesBuf = labelValuesBuf[:0]
 		if n == apkName {
@@ -902,39 +901,16 @@ func (c *LeveledCompactor) writePostings(indexw IndexWriter, values map[string]s
 		}
 
 		for _, v := range labelValuesBuf {
-			postingBuf = postingBuf[:0]
+			remapPostings.ClearPostings()
 			for i, ir := range indexReaders {
 				bigEndianPost, err = ir.Postings(n, v, bigEndianPost)
 				if err != nil {
 					return errors.Wrap(err, "read postings")
 				}
-				sMap := seriesMap[i]
-				idx, lastIdx := -1, -1
-				for bigEndianPost.Next() {
-					newVal, ok := sMap[bigEndianPost.At()]
-					if !ok {
-						continue
-					}
-					// idx is the index at which newVal exists or index at which we need to insert.
-					// 'bigEndianPost' consists postings in sorted order w.r.t. the series labels.
-					// Hence the mapped series will also be in ascending order including the postings.
-					// So we need not look at/before 'lastIdx' in 'postingBuf'.
-					for idx = lastIdx + 1; idx < len(postingBuf); idx++ {
-						if postingBuf[idx] >= newVal {
-							break
-						}
-					}
-					lastIdx = idx
-					if idx == len(postingBuf) {
-						postingBuf = append(postingBuf, newVal)
-					} else if postingBuf[idx] != newVal {
-						postingBuf = append(postingBuf[:idx], append([]uint64{newVal}, postingBuf[idx:]...)...)
-					}
-				}
+				remapPostings.Add(i, bigEndianPost)
 			}
 
-			listPost.Reset(postingBuf)
-			if err := indexw.WritePostings(n, v, listPost); err != nil {
+			if err := indexw.WritePostings(n, v, remapPostings.Get()); err != nil {
 				return errors.Wrap(err, "write postings")
 			}
 		}
