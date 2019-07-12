@@ -85,7 +85,7 @@ type Head struct {
 
 type headMetrics struct {
 	activeAppenders         prometheus.Gauge
-	series                  prometheus.Gauge
+	series                  prometheus.GaugeFunc
 	seriesCreated           prometheus.Counter
 	seriesRemoved           prometheus.Counter
 	seriesNotFound          prometheus.Counter
@@ -113,9 +113,11 @@ func newHeadMetrics(h *Head, r prometheus.Registerer) *headMetrics {
 		Name: "prometheus_tsdb_head_active_appenders",
 		Help: "Number of currently active appender transactions",
 	})
-	m.series = prometheus.NewGauge(prometheus.GaugeOpts{
+	m.series = prometheus.NewGaugeFunc(prometheus.GaugeOpts{
 		Name: "prometheus_tsdb_head_series",
 		Help: "Total number of series in the head block.",
+	}, func() float64 {
+		return float64(h.NumSeries())
 	})
 	m.seriesCreated = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "prometheus_tsdb_head_series_created_total",
@@ -1027,7 +1029,6 @@ func (h *Head) gc() {
 	seriesRemoved := len(deleted)
 
 	h.metrics.seriesRemoved.Add(float64(seriesRemoved))
-	h.metrics.series.Sub(float64(seriesRemoved))
 	h.metrics.chunksRemoved.Add(float64(chunksRemoved))
 	h.metrics.chunks.Sub(float64(chunksRemoved))
 	// Ref: https://golang.org/pkg/sync/atomic/#AddUint64
@@ -1359,7 +1360,6 @@ func (h *Head) getOrCreateWithID(id, hash uint64, lset labels.Labels) (*memSerie
 		return s, false
 	}
 
-	h.metrics.series.Inc()
 	h.metrics.seriesCreated.Inc()
 	atomic.AddUint64(&h.numSeries, 1)
 
