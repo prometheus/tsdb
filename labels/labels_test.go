@@ -87,6 +87,34 @@ func TestCompareAndEquals(t *testing.T) {
 	}
 }
 
+func TestFromStrings(t *testing.T) {
+	cases := []struct {
+		ss  []string
+		res Labels
+	}{
+		// one string pair
+		{
+			ss:  []string{"a", "b"},
+			res: Labels{{"a", "b"}},
+		},
+		// two string pair
+		{
+			ss:  []string{"a", "b", "c", "0"},
+			res: Labels{{"a", "b"}, {"c", "0"}},
+		},
+		// repeat string pairs
+		{
+			ss:  []string{"a", "b", "a", "b"},
+			res: Labels{{"a", "b"}},
+		},
+	}
+
+	for _, c := range cases {
+		res := FromStrings(c.ss...)
+		testutil.Equals(t, c.res, res)
+	}
+}
+
 func BenchmarkSliceSort(b *testing.B) {
 	lbls, err := ReadLabels(filepath.Join("..", "testdata", "20kseries.json"), 20000)
 	testutil.Ok(b, err)

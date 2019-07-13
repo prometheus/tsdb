@@ -150,15 +150,15 @@ func FromStrings(ss ...string) Labels {
 	if len(ss)%2 != 0 {
 		panic("invalid number of strings")
 	}
-	var res Labels
-	for i := 0; i < len(ss); i += 2 {
-		if ss[i+1] != "" {
-			res = append(res, Label{Name: ss[i], Value: ss[i+1]})
+
+	m := make(map[string]string)
+	for i := 0; i+1 < len(ss); i += 2 {
+		if ss[i] != "" && ss[i+1] != "" {
+			m[ss[i]] = ss[i+1]
 		}
 	}
 
-	sort.Sort(res)
-	return res
+	return FromMap(m)
 }
 
 // Compare compares the two label sets.
