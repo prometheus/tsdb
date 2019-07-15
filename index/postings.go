@@ -2010,9 +2010,8 @@ func (it *baseDeltaBlock16Postings) Next() bool {
 	}
 	// Currently not entered any block.
 	if it.idx < it.footerAddr {
-		val, size := binary.Uvarint(it.bs[it.idx:]) // Read the key.
-		it.key = val << 16
-		it.idx += size
+		it.key = binary.BigEndian.Uint64(it.bs[it.idx:])
+		it.idx += 8
 		it.inside = true
 		it.nextBlock = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+((it.blockIdx+1)<<2):]))
 		it.cur = it.key | uint64(binary.BigEndian.Uint16(it.bs[it.idx:]))
@@ -2035,9 +2034,8 @@ func (it *baseDeltaBlock16Postings) seekInBlock(x uint64) bool {
 		it.idx = it.nextBlock
 		it.blockIdx += 1
 		if it.idx < it.footerAddr {
-			val, size := binary.Uvarint(it.bs[it.idx:])
-			it.key = val << 16
-			it.idx += size
+			it.key = binary.BigEndian.Uint64(it.bs[it.idx:])
+			it.idx += 8
 			it.inside = true
 			it.nextBlock = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+((it.blockIdx+1)<<2):]))
 			it.cur = it.key | uint64(binary.BigEndian.Uint16(it.bs[it.idx:]))
@@ -2056,14 +2054,15 @@ func (it *baseDeltaBlock16Postings) Seek(x uint64) bool {
 	if it.cur >= x {
 		return true
 	}
-	curKey := x >> 16
-	if it.inside && it.key>>16 == curKey {
+	curKey := (x >> 16) << 16
+	if it.inside && it.key == curKey {
 		// Fast path for x in current block.
 		return it.seekInBlock(x)
 	} else {
 		i := sort.Search(it.numBlock-it.blockIdx, func(i int) bool {
 			off := int(binary.BigEndian.Uint32(it.bs[it.footerAddr+((it.blockIdx+i)<<2):]))
-			k, _ := binary.Uvarint(it.bs[off:])
+			// k, _ := binary.Uvarint(it.bs[off:])
+			k := binary.BigEndian.Uint64(it.bs[off:])
 			return k >= curKey
 		})
 		if i == it.numBlock-it.blockIdx {
@@ -2075,9 +2074,9 @@ func (it *baseDeltaBlock16Postings) Seek(x uint64) bool {
 			it.idx = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+((it.blockIdx)<<2):]))
 		}
 	}
-	val, size := binary.Uvarint(it.bs[it.idx:])
-	it.key = val << 16
-	it.idx += size
+	it.key = binary.BigEndian.Uint64(it.bs[it.idx:])
+	it.idx += 8
+
 	it.inside = true
 
 	it.nextBlock = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+((it.blockIdx+1)<<2):]))
@@ -2089,7 +2088,7 @@ func (it *baseDeltaBlock16Postings) Err() error {
 }
 
 func writeBaseDelta16Block(e *encoding.Encbuf, vals []uint32, key uint32, valueSize int) {
-	e.PutUvarint32(key)
+	e.PutBE64(uint64(key))
 	c := make([]byte, 4)
 	for _, val := range vals {
 		binary.BigEndian.PutUint32(c[:], val)
@@ -2100,7 +2099,7 @@ func writeBaseDelta16Block(e *encoding.Encbuf, vals []uint32, key uint32, valueS
 }
 
 func writeBaseDelta16Block64(e *encoding.Encbuf, vals []uint64, key uint64, valueSize int) {
-	e.PutUvarint64(key)
+	e.PutBE64(key)
 	c := make([]byte, 8)
 	for _, val := range vals {
 		binary.BigEndian.PutUint64(c[:], val)
@@ -2114,6 +2113,7 @@ func writeBaseDeltaBlock16Postings(e *encoding.Encbuf, arr []uint32) {
 	key := uint32(0xffffffff)           // The initial key should be unique.
 	valueSize := 16 >> 3                // The size of the element in array in bytes.
 	mask := uint32((1 << uint(16)) - 1) // Mask for the elements in the block.
+	invertedMask := ^mask
 	var curKey uint32
 	var curVal uint32
 	var idx int               // Index of current element in arr.
@@ -2123,8 +2123,8 @@ func writeBaseDeltaBlock16Postings(e *encoding.Encbuf, arr []uint32) {
 	e.PutBE32(0) // Footer starting offset.
 	e.PutBE32(0) // Number of blocks.
 	for idx < len(arr) {
-		curKey = arr[idx] >> 16  // Key of block.
-		curVal = arr[idx] & mask // Value inside block.
+		curKey = arr[idx] & invertedMask // Key of block.
+		curVal = arr[idx] & mask         // Value inside block.
 		if curKey != key {
 			// Move to next block.
 			if idx != 0 {
@@ -2152,6 +2152,7 @@ func writeBaseDeltaBlock16Postings64(e *encoding.Encbuf, arr []uint64) {
 	key := uint64(0xffffffff)           // The initial key should be unique.
 	valueSize := 16 >> 3                // The size of the element in array in bytes.
 	mask := uint64((1 << uint(16)) - 1) // Mask for the elements in the block.
+	invertedMask := ^mask
 	var curKey uint64
 	var curVal uint64
 	var idx int               // Index of current element in arr.
@@ -2161,8 +2162,8 @@ func writeBaseDeltaBlock16Postings64(e *encoding.Encbuf, arr []uint64) {
 	e.PutBE32(0) // Footer starting offset.
 	e.PutBE32(0) // Number of blocks.
 	for idx < len(arr) {
-		curKey = arr[idx] >> 16  // Key of block.
-		curVal = arr[idx] & mask // Value inside block.
+		curKey = arr[idx] & invertedMask // Key of block.
+		curVal = arr[idx] & mask         // Value inside block.
 		if curKey != key {
 			// Move to next block.
 			if idx != 0 {
