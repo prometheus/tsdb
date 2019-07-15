@@ -881,42 +881,103 @@ func (c *LeveledCompactor) writePostings(indexw IndexWriter, values map[string]s
 		}
 	}
 	names = append(names, apkName)
+	values[apkName] = stringset{apkValue: struct{}{}}
 	sort.Strings(names)
 
 	if idxw, ok := indexw.(*index.Writer); ok {
 		idxw.HintPostingsWriteCount(numLabelValues)
 	}
 
-	remapPostings := index.NewRemappedPostings(seriesMap, 1e6)
-	var bigEndianPost index.Postings = index.NewBigEndianPostings(nil)
+	remapPostings := newRemappedPostings(seriesMap, 1e6)
+	var postBuf index.Postings
 	for _, n := range names {
 		labelValuesBuf = labelValuesBuf[:0]
-		if n == apkName {
-			labelValuesBuf = append(labelValuesBuf, apkValue)
-		} else {
-			for v := range values[n] {
-				labelValuesBuf = append(labelValuesBuf, v)
-			}
-			sort.Strings(labelValuesBuf)
+		for v := range values[n] {
+			labelValuesBuf = append(labelValuesBuf, v)
 		}
+		sort.Strings(labelValuesBuf)
 
 		for _, v := range labelValuesBuf {
-			remapPostings.ClearPostings()
+			remapPostings.clearPostings()
 			for i, ir := range indexReaders {
-				bigEndianPost, err = ir.Postings(n, v, bigEndianPost)
+				postBuf, err = ir.Postings(n, v, postBuf)
 				if err != nil {
 					return errors.Wrap(err, "read postings")
 				}
-				remapPostings.Add(i, bigEndianPost)
+				remapPostings.add(i, postBuf)
 			}
 
-			if err := indexw.WritePostings(n, v, remapPostings.Get()); err != nil {
+			if err := indexw.WritePostings(n, v, remapPostings.get()); err != nil {
 				return errors.Wrap(err, "write postings")
 			}
 		}
 	}
 
 	return nil
+}
+
+// remappedPostings is useful in remapping set of postings
+// from given set of maps.
+type remappedPostings struct {
+	postingsMap []map[uint64]uint64
+	postingBuf  []uint64
+	listPost    *index.ListPostings
+}
+
+// newRemappedPostings returns remappedPostings.
+// 'postingsMap' is the slice of maps used for remapping.
+// 'postingSizeHint' is for preallocation of memory to reduce allocs later.
+func newRemappedPostings(postingsMap []map[uint64]uint64, postingSizeHint int) *remappedPostings {
+	return &remappedPostings{
+		postingsMap: postingsMap,
+		postingBuf:  make([]uint64, 0, postingSizeHint),
+		listPost:    index.NewListPostings(),
+	}
+}
+
+// add remaps the given postings with the map found
+// at the given index 'mapIdx'. The resultant postings
+// are added to the result buffer.
+func (rp *remappedPostings) add(mapIdx int, p index.Postings) {
+	pMap := rp.postingsMap[mapIdx]
+	idx, lastIdx := -1, -1
+	for p.Next() {
+		newVal, ok := pMap[p.At()]
+		if !ok {
+			continue
+		}
+		// idx is the index at which newVal exists or index at which we need to insert.
+		// 'p' consists postings in sorted order w.r.t. the series labels.
+		// Hence the mapped series will also be in ascending order including the postings.
+		// So we need not look at/before 'lastIdx' in 'postingBuf'.
+		for idx = lastIdx + 1; idx < len(rp.postingBuf); idx++ {
+			if rp.postingBuf[idx] >= newVal {
+				break
+			}
+		}
+		lastIdx = idx
+		if idx == len(rp.postingBuf) {
+			rp.postingBuf = append(rp.postingBuf, newVal)
+		} else if rp.postingBuf[idx] != newVal {
+			rp.postingBuf = append(rp.postingBuf[:idx], append([]uint64{newVal}, rp.postingBuf[idx:]...)...)
+		}
+	}
+}
+
+// get returns the remapped postings.
+// The returned postings becomes invalid after calling any other exposed
+// methods of RemappedPostings (Add, Get, ClearPostings). Hence postings
+// should be used right after calling 'Get'.
+// This is because of the shared buffer for memory optimizations.
+func (rp *remappedPostings) get() index.Postings {
+	rp.listPost.Reset(rp.postingBuf)
+	return rp.listPost
+}
+
+// clearPostings only clears the result postings
+// buffer and not the map.
+func (rp *remappedPostings) clearPostings() {
+	rp.postingBuf = rp.postingBuf[:0]
 }
 
 type compactionSeriesSet struct {
