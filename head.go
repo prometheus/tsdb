@@ -392,7 +392,7 @@ func (h *Head) loadWAL(r *wal.Reader, multiRef map[uint64]uint64) (err error) {
 				series, created := h.getOrCreateWithID(s.Ref, s.Labels.Hash(), s.Labels)
 
 				if !created {
-					// There's already a different Ref for this series.
+					// There's already a different ref for this series.
 					multiRefLock.Lock()
 					multiRef[s.Ref] = series.ref
 					multiRefLock.Unlock()
@@ -1691,7 +1691,7 @@ func (s *memSeries) chunksMetas() []chunks.Meta {
 }
 
 // reset re-initialises all the variable in the memSeries except 'lset', 'ref',
-// and 'chunkRange', like how it would appear after 'newmemSeries(...)'.
+// and 'chunkRange', like how it would appear after 'newMemSeries(...)'.
 func (s *memSeries) reset() {
 	s.chunks = nil
 	s.headChunk = nil
@@ -1702,7 +1702,7 @@ func (s *memSeries) reset() {
 	s.app = nil
 }
 
-// Appendable checks whether the given sample is valid for appending to the series.
+// appendable checks whether the given sample is valid for appending to the series.
 func (s *memSeries) appendable(t int64, v float64) error {
 	c := s.head()
 	if c == nil {
@@ -1735,7 +1735,7 @@ func (s *memSeries) chunkID(pos int) int {
 	return pos + s.firstChunkID
 }
 
-// TruncateChunksBefore removes all chunks from the series that have not timestamp
+// truncateChunksBefore removes all chunks from the series that have not timestamp
 // at or after mint. Chunk IDs remain unchanged.
 func (s *memSeries) truncateChunksBefore(mint int64) (removed int) {
 	var k int
@@ -1756,7 +1756,7 @@ func (s *memSeries) truncateChunksBefore(mint int64) (removed int) {
 	return k
 }
 
-// Append adds the sample (t, v) to the series.
+// append adds the sample (t, v) to the series.
 func (s *memSeries) append(t int64, v float64) (success, chunkCreated bool) {
 	// Based on Gorilla white papers this offers near-optimal compression ratio
 	// so anything bigger that this has diminishing returns and increases
