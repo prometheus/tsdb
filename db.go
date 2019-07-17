@@ -262,19 +262,17 @@ type DBReadOnly struct {
 // OpenDBReadOnly opens DB in the given directory for read only operations.
 func OpenDBReadOnly(dir string, l log.Logger) (*DBReadOnly, error) {
 	if _, err := os.Stat(dir); err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, "openning the db dir")
 	}
 
 	if l == nil {
 		l = log.NewNopLogger()
 	}
 
-	db := &DBReadOnly{
+	return &DBReadOnly{
 		logger: l,
 		dir:    dir,
-	}
-
-	return db, nil
+	}, nil
 }
 
 // Querier loads the wal and returns a new querier over the data partition for the given time range.
@@ -355,7 +353,7 @@ func (db *DBReadOnly) Blocks() ([]BlockReader, error) {
 				level.Warn(db.logger).Log("msg", "closing a block", err)
 			}
 		}
-		return nil, fmt.Errorf("unexpected corrupted block:%v", corrupted)
+		return nil, errors.Errorf("unexpected corrupted block:%v", corrupted)
 	}
 
 	if len(loadable) == 0 {
