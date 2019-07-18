@@ -255,8 +255,7 @@ type DBReadOnly struct {
 	logger  log.Logger
 	dir     string
 	closers []io.Closer
-	mtx     sync.Mutex
-	closed  bool
+	closed  chan struct{}
 }
 
 // OpenDBReadOnly opens DB in the given directory for read only operations.
@@ -272,12 +271,17 @@ func OpenDBReadOnly(dir string, l log.Logger) (*DBReadOnly, error) {
 	return &DBReadOnly{
 		logger: l,
 		dir:    dir,
+		closed: make(chan struct{}),
 	}, nil
 }
 
 // Querier loads the wal and returns a new querier over the data partition for the given time range.
-// A goroutine must not handle more than one open Querier.
 func (db *DBReadOnly) Querier(mint, maxt int64) (Querier, error) {
+	select {
+	case <-db.closed:
+		return nil, errors.New("db already closed")
+	default:
+	}
 	blocksReaders, err := db.Blocks()
 	if err != nil {
 		return nil, err
@@ -319,9 +323,7 @@ func (db *DBReadOnly) Querier(mint, maxt int64) (Querier, error) {
 		// This is mainly to avoid blocking when closing the head.
 		head.wal = nil
 
-		db.mtx.Lock()
 		db.closers = append(db.closers, head)
-		db.mtx.Unlock()
 	}
 
 	dbWritable := &DB{
@@ -336,6 +338,11 @@ func (db *DBReadOnly) Querier(mint, maxt int64) (Querier, error) {
 
 // Blocks returns a slice of block readers for persisted blocks.
 func (db *DBReadOnly) Blocks() ([]BlockReader, error) {
+	select {
+	case <-db.closed:
+		return nil, errors.New("db already closed")
+	default:
+	}
 	loadable, corrupted, err := openBlocks(db.logger, db.dir, nil, nil)
 	if err != nil {
 		return nil, err
@@ -372,8 +379,6 @@ func (db *DBReadOnly) Blocks() ([]BlockReader, error) {
 		level.Warn(db.logger).Log("msg", "overlapping blocks found during opening", "detail", overlaps.String())
 	}
 
-	db.mtx.Lock()
-	defer db.mtx.Unlock()
 	// Close all previously open readers and add the new ones to the cache.
 	for _, closer := range db.closers {
 		closer.Close()
@@ -392,17 +397,18 @@ func (db *DBReadOnly) Blocks() ([]BlockReader, error) {
 
 // Close all block readers.
 func (db *DBReadOnly) Close() error {
-	if db.closed {
+	select {
+	case <-db.closed:
 		return errors.New("db already closed")
+	default:
 	}
+	close(db.closed)
+
 	var merr tsdb_errors.MultiError
 
-	db.mtx.Lock()
-	defer db.mtx.Unlock()
 	for _, b := range db.closers {
 		merr.Add(b.Close())
 	}
-	db.closed = true
 	return merr.Err()
 }
 
