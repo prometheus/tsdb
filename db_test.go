@@ -2316,3 +2316,22 @@ func TestDBReadOnly(t *testing.T) {
 		testutil.Equals(t, expDBHash, readOnlyDBHash, "after all read operations the db hash should remain the same")
 	}
 }
+
+// TestDBReadOnlyClosing ensures that after closing the db
+// all api methods return an ErrClosed.
+func TestDBReadOnlyClosing(t *testing.T) {
+	dbDir, err := ioutil.TempDir("", "test")
+	testutil.Ok(t, err)
+
+	defer func() {
+		testutil.Ok(t, os.RemoveAll(dbDir))
+	}()
+	db, err := OpenDBReadOnly(dbDir, log.NewLogfmtLogger(log.NewSyncWriter(os.Stderr)))
+	testutil.Ok(t, err)
+	testutil.Ok(t, db.Close())
+	testutil.Equals(t, db.Close(), ErrClosed)
+	_, err = db.Blocks()
+	testutil.Equals(t, err, ErrClosed)
+	_, err = db.Querier(0, 1)
+	testutil.Equals(t, err, ErrClosed)
+}

@@ -250,6 +250,9 @@ func newDBMetrics(db *DB, r prometheus.Registerer) *dbMetrics {
 	return m
 }
 
+// ErrClosed is returned when the db is closed.
+var ErrClosed = errors.New("db already closed")
+
 // DBReadOnly provides APIs for read only operations on a database.
 type DBReadOnly struct {
 	logger  log.Logger
@@ -279,7 +282,7 @@ func OpenDBReadOnly(dir string, l log.Logger) (*DBReadOnly, error) {
 func (db *DBReadOnly) Querier(mint, maxt int64) (Querier, error) {
 	select {
 	case <-db.closed:
-		return nil, errors.New("db already closed")
+		return nil, ErrClosed
 	default:
 	}
 	blocksReaders, err := db.Blocks()
@@ -340,7 +343,7 @@ func (db *DBReadOnly) Querier(mint, maxt int64) (Querier, error) {
 func (db *DBReadOnly) Blocks() ([]BlockReader, error) {
 	select {
 	case <-db.closed:
-		return nil, errors.New("db already closed")
+		return nil, ErrClosed
 	default:
 	}
 	loadable, corrupted, err := openBlocks(db.logger, db.dir, nil, nil)
@@ -399,7 +402,7 @@ func (db *DBReadOnly) Blocks() ([]BlockReader, error) {
 func (db *DBReadOnly) Close() error {
 	select {
 	case <-db.closed:
-		return errors.New("db already closed")
+		return ErrClosed
 	default:
 	}
 	close(db.closed)
