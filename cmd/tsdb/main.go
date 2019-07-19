@@ -34,6 +34,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/prometheus/tsdb"
 	"github.com/prometheus/tsdb/chunks"
+	tsdb_errors "github.com/prometheus/tsdb/errors"
 	"github.com/prometheus/tsdb/labels"
 	"gopkg.in/alecthomas/kingpin.v2"
 )
@@ -69,6 +70,7 @@ func execute() (err error) {
 	)
 
 	logger := log.NewLogfmtLogger(log.NewSyncWriter(os.Stderr))
+	var merr tsdb_errors.MultiError
 
 	switch kingpin.MustParse(cli.Parse(os.Args[1:])) {
 	case benchWriteCmd.FullCommand():
@@ -85,7 +87,9 @@ func execute() (err error) {
 			return err
 		}
 		defer func() {
-			err = db.Close()
+			merr.Add(err)
+			merr.Add(db.Close())
+			err = merr.Err()
 		}()
 		blocks, err := db.Blocks()
 		if err != nil {
@@ -98,7 +102,9 @@ func execute() (err error) {
 			return err
 		}
 		defer func() {
-			err = db.Close()
+			merr.Add(err)
+			merr.Add(db.Close())
+			err = merr.Err()
 		}()
 		blocks, err := db.Blocks()
 		if err != nil {
@@ -125,7 +131,9 @@ func execute() (err error) {
 			return err
 		}
 		defer func() {
-			err = db.Close()
+			merr.Add(err)
+			merr.Add(db.Close())
+			err = merr.Err()
 		}()
 		return dumpSamples(db, *dumpMinTime, *dumpMaxTime)
 	}
@@ -608,12 +616,16 @@ func analyzeBlock(b tsdb.BlockReader, limit int) error {
 }
 
 func dumpSamples(db *tsdb.DBReadOnly, mint, maxt int64) (err error) {
+
 	q, err := db.Querier(mint, maxt)
 	if err != nil {
 		return err
 	}
 	defer func() {
-		err = q.Close()
+		var merr tsdb_errors.MultiError
+		merr.Add(err)
+		merr.Add(q.Close())
+		err = merr.Err()
 	}()
 
 	ss, err := q.Select(labels.NewMustRegexpMatcher("", ".*"))
