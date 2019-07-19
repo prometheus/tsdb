@@ -254,6 +254,8 @@ func newDBMetrics(db *DB, r prometheus.Registerer) *dbMetrics {
 var ErrClosed = errors.New("db already closed")
 
 // DBReadOnly provides APIs for read only operations on a database.
+// Current implementation doesn't support concurency so
+// all API calls should happen in the same go routine.
 type DBReadOnly struct {
 	logger  log.Logger
 	dir     string
@@ -279,6 +281,7 @@ func OpenDBReadOnly(dir string, l log.Logger) (*DBReadOnly, error) {
 }
 
 // Querier loads the wal and returns a new querier over the data partition for the given time range.
+// Current implementation doesn't support multiple Queriers.
 func (db *DBReadOnly) Querier(mint, maxt int64) (Querier, error) {
 	select {
 	case <-db.closed:
@@ -329,6 +332,10 @@ func (db *DBReadOnly) Querier(mint, maxt int64) (Querier, error) {
 		db.closers = append(db.closers, head)
 	}
 
+	// TODO: Refactor so that it is possible to obtain a Querier without initializing a writable DB instance.
+	// Option 1: refactor DB to have the Querier implementation using the DBReadOnly.Querier implementation not the opposite.
+	// Option 2: refactor Querier to use another independent func which
+	// can than be used by a read only and writable db instances without any code duplication.
 	dbWritable := &DB{
 		dir:    db.dir,
 		logger: db.logger,
@@ -679,13 +686,15 @@ func (db *DB) compact() (err error) {
 	return nil
 }
 
-func getBlock(loaded []*Block, id ulid.ULID) *Block {
-	for _, b := range loaded {
+// getBlock iterates a given block range to find a block by a given id.
+// If found it returns the block itself and a boolean to indicate that it was found.
+func getBlock(allBlocks []*Block, id ulid.ULID) (*Block, bool) {
+	for _, b := range allBlocks {
 		if b.Meta().ULID == id {
-			return b
+			return b, true
 		}
 	}
-	return nil
+	return nil, false
 }
 
 // reload blocks and trigger head truncation if new blocks appeared.
@@ -718,7 +727,7 @@ func (db *DB) reload() (err error) {
 	if len(corrupted) > 0 {
 		// Close all new blocks to release the lock for windows.
 		for _, block := range loadable {
-			if b := getBlock(db.blocks, block.Meta().ULID); b == nil {
+			if _, open := getBlock(db.blocks, block.Meta().ULID); !open {
 				block.Close()
 			}
 		}
@@ -801,8 +810,8 @@ func openBlocks(l log.Logger, dir string, loaded []*Block, chunkPool chunkenc.Po
 		}
 
 		// See if we already have the block in memory or open it otherwise.
-		block := getBlock(loaded, meta.ULID)
-		if block == nil {
+		block, open := getBlock(loaded, meta.ULID)
+		if !open {
 			block, err = OpenBlock(l, bDir, chunkPool)
 			if err != nil {
 				corrupted[meta.ULID] = err

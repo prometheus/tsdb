@@ -1,9 +1,9 @@
 ## master / unreleased
 
  - [FEATURE] Added `DBReadOnly` to allow opening a database in read only mode.
-    - `DBReadOnly.Blocks()` exposes a slice of `BlockReader`s and 
-    for this the  interface is refactored to return the full block meta instead of 
-    just MinTime/MaxTime. Required to allow reading the ULID of a block.
+    - `DBReadOnly.Blocks()` exposes a slice of `BlockReader`s.
+    - `BlockReader` interface - removed MinTime/MaxTime methods and now exposes the full block meta via `Meta()`.
+
 
 ## 0.9.1
 
