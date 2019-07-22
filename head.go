@@ -1128,6 +1128,7 @@ func (h *Head) NumSeries() uint64 {
 }
 
 // Meta returns meta information about the head.
+// The head is dynamic so will return dynamic results.
 func (h *Head) Meta() BlockMeta {
 	var id [16]byte
 	copy(id[:], "______head______")
