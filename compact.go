@@ -739,11 +739,6 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 		}
 
 		ref, lset, chks, dranges := set.At() // The chunks here are not fully deleted.
-		// Skip the series with all deleted chunks.
-		if len(chks) == 0 {
-			set.RemoveLastRef()
-			continue
-		}
 
 		if overlapping {
 			// If blocks are overlapping, it is possible to have unsorted chunks.
@@ -1085,56 +1080,60 @@ func newCompactionMerger(sets []ChunkSeriesSet, blocks []BlockReader) (*compacti
 }
 
 func (c *compactionMerger) Next() bool {
-	if c.Err() != nil {
-		return false
-	}
-
-	var nextExists bool
-	for _, ok := range c.oks {
-		nextExists = nextExists || ok
-	}
-	if !nextExists {
-		return false
-	}
-
-	ref, lset, chks, intervals := c.sets[0].At()
-	idx := 0
-
-	// Find the labels with the lowest index when
-	// sorted in ascending order.
-	for i, s := range c.sets[1:] {
-		if !c.oks[1+i] {
-			continue
+	c.c = c.c[:0]
+	for len(c.c) == 0 {
+		if c.Err() != nil {
+			return false
 		}
-		rf, lb, ch, itv := s.At()
-		if labels.Compare(lset, lb) > 0 {
-			ref, lset, chks, intervals = rf, lb, ch, itv
-			idx = i + 1
-		}
-	}
 
-	// Building the seriesMap and gathering the chunks
-	// from other index readers which have same labels as
-	// 'lset' described above.
-	c.l = append(c.l[:0], lset...)
-	c.c = append(c.c[:0], chks...)
-	c.seriesMap[idx][ref] = c.ref
-	c.oks[idx] = c.sets[idx].Next()
-	for i, s := range c.sets[idx+1:] {
-		if !c.oks[idx+1+i] {
-			continue
+		var nextExists bool
+		for _, ok := range c.oks {
+			nextExists = nextExists || ok
 		}
-		rf, lb, ch, itv := s.At()
-		if labels.Compare(c.l, lb) == 0 {
-			c.seriesMap[idx+1+i][rf] = c.ref
-			c.c = append(c.c, ch...)
-			for _, r := range itv {
-				intervals.add(r)
+		if !nextExists {
+			return false
+		}
+		c.c = c.c[:0]
+
+		ref, lset, chks, intervals := c.sets[0].At()
+		idx := 0
+
+		// Find the labels with the lowest index when
+		// sorted in ascending order.
+		for i, s := range c.sets[1:] {
+			if !c.oks[1+i] {
+				continue
 			}
-			c.oks[idx+1+i] = c.sets[idx+1+i].Next()
+			rf, lb, ch, itv := s.At()
+			if labels.Compare(lset, lb) > 0 {
+				ref, lset, chks, intervals = rf, lb, ch, itv
+				idx = i + 1
+			}
 		}
+
+		// Building the seriesMap and gathering the chunks
+		// from other index readers which have same labels as
+		// 'lset' described above.
+		c.l = append(c.l[:0], lset...)
+		c.c = append(c.c[:0], chks...)
+		c.seriesMap[idx][ref] = c.ref
+		c.oks[idx] = c.sets[idx].Next()
+		for i, s := range c.sets[idx+1:] {
+			if !c.oks[idx+1+i] {
+				continue
+			}
+			rf, lb, ch, itv := s.At()
+			if labels.Compare(c.l, lb) == 0 {
+				c.seriesMap[idx+1+i][rf] = c.ref
+				c.c = append(c.c, ch...)
+				for _, r := range itv {
+					intervals.add(r)
+				}
+				c.oks[idx+1+i] = c.sets[idx+1+i].Next()
+			}
+		}
+		c.intervals = intervals
 	}
-	c.intervals = intervals
 
 	c.ref++
 	return true
