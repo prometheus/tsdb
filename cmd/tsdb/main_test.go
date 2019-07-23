@@ -16,28 +16,40 @@ package main
 import (
 	"io/ioutil"
 	"os"
-	"testing"
 
 	"github.com/prometheus/tsdb"
 	"github.com/prometheus/tsdb/testutil"
 )
 
-func TestCLI(t *testing.T) {
+func createTestDBWithBlock() (db *tsdb.DB, close func()) {
 	tmpdir, err := ioutil.TempDir("", "test")
-	testutil.Ok(t, err)
-	defer func() {
-		testutil.Ok(t, os.RemoveAll(tmpdir))
-	}()
+	if err != nil {
+		os.Exit(1)
+	}
 
 	safeDBOptions := *tsdb.DefaultOptions
 	safeDBOptions.RetentionDuration = 0
 
-	testutil.CreateBlock(t, tmpdir, testutil.GenSeries(1, 1, 0, 1))
-	db, err := tsdb.Open(tmpdir, nil, nil, &safeDBOptions)
-	defer func() {
-		testutil.Ok(t, db.Close())
-	}()
-	hr := true
+	testutil.CreateBlock(nil, tmpdir, testutil.GenSeries(1, 1, 0, 1))
+	db, err = tsdb.Open(tmpdir, nil, nil, &safeDBOptions)
+	if err != nil {
+		os.RemoveAll(tmpdir)
+		os.Exit(1)
+	}
+	return db, func() {
+		db.Close()
+		os.RemoveAll(tmpdir)
+	}
+}
 
+func ExampleCLICalls() {
+	db, close := createTestDBWithBlock()
+	defer func() {
+		close()
+	}()
+
+	hr := false
 	printBlocks(db.Blocks(), &hr)
+	// Output:
+	// BLOCK ULID\tMIN TIME\tMAX TIME\tNUM SAMPLES\tNUM CHUNKS\tNUM SERIES
 }
