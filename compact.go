@@ -1087,21 +1087,24 @@ func (c *compactionMerger) Next() bool {
 		}
 
 		var nextExists bool
-		for _, ok := range c.oks {
+		idx := -1
+		for i, ok := range c.oks {
+			if idx < 0 && ok {
+				// Index of the first set which still has series.
+				idx = i
+			}
 			nextExists = nextExists || ok
 		}
 		if !nextExists {
 			return false
 		}
-		c.c = c.c[:0]
 
-		ref, lset, chks, intervals := c.sets[0].At()
-		idx := 0
+		ref, lset, chks, intervals := c.sets[idx].At()
 
 		// Find the labels with the lowest index when
 		// sorted in ascending order.
-		for i, s := range c.sets[1:] {
-			if !c.oks[1+i] {
+		for i, s := range c.sets[idx+1:] {
+			if !c.oks[idx+1+i] {
 				continue
 			}
 			rf, lb, ch, itv := s.At()
@@ -1137,22 +1140,6 @@ func (c *compactionMerger) Next() bool {
 
 	c.ref++
 	return true
-}
-
-// After calling RemoveLastRef(), At() is only valid after calling
-// another Next().
-func (c *compactionMerger) RemoveLastRef() {
-	if c.ref == 0 || c.Err() != nil {
-		return
-	}
-	toRemoveRef := c.ref - 1
-	for key1 := range c.seriesMap {
-		for key2, rf := range c.seriesMap[key1] {
-			if rf == toRemoveRef {
-				delete(c.seriesMap[key1], key2)
-			}
-		}
-	}
 }
 
 func (c *compactionMerger) Err() error {
