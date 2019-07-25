@@ -662,7 +662,7 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 	}()
 	c.metrics.populatingBlocks.Set(1)
 
-	globalMaxt := blocks[0].MaxTime()
+	globalMaxt := blocks[0].Meta().MaxTime
 	for i, b := range blocks {
 		select {
 		case <-c.ctx.Done():
@@ -671,13 +671,13 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 		}
 
 		if !overlapping {
-			if i > 0 && b.MinTime() < globalMaxt {
+			if i > 0 && b.Meta().MinTime < globalMaxt {
 				c.metrics.overlappingBlocks.Inc()
 				overlapping = true
 				level.Warn(c.logger).Log("msg", "found overlapping blocks during compaction", "ulid", meta.ULID)
 			}
-			if b.MaxTime() > globalMaxt {
-				globalMaxt = b.MaxTime()
+			if b.Meta().MaxTime > globalMaxt {
+				globalMaxt = b.Meta().MaxTime
 			}
 		}
 
@@ -736,6 +736,7 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 		return errors.Wrap(err, "add symbols")
 	}
 
+	delIter := &deletedIterator{}
 	for set.Next() {
 		select {
 		case <-c.ctx.Done():
@@ -757,6 +758,21 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 		}
 
 		for i, chk := range chks {
+			// Re-encode head chunks that are still open (being appended to) or
+			// outside the compacted MaxTime range.
+			// The chunk.Bytes() method is not safe for open chunks hence the re-encoding.
+			// This happens when snapshotting the head block.
+			//
+			// Block time range is half-open: [meta.MinTime, meta.MaxTime) and
+			// chunks are closed hence the chk.MaxTime >= meta.MaxTime check.
+			//
+			// TODO think how to avoid the typecasting to verify when it is head block.
+			if _, isHeadChunk := chk.Chunk.(*safeChunk); isHeadChunk && chk.MaxTime >= meta.MaxTime {
+				dranges = append(dranges, Interval{Mint: meta.MaxTime, Maxt: math.MaxInt64})
+
+			} else
+			// Sanity check for disk blocks.
+			// chk.MaxTime == meta.MaxTime shouldn't happen as well, but will brake many users so not checking for that.
 			if chk.MinTime < meta.MinTime || chk.MaxTime > meta.MaxTime {
 				return errors.Errorf("found chunk with minTime: %d maxTime: %d outside of compacted minTime: %d maxTime: %d",
 					chk.MinTime, chk.MaxTime, meta.MinTime, meta.MaxTime)
@@ -773,13 +789,23 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 					return err
 				}
 
-				it := &deletedIterator{it: chk.Chunk.Iterator(), intervals: dranges}
-				for it.Next() {
-					ts, v := it.At()
-					app.Append(ts, v)
+				delIter.it = chk.Chunk.Iterator(delIter.it)
+				delIter.intervals = dranges
+
+				var (
+					t int64
+					v float64
+				)
+				for delIter.Next() {
+					t, v = delIter.At()
+					app.Append(t, v)
+				}
+				if err := delIter.Err(); err != nil {
+					return errors.Wrap(err, "iterate chunk while re-encoding")
 				}
 
 				chks[i].Chunk = newChunk
+				chks[i].MaxTime = t
 			}
 		}
 

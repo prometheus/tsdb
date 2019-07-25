@@ -51,12 +51,15 @@ type Meta struct {
 	Ref   uint64
 	Chunk chunkenc.Chunk
 
-	MinTime, MaxTime int64 // time range the data covers
+	// Time range the data covers.
+	// When MaxTime == math.MaxInt64 the chunk is still open and being appended to.
+	MinTime, MaxTime int64
 }
 
 // writeHash writes the chunk encoding and raw data into the provided hash.
-func (cm *Meta) writeHash(h hash.Hash) error {
-	if _, err := h.Write([]byte{byte(cm.Chunk.Encoding())}); err != nil {
+func (cm *Meta) writeHash(h hash.Hash, buf []byte) error {
+	buf = append(buf[:0], byte(cm.Chunk.Encoding()))
+	if _, err := h.Write(buf[:1]); err != nil {
 		return err
 	}
 	if _, err := h.Write(cm.Chunk.Bytes()); err != nil {
@@ -95,6 +98,7 @@ type Writer struct {
 	wbuf    *bufio.Writer
 	n       int64
 	crc32   hash.Hash
+	buf     [binary.MaxVarintLen32]byte
 
 	segmentSize int64
 }
@@ -218,7 +222,7 @@ func MergeOverlappingChunks(chks []Meta) ([]Meta, error) {
 		// So never overlaps with newChks[last-1] or anything before that.
 		if c.MinTime > newChks[last].MaxTime {
 			newChks = append(newChks, c)
-			last += 1
+			last++
 			continue
 		}
 		nc := &newChks[last]
@@ -243,8 +247,8 @@ func MergeChunks(a, b chunkenc.Chunk) (*chunkenc.XORChunk, error) {
 	if err != nil {
 		return nil, err
 	}
-	ait := a.Iterator()
-	bit := b.Iterator()
+	ait := a.Iterator(nil)
+	bit := b.Iterator(nil)
 	aok, bok := ait.Next(), bit.Next()
 	for aok && bok {
 		at, av := ait.At()
@@ -297,22 +301,19 @@ func (w *Writer) WriteChunks(chks ...Meta) error {
 		}
 	}
 
-	var (
-		b   = [binary.MaxVarintLen32]byte{}
-		seq = uint64(w.seq()) << 32
-	)
+	var seq = uint64(w.seq()) << 32
 	for i := range chks {
 		chk := &chks[i]
 
 		chk.Ref = seq | uint64(w.n)
 
-		n := binary.PutUvarint(b[:], uint64(len(chk.Chunk.Bytes())))
+		n := binary.PutUvarint(w.buf[:], uint64(len(chk.Chunk.Bytes())))
 
-		if err := w.write(b[:n]); err != nil {
+		if err := w.write(w.buf[:n]); err != nil {
 			return err
 		}
-		b[0] = byte(chk.Chunk.Encoding())
-		if err := w.write(b[:1]); err != nil {
+		w.buf[0] = byte(chk.Chunk.Encoding())
+		if err := w.write(w.buf[:1]); err != nil {
 			return err
 		}
 		if err := w.write(chk.Chunk.Bytes()); err != nil {
@@ -320,10 +321,10 @@ func (w *Writer) WriteChunks(chks ...Meta) error {
 		}
 
 		w.crc32.Reset()
-		if err := chk.writeHash(w.crc32); err != nil {
+		if err := chk.writeHash(w.crc32, w.buf[:]); err != nil {
 			return err
 		}
-		if err := w.write(w.crc32.Sum(b[:0])); err != nil {
+		if err := w.write(w.crc32.Sum(w.buf[:0])); err != nil {
 			return err
 		}
 	}
@@ -364,7 +365,7 @@ func (b realByteSlice) Sub(start, end int) ByteSlice {
 	return b[start:end]
 }
 
-// Reader implements a SeriesReader for a serialized byte stream
+// Reader implements a ChunkReader for a serialized byte stream
 // of series data.
 type Reader struct {
 	bs   []ByteSlice // The underlying bytes holding the encoded series data.
@@ -501,11 +502,11 @@ func sequenceFiles(dir string) ([]string, error) {
 	return res, nil
 }
 
-func closeAll(cs []io.Closer) (err error) {
+func closeAll(cs []io.Closer) error {
+	var merr tsdb_errors.MultiError
+
 	for _, c := range cs {
-		if e := c.Close(); e != nil {
-			err = e
-		}
+		merr.Add(c.Close())
 	}
-	return err
+	return merr.Err()
 }
