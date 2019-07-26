@@ -15,7 +15,9 @@ package tsdb
 
 import (
 	"context"
+	"crypto/md5"
 	"encoding/binary"
+	"io"
 
 	"errors"
 	"github.com/prometheus/tsdb/testutil/fuse"
@@ -316,7 +318,7 @@ func TestFailedDelete(t *testing.T) {
 		testutil.Ok(t, server.Close())
 	}()
 
-	expHash, err := testutil.DirHash(original)
+	expHash, err := dirHash(original)
 	testutil.Ok(t, err)
 	pb, err := OpenBlock(nil, filepath.Join(mountpoint, file), nil)
 	testutil.Ok(t, err)
@@ -326,8 +328,42 @@ func TestFailedDelete(t *testing.T) {
 
 	testutil.NotOk(t, pb.Delete(1, 10, labels.NewMustRegexpMatcher("", ".*")))
 
-	actHash, err := testutil.DirHash(original)
+	actHash, err := dirHash(original)
 	testutil.Ok(t, err)
-
 	testutil.Equals(t, expHash, actHash, "the block dir hash has changed after a failed delete")
+}
+
+// DirHash returns a hash of all files attributes and their content within a directory.
+func dirHash(path string) ([]byte, error) {
+	hash := md5.New()
+	err := filepath.Walk(path, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			f, err := os.Open(path)
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+
+			if _, err := io.Copy(hash, f); err != nil {
+				return err
+			}
+
+			if _, err := io.WriteString(hash, strconv.Itoa(int(info.Size()))); err != nil {
+				return err
+			}
+			if _, err := io.WriteString(hash, info.Name()); err != nil {
+				return err
+			}
+
+			if _, err := io.WriteString(hash, string(info.ModTime().Unix())); err != nil {
+				return err
+			}
+
+		}
+		return err
+	})
+	return hash.Sum(nil), err
 }

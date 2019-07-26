@@ -14,7 +14,6 @@
 package testutil
 
 import (
-	"crypto/md5"
 	"crypto/sha256"
 	"io"
 	"io/ioutil"
@@ -180,39 +179,4 @@ func DirHash(t *testing.T, path string) []byte {
 	Ok(t, err)
 
 	return hash.Sum(nil)
-}
-
-// DirHash returns a hash of all files attributes and their content within a directory.
-func DirHash(path string) ([]byte, error) {
-	hash := md5.New()
-	err := filepath.Walk(path, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if !info.IsDir() {
-			f, err := os.Open(path)
-			if err != nil {
-				return err
-			}
-			defer f.Close()
-
-			if _, err := io.Copy(hash, f); err != nil {
-				return err
-			}
-
-			if _, err := io.WriteString(hash, strconv.Itoa(int(info.Size()))); err != nil {
-				return err
-			}
-			if _, err := io.WriteString(hash, info.Name()); err != nil {
-				return err
-			}
-
-			if _, err := io.WriteString(hash, string(info.ModTime().Unix())); err != nil {
-				return err
-			}
-
-		}
-		return err
-	})
-	return hash.Sum(nil), err
 }
