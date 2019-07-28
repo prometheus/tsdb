@@ -731,6 +731,7 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 	}
 
 	delIter := &deletedIterator{}
+	totalSeries := 0
 	for set.Next() {
 		select {
 		case <-c.ctx.Done():
@@ -813,6 +814,7 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 		if err := indexw.AddSeries(ref, lset, mergedChks...); err != nil {
 			return errors.Wrap(err, "add series")
 		}
+		totalSeries++
 
 		meta.Stats.NumChunks += uint64(len(mergedChks))
 		meta.Stats.NumSeries++
@@ -844,11 +846,11 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 		return nil
 	}
 
-	return c.writePostings(indexw, values, set.seriesMap, indexReaders)
+	return c.writePostings(indexw, totalSeries, values, set.seriesMap, indexReaders)
 }
 
 // writePostings writes the postings into the index file.
-func (c *LeveledCompactor) writePostings(indexw IndexWriter, values map[string]stringset,
+func (c *LeveledCompactor) writePostings(indexw IndexWriter, totalSeries int, values map[string]stringset,
 	seriesMap []map[uint64]uint64, indexReaders []IndexReader) (err error) {
 	var (
 		maxNumValues      int
@@ -883,7 +885,7 @@ func (c *LeveledCompactor) writePostings(indexw IndexWriter, values map[string]s
 		idxw.HintPostingsWriteCount(numLabelValues)
 	}
 
-	remapPostings := newRemappedPostings(seriesMap, 1e6)
+	remapPostings := newRemappedPostings(seriesMap, totalSeries)
 	var postBuf index.Postings
 	for _, n := range names {
 		labelValuesBuf = labelValuesBuf[:0]
