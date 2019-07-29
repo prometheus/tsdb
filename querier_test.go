@@ -413,6 +413,11 @@ func TestBlockQuerierDelete(t *testing.T) {
 		exp        SeriesSet
 	}
 
+	tstones := tombstones.NewMemTombstones()
+	tstones.AddInterval(1, tombstones.Interval{1, 3})
+	tstones.AddInterval(2, tombstones.Interval{1, 3}, tombstones.Interval{6, 10})
+	tstones.AddInterval(3, tombstones.Interval{6, 10})
+
 	cases := struct {
 		data []seriesSamples
 
@@ -461,11 +466,7 @@ func TestBlockQuerierDelete(t *testing.T) {
 				},
 			},
 		},
-		tombstones: &tombstones.MemTombstones{IntvlGroups: map[uint64]tombstones.Intervals{
-			1: tombstones.Intervals{{1, 3}},
-			2: tombstones.Intervals{{1, 3}, {6, 10}},
-			3: tombstones.Intervals{{6, 10}},
-		}},
+		tombstones: tstones,
 		queries: []query{
 			{
 				mint: 2,

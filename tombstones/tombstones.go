@@ -199,27 +199,27 @@ func ReadTombstones(dir string) (TombstoneReader, int64, error) {
 	return stonesMap, int64(len(b)), nil
 }
 
-type MemTombstones struct {
-	IntvlGroups map[uint64]Intervals
+type memTombstones struct {
+	intvlGroups map[uint64]Intervals
 	mtx         sync.RWMutex
 }
 
 // NewMemTombstones creates new in memory TombstoneReader
 // that allows adding new intervals.
-func NewMemTombstones() *MemTombstones {
-	return &MemTombstones{IntvlGroups: make(map[uint64]Intervals)}
+func NewMemTombstones() *memTombstones {
+	return &memTombstones{intvlGroups: make(map[uint64]Intervals)}
 }
 
-func (t *MemTombstones) Get(ref uint64) (Intervals, error) {
+func (t *memTombstones) Get(ref uint64) (Intervals, error) {
 	t.mtx.RLock()
 	defer t.mtx.RUnlock()
-	return t.IntvlGroups[ref], nil
+	return t.intvlGroups[ref], nil
 }
 
-func (t *MemTombstones) Iter(f func(uint64, Intervals) error) error {
+func (t *memTombstones) Iter(f func(uint64, Intervals) error) error {
 	t.mtx.RLock()
 	defer t.mtx.RUnlock()
-	for ref, ivs := range t.IntvlGroups {
+	for ref, ivs := range t.intvlGroups {
 		if err := f(ref, ivs); err != nil {
 			return err
 		}
@@ -227,23 +227,23 @@ func (t *MemTombstones) Iter(f func(uint64, Intervals) error) error {
 	return nil
 }
 
-func (t *MemTombstones) Total() uint64 {
+func (t *memTombstones) Total() uint64 {
 	t.mtx.RLock()
 	defer t.mtx.RUnlock()
 
 	total := uint64(0)
-	for _, ivs := range t.IntvlGroups {
+	for _, ivs := range t.intvlGroups {
 		total += uint64(len(ivs))
 	}
 	return total
 }
 
 // AddInterval to an existing MemTombstones
-func (t *MemTombstones) AddInterval(ref uint64, itvs ...Interval) {
+func (t *memTombstones) AddInterval(ref uint64, itvs ...Interval) {
 	t.mtx.Lock()
 	defer t.mtx.Unlock()
 	for _, itv := range itvs {
-		t.IntvlGroups[ref] = t.IntvlGroups[ref].Add(itv)
+		t.intvlGroups[ref] = t.intvlGroups[ref].Add(itv)
 	}
 }
 
