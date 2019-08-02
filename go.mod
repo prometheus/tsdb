@@ -6,6 +6,8 @@ require (
 	github.com/go-kit/kit v0.8.0
 	github.com/golang/snappy v0.0.1
 	github.com/oklog/ulid v1.3.1
+	github.com/otiai10/copy v1.0.1
+	github.com/otiai10/curr v0.0.0-20190513014714-f5a3d24e5776 // indirect
 	github.com/pkg/errors v0.8.0
 	github.com/prometheus/client_golang v1.0.0
 	github.com/prometheus/prometheus v2.5.0+incompatible

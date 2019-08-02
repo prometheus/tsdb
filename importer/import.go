@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/go-kit/kit/log"
+	"github.com/otiai10/copy"
 	prom_labels "github.com/prometheus/prometheus/pkg/labels"
 	"github.com/prometheus/prometheus/pkg/textparse"
 	"github.com/prometheus/tsdb"
@@ -159,10 +160,11 @@ func parseMetrics(b []byte, contentType string) ([]*metricSample, timestamp, tim
 func pushToDisk(samples []*metricSample, dbDir string, minValidTimestamp timestamp, logger log.Logger) (string, error) {
 	snapshotPath := fmt.Sprintf("%s%c%s", dbDir, os.PathSeparator, "snap")
 	db, err := tsdb.Open(dbDir, logger, nil, nil)
-	defer db.Close()
 	if err != nil {
 		return "", err
 	}
+	defer db.Close()
+
 	err = db.Head().Init(minValidTimestamp)
 	if err != nil {
 		return "", err
@@ -170,6 +172,9 @@ func pushToDisk(samples []*metricSample, dbDir string, minValidTimestamp timesta
 	dbapp := db.Appender()
 	for _, msample := range samples {
 		_, err = dbapp.Add(msample.Labels, msample.TimestampMs, msample.Value)
+		if err != nil {
+			return "", err
+		}
 	}
 	err = dbapp.Commit()
 	if err != nil {
@@ -186,7 +191,7 @@ func pushToDisk(samples []*metricSample, dbDir string, minValidTimestamp timesta
 // TSDB operates such that it automatically picks up the newly created
 // snapshot(s) and treats them as it would any other block.
 func copyToDatabase(snapshotPath string, dbPath string) error {
-	return copyDirectory(snapshotPath, dbPath)
+	return copy.Copy(snapshotPath, dbPath)
 }
 
 // verifyIntegration returns an error if the any of the blocks in the DB intersect with
