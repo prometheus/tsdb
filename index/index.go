@@ -583,6 +583,182 @@ func (w *Writer) WritePostings(name, value string, it Postings) error {
 	return errors.Wrap(err, "write postings")
 }
 
+func (w *Writer) WritePostings1(name, value string, it Postings) (uint64, error) {
+	if err := w.ensureStage(idxStagePostings); err != nil {
+		return 0, errors.Wrap(err, "ensure stage")
+	}
+
+	start := w.pos
+
+	// Align beginning to 4 bytes for more efficient postings list scans.
+	if err := w.addPadding(4); err != nil {
+		return 0, err
+	}
+
+	w.postings = append(w.postings, hashEntry{
+		keys:   []string{name, value},
+		offset: w.pos,
+	})
+
+	// Order of the references in the postings list does not imply order
+	// of the series references within the persisted block they are mapped to.
+	// We have to sort the new references again.
+	refs := w.uint32s[:0]
+
+	for it.Next() {
+		offset, ok := w.seriesOffsets[it.At()]
+		if !ok {
+			return 0, errors.Errorf("%p series for reference %d not found", w, it.At())
+		}
+		if offset > (1<<32)-1 {
+			return 0, errors.Errorf("series offset %d exceeds 4 bytes", offset)
+		}
+		refs = append(refs, uint32(offset))
+	}
+	if err := it.Err(); err != nil {
+		return 0, err
+	}
+	sort.Sort(uint32slice(refs))
+
+	w.buf2.Reset()
+	w.buf2.PutBE32int(len(refs))
+
+	for _, r := range refs {
+		w.buf2.PutBE32(r)
+	}
+
+	w.uint32s = refs
+
+	w.buf1.Reset()
+	w.buf1.PutBE32int(w.buf2.Len())
+
+	w.buf2.PutHash(w.crc32)
+
+	err := w.write(w.buf1.Get(), w.buf2.Get())
+	return w.pos - start, errors.Wrap(err, "write postings")
+}
+
+func (w *Writer) WritePostings2(name, value string, it Postings) (uint64, int, error) {
+	if err := w.ensureStage(idxStagePostings); err != nil {
+		return 0, 0, errors.Wrap(err, "ensure stage")
+	}
+
+	// Align beginning to 4 bytes for more efficient postings list scans.
+	// if err := w.addPadding(4); err != nil {
+	// 	return err
+	// }
+
+	start := w.pos
+
+	w.postings = append(w.postings, hashEntry{
+		keys:   []string{name, value},
+		offset: w.pos,
+	})
+
+	// Order of the references in the postings list does not imply order
+	// of the series references within the persisted block they are mapped to.
+	// We have to sort the new references again.
+	refs := w.uint32s[:0]
+
+	for it.Next() {
+		offset, ok := w.seriesOffsets[it.At()]
+		if !ok {
+			return 0, 0, errors.Errorf("%p series for reference %d not found", w, it.At())
+		}
+		if offset > (1<<32)-1 {
+			return 0, 0, errors.Errorf("series offset %d exceeds 4 bytes", offset)
+		}
+		refs = append(refs, uint32(offset))
+	}
+	if err := it.Err(); err != nil {
+		return 0, 0, err
+	}
+	sort.Sort(uint32slice(refs))
+
+	w.buf2.Reset()
+	w.buf2.PutBE32int(len(refs))
+
+	n := writeBaseDeltaBlock16Postings(&w.buf2, refs)
+
+	w.uint32s = refs
+
+	w.buf1.Reset()
+	w.buf1.PutBE32int(w.buf2.Len())
+
+	w.buf2.PutHash(w.crc32)
+
+	err := w.write(w.buf1.Get(), w.buf2.Get())
+	return w.pos - start, n, errors.Wrap(err, "write postings")
+}
+
+func (w *Writer) WritePostings3(name, value string, it Postings) (uint64, error) {
+	if err := w.ensureStage(idxStagePostings); err != nil {
+		return 0, errors.Wrap(err, "ensure stage")
+	}
+
+	// Align beginning to 4 bytes for more efficient postings list scans.
+	// if err := w.addPadding(4); err != nil {
+	// 	return err
+	// }
+
+	start := w.pos
+
+	w.postings = append(w.postings, hashEntry{
+		keys:   []string{name, value},
+		offset: w.pos,
+	})
+
+	// Order of the references in the postings list does not imply order
+	// of the series references within the persisted block they are mapped to.
+	// We have to sort the new references again.
+	refs := w.uint32s[:0]
+
+	for it.Next() {
+		offset, ok := w.seriesOffsets[it.At()]
+		if !ok {
+			return 0, errors.Errorf("%p series for reference %d not found", w, it.At())
+		}
+		if offset > (1<<32)-1 {
+			return 0, errors.Errorf("series offset %d exceeds 4 bytes", offset)
+		}
+		refs = append(refs, uint32(offset))
+	}
+	if err := it.Err(); err != nil {
+		return 0, err
+	}
+	sort.Sort(uint32slice(refs))
+
+	w.buf2.Reset()
+	w.buf2.PutBE32int(len(refs))
+
+	// The base.
+	w.buf2.PutUvarint32(refs[0])
+	// The width.
+	width := (bits.Len32(refs[len(refs)-1] - refs[0]) + 7) >> 3
+	if width == 0 {
+		width = 1
+	}
+	w.buf2.PutByte(byte(width))
+	for i := 0; i < 8 - width; i++ {
+		w.buf2.PutByte(0)
+	}
+	for i := 0; i < len(refs); i++ {
+		for j := width - 1; j >= 0; j-- {
+			w.buf2.B = append(w.buf2.B, byte(((refs[i]-refs[0])>>(8*uint(j))&0xff)))
+		}
+	}
+
+	w.uint32s = refs
+
+	w.buf1.Reset()
+	w.buf1.PutBE32int(w.buf2.Len())
+
+	w.buf2.PutHash(w.crc32)
+
+	err := w.write(w.buf1.Get(), w.buf2.Get())
+	return w.pos - start, errors.Wrap(err, "write postings")
+}
+
 type uint32slice []uint32
 
 func (s uint32slice) Len() int           { return len(s) }
@@ -943,6 +1119,26 @@ func (r *Reader) Series(id uint64, lbls *labels.Labels, chks *[]chunks.Meta) err
 func (r *Reader) Postings(name, value string) (Postings, error) {
 	e, ok := r.postings[name]
 	if !ok {
+		return EmptyPostings(), errors.Errorf("cannot find name")
+	}
+	off, ok := e[value]
+	if !ok {
+		return EmptyPostings(), errors.Errorf("cannot find value")
+	}
+	d := encoding.NewDecbufAt(r.b, int(off), castagnoliTable)
+	if d.Err() != nil {
+		return nil, errors.Wrap(d.Err(), "get postings entry")
+	}
+	_, p, err := r.dec.Postings(d.Get())
+	if err != nil {
+		return nil, errors.Wrap(err, "decode postings")
+	}
+	return p, nil
+}
+
+func (r *Reader) Postings1(name, value string) (Postings, error) {
+	e, ok := r.postings[name]
+	if !ok {
 		return EmptyPostings(), nil
 	}
 	off, ok := e[value]
@@ -953,7 +1149,47 @@ func (r *Reader) Postings(name, value string) (Postings, error) {
 	if d.Err() != nil {
 		return nil, errors.Wrap(d.Err(), "get postings entry")
 	}
-	_, p, err := r.dec.Postings(d.Get())
+	_, p, err := r.dec.Postings1(d.Get())
+	if err != nil {
+		return nil, errors.Wrap(err, "decode postings")
+	}
+	return p, nil
+}
+
+func (r *Reader) Postings2(name, value string) (Postings, error) {
+	e, ok := r.postings[name]
+	if !ok {
+		return EmptyPostings(), nil
+	}
+	off, ok := e[value]
+	if !ok {
+		return EmptyPostings(), nil
+	}
+	d := encoding.NewDecbufAt(r.b, int(off), castagnoliTable)
+	if d.Err() != nil {
+		return nil, errors.Wrap(d.Err(), "get postings entry")
+	}
+	_, p, err := r.dec.Postings2(d.Get())
+	if err != nil {
+		return nil, errors.Wrap(err, "decode postings")
+	}
+	return p, nil
+}
+
+func (r *Reader) Postings3(name, value string) (Postings, error) {
+	e, ok := r.postings[name]
+	if !ok {
+		return EmptyPostings(), nil
+	}
+	off, ok := e[value]
+	if !ok {
+		return EmptyPostings(), nil
+	}
+	d := encoding.NewDecbufAt(r.b, int(off), castagnoliTable)
+	if d.Err() != nil {
+		return nil, errors.Wrap(d.Err(), "get postings entry")
+	}
+	_, p, err := r.dec.Postings3(d.Get())
 	if err != nil {
 		return nil, errors.Wrap(err, "decode postings")
 	}
@@ -1112,6 +1348,29 @@ func (dec *Decoder) Postings(b []byte) (int, Postings, error) {
 	default:
 		return n, EmptyPostings(), d.Err()
 	}
+}
+
+func (dec *Decoder) Postings1(b []byte) (int, Postings, error) {
+	d := encoding.Decbuf{B: b}
+	n := d.Be32int()
+	l := d.Get()
+	return n, newBigEndianPostings(l), d.Err()
+}
+
+func (dec *Decoder) Postings2(b []byte) (int, Postings, error) {
+	d := encoding.Decbuf{B: b}
+	n := d.Be32int()
+	l := d.Get()
+	return n, newBaseDeltaBlock16Postings(l), d.Err()
+}
+
+func (dec *Decoder) Postings3(b []byte) (int, Postings, error) {
+	d := encoding.Decbuf{B: b}
+	n := d.Be32int()
+	base := uint64(d.Uvarint())
+	width := int(d.Byte())
+	l := d.Get()
+	return n, newBaseDeltaPostings(l, base, width, n), d.Err()
 }
 
 // Series decodes a series entry from the given byte slice into lset and chks.

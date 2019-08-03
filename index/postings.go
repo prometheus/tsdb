@@ -2109,7 +2109,7 @@ func writeBaseDelta16Block64(e *encoding.Encbuf, vals []uint64, key uint64, valu
 	}
 }
 
-func writeBaseDeltaBlock16Postings(e *encoding.Encbuf, arr []uint32) {
+func writeBaseDeltaBlock16Postings(e *encoding.Encbuf, arr []uint32) int {
 	key := uint32(0xffffffff)           // The initial key should be unique.
 	valueSize := 16 >> 3                // The size of the element in array in bytes.
 	mask := uint32((1 << uint(16)) - 1) // Mask for the elements in the block.
@@ -2146,6 +2146,17 @@ func writeBaseDeltaBlock16Postings(e *encoding.Encbuf, arr []uint32) {
 	for _, off := range startingOffs {
 		e.PutBE32(off-8-uint32(startOff))
 	}
+	// e.PutUvarint32(startingOffs[0]-8-uint32(startOff))
+	// width := bits.Len32(startingOffs[len(startingOffs)-1] - 4 - uint32(startOff))
+	// if width == 0 {
+	// 	// key 0 will result in 0 width.
+	// 	width += 1
+	// }
+	// e.PutByte(byte((width + 7) / 8))
+	// for _, off := range startingOffs {
+	// 	putBytes(e, off - (startingOffs[len(startingOffs)-1] - 4 - uint32(startOff)), (width + 7) / 8)
+	// }
+	return len(startingOffs) - 1
 }
 
 func writeBaseDeltaBlock16Postings64(e *encoding.Encbuf, arr []uint64) {
