@@ -21,6 +21,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/prometheus/tsdb/encoding"
 	"github.com/prometheus/tsdb/labels"
 )
 
@@ -688,4 +689,171 @@ func (it *bigEndianPostings) Seek(x uint64) bool {
 
 func (it *bigEndianPostings) Err() error {
 	return nil
+}
+
+type prefixCompressedPostings struct {
+	bs         []byte
+	cur        uint64
+	inside     bool
+	idx        int // The current offset inside the bs.
+	footerAddr int
+	key        uint64
+	numBlock   int
+	blockIdx   int // The current block idx.
+	nextBlock  int // The starting offset of the next block.
+}
+
+func newPrefixCompressedPostings(bstream []byte) *prefixCompressedPostings {
+	return &prefixCompressedPostings{
+		bs:         bstream[8:],
+		numBlock:   int(binary.BigEndian.Uint32(bstream[4:])),
+		footerAddr: int(binary.BigEndian.Uint32(bstream)),
+	}
+}
+
+func (it *prefixCompressedPostings) At() uint64 {
+	return it.cur
+}
+
+func (it *prefixCompressedPostings) Next() bool {
+	if it.inside { // Already entered the block.
+		if it.idx < it.nextBlock {
+			it.cur = it.key | uint64(binary.BigEndian.Uint16(it.bs[it.idx:]))
+			it.idx += 2
+			return true
+		}
+		it.blockIdx += 1 // Go to the next block.
+	}
+	// Currently not entered any block.
+	if it.idx < it.footerAddr {
+		it.key = binary.BigEndian.Uint64(it.bs[it.idx:])
+		it.idx += 8
+		it.inside = true
+		it.nextBlock = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+((it.blockIdx+1)<<2):]))
+		it.cur = it.key | uint64(binary.BigEndian.Uint16(it.bs[it.idx:]))
+		it.idx += 2
+		return true
+	} else {
+		return false
+	}
+}
+
+func (it *prefixCompressedPostings) seekInBlock(x uint64) bool {
+	curVal := uint16(x & 0xffff)
+	num := (it.nextBlock - it.idx) >> 1
+	j := sort.Search(num, func(i int) bool {
+		return binary.BigEndian.Uint16(it.bs[it.idx+(i<<1):]) >= curVal
+	})
+	if j == num {
+		// Fast-path to the next block.
+		// The first element in next block should be >= x.
+		it.idx = it.nextBlock
+		it.blockIdx += 1
+		if it.idx >= it.footerAddr {
+			return false
+		}
+		it.key = binary.BigEndian.Uint64(it.bs[it.idx:])
+		it.idx += 8
+		it.inside = true
+		it.nextBlock = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+((it.blockIdx+1)<<2):]))
+		it.cur = it.key | uint64(binary.BigEndian.Uint16(it.bs[it.idx:]))
+		it.idx += 2
+		return true
+	}
+	it.cur = it.key | uint64(binary.BigEndian.Uint16(it.bs[it.idx+(j<<1):]))
+	it.idx += (j + 1) << 1
+	return true
+}
+
+func (it *prefixCompressedPostings) Seek(x uint64) bool {
+	if it.cur >= x {
+		return true
+	}
+	curKey := (x >> 16) << 16
+	if it.inside && it.key == curKey {
+		// Fast path for x in current block.
+		return it.seekInBlock(x)
+	} else {
+		i := sort.Search(it.numBlock-it.blockIdx, func(i int) bool {
+			off := int(binary.BigEndian.Uint32(it.bs[it.footerAddr+((it.blockIdx+i)<<2):]))
+			k := binary.BigEndian.Uint64(it.bs[off:])
+			return k >= curKey
+		})
+		if i == it.numBlock-it.blockIdx {
+			return false
+		}
+		it.blockIdx += i
+		if i > 0 {
+			it.idx = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+((it.blockIdx)<<2):]))
+		}
+	}
+	it.key = binary.BigEndian.Uint64(it.bs[it.idx:])
+	it.idx += 8
+
+	it.inside = true
+
+	it.nextBlock = int(binary.BigEndian.Uint32(it.bs[it.footerAddr+((it.blockIdx+1)<<2):]))
+	return it.seekInBlock(x)
+}
+
+func (it *prefixCompressedPostings) Err() error {
+	return nil
+}
+
+// The size of values inside the block is 2 bytes.
+func writePrefixCompressedPostingsBlock(e *encoding.Encbuf, vals []uint16, key uint64, c []byte) {
+	e.PutBE64(key)
+	for _, val := range vals {
+		binary.BigEndian.PutUint16(c[:], val)
+		e.PutByte(c[0])
+		e.PutByte(c[1])
+	}
+}
+
+func writePrefixCompressedPostings(e *encoding.Encbuf, arr []uint64) {
+	if len(arr) == 0 {
+		return
+	}
+	key := uint64(0)
+	mask := uint64((1 << uint(16)) - 1) // Mask for the elements in the block.
+	invertedMask := ^mask
+	var (
+		curKey       uint64
+		curVal       uint64
+		idx          int      // Index of current element in arr.
+		startingOffs []uint32 // The starting offsets of each block.
+		vals         []uint16 // The converted values in the current block.
+		startOff     = len(e.Get())
+		c            = make([]byte, 2)
+	)
+	e.PutBE32(0) // Footer starting offset.
+	e.PutBE32(0) // Number of blocks.
+	for idx < len(arr) {
+		curKey = arr[idx] & invertedMask // Key of block.
+		curVal = arr[idx] & mask         // Value inside block.
+		if curKey != key {
+			// Move to next block.
+			if idx != 0 {
+				// We don't need to store the starting offset of the first block because it won't be used.
+				startingOffs = append(startingOffs, uint32(len(e.B)))
+				writePrefixCompressedPostingsBlock(e, vals, key, c)
+				vals = vals[:0]
+			}
+			key = curKey
+		}
+		vals = append(vals, uint16(curVal))
+		idx += 1
+	}
+	startingOffs = append(startingOffs, uint32(len(e.B)))
+	writePrefixCompressedPostingsBlock(e, vals, key, c)
+
+	// Store the ending offset can save the check of whether to read the next block address from the footer or
+	// just len(it.bs) each time before entering the next block.
+	startingOffs = append(startingOffs, uint32(len(e.B)))
+
+	binary.BigEndian.PutUint32(e.B[startOff:], uint32(len(e.B)-8-startOff))   // Put footer starting offset.
+	binary.BigEndian.PutUint32(e.B[startOff+4:], uint32(len(startingOffs)-1)) // Put number of blocks.
+	for _, off := range startingOffs {
+		e.PutBE32(off - 8 - uint32(startOff))
+	}
 }
