@@ -26,7 +26,7 @@ import (
 	"github.com/prometheus/tsdb/testutil"
 )
 
-func createTestDBWithBlock(t *testing.T) (db *tsdb.DB, close func()) {
+func createTestRODBWithBlock(t *testing.T) (*tsdb.DBReadOnly, func()) {
 	tmpdir, err := ioutil.TempDir("", "test")
 	if err != nil {
 		os.RemoveAll(tmpdir)
@@ -37,19 +37,27 @@ func createTestDBWithBlock(t *testing.T) (db *tsdb.DB, close func()) {
 	safeDBOptions.RetentionDuration = 0
 
 	testutil.CreateBlock(nil, tmpdir, testutil.GenSeries(1, 1, 0, 1))
-	db, err = tsdb.Open(tmpdir, nil, nil, &safeDBOptions)
+	db, err := tsdb.Open(tmpdir, nil, nil, &safeDBOptions)
 	if err != nil {
 		os.RemoveAll(tmpdir)
 		t.Error(err)
 	}
-	return db, func() {
-		db.Close()
+	if err = db.Close(); err != nil {
+		t.Error(err)
+	}
+
+	dbRO, err := tsdb.OpenDBReadOnly(tmpdir, nil)
+	if err != nil {
+		t.Error(err)
+	}
+
+	return dbRO, func() {
 		os.RemoveAll(tmpdir)
 	}
 }
 
 func TestCLIPrintBlocks(t *testing.T) {
-	db, closeFn := createTestDBWithBlock(t)
+	db, closeFn := createTestRODBWithBlock(t)
 	defer closeFn()
 
 	var b bytes.Buffer
@@ -71,14 +79,20 @@ func TestCLIPrintBlocks(t *testing.T) {
 	}
 
 	// Set table contents
+	blocks, err := db.Blocks()
+	if err != nil {
+		t.Error(err)
+	}
+	meta := blocks[0].Meta()
+
 	_, err = fmt.Fprintf(&b,
 		"%v\t%v\t%v\t%v\t%v\t%v\n",
-		db.Blocks()[0].Meta().ULID,
-		getFormatedTime(db.Blocks()[0].Meta().MinTime, &hr),
-		getFormatedTime(db.Blocks()[0].Meta().MaxTime, &hr),
-		db.Blocks()[0].Meta().Stats.NumSamples,
-		db.Blocks()[0].Meta().Stats.NumChunks,
-		db.Blocks()[0].Meta().Stats.NumSeries,
+		meta.ULID,
+		getFormatedTime(meta.MinTime, &hr),
+		getFormatedTime(meta.MaxTime, &hr),
+		meta.Stats.NumSamples,
+		meta.Stats.NumChunks,
+		meta.Stats.NumSeries,
 		)
 	if err != nil {
 		t.Error(err)
@@ -86,7 +100,11 @@ func TestCLIPrintBlocks(t *testing.T) {
 
 	// Test table contents
 	var actualStdout bytes.Buffer
-	printBlocks(&actualStdout, db.Blocks(), &hr)
+	blocks, err = db.Blocks()
+	if err != nil {
+		t.Error(err)
+	}
+	printBlocks(&actualStdout, blocks, &hr)
 
 	actual = actualStdout.String()
 	actual = strings.Replace(actual, " ", "", -1)
