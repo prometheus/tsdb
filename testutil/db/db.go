@@ -1,8 +1,20 @@
-package testutil
+// Copyright 2019 The Prometheus Authors
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package db
 
 import (
 	"context"
-	"io/ioutil"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -11,43 +23,31 @@ import (
 	"testing"
 
 	"github.com/go-kit/kit/log"
+
 	"github.com/prometheus/tsdb"
 	"github.com/prometheus/tsdb/labels"
+	"github.com/prometheus/tsdb/testutil"
 	"github.com/prometheus/tsdb/tsdbutil"
 )
-
-// OpenTestDB opens a test Database
-func OpenTestDB(t testing.TB, opts *tsdb.Options) (db *tsdb.DB, close func()) {
-	tmpdir, err := ioutil.TempDir("", "test")
-	Ok(t, err)
-
-	db, err = tsdb.Open(tmpdir, nil, nil, opts)
-	Ok(t, err)
-
-	// Do not close the test database by default as it will deadlock on test failures.
-	return db, func() {
-		Ok(t, os.RemoveAll(tmpdir))
-	}
-}
 
 // CreateBlock creates a block with given set of series and returns its dir.
 func CreateBlock(tb testing.TB, dir string, series []tsdb.Series) string {
 	head := createHead(tb, series)
 	compactor, err := tsdb.NewLeveledCompactor(context.Background(), nil, log.NewNopLogger(), []int64{1000000}, nil)
-	Ok(tb, err)
+	testutil.Ok(tb, err)
 
-	Ok(tb, os.MkdirAll(dir, 0777))
+	testutil.Ok(tb, os.MkdirAll(dir, 0777))
 
 	// Add +1 millisecond to block maxt because block intervals are half-open: [b.MinTime, b.MaxTime).
 	// Because of this block intervals are always +1 than the total samples it includes.
 	ulid, err := compactor.Write(dir, head, head.MinTime(), head.MaxTime()+1, nil)
-	Ok(tb, err)
+	testutil.Ok(tb, err)
 	return filepath.Join(dir, ulid.String())
 }
 
 func createHead(tb testing.TB, series []tsdb.Series) *tsdb.Head {
 	head, err := tsdb.NewHead(nil, nil, nil, 2*60*60*1000)
-	Ok(tb, err)
+	testutil.Ok(tb, err)
 	defer head.Close()
 
 	app := head.Appender()
@@ -63,12 +63,12 @@ func createHead(tb testing.TB, series []tsdb.Series) *tsdb.Head {
 				}
 			}
 			ref, err = app.Add(s.Labels(), t, v)
-			Ok(tb, err)
+			testutil.Ok(tb, err)
 		}
-		Ok(tb, it.Err())
+		testutil.Ok(tb, it.Err())
 	}
 	err = app.Commit()
-	Ok(tb, err)
+	testutil.Ok(tb, err)
 	return head
 }
 

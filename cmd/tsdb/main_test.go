@@ -1,4 +1,4 @@
-// Copyright 2017 The Prometheus Authors
+// Copyright 2019 The Prometheus Authors
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -23,7 +23,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/prometheus/tsdb"
-	"github.com/prometheus/tsdb/testutil"
+	testutildb "github.com/prometheus/tsdb/testutil/db"
 )
 
 func createTestRODBWithBlock(t *testing.T) (*tsdb.DBReadOnly, func()) {
@@ -36,7 +36,7 @@ func createTestRODBWithBlock(t *testing.T) (*tsdb.DBReadOnly, func()) {
 	safeDBOptions := *tsdb.DefaultOptions
 	safeDBOptions.RetentionDuration = 0
 
-	testutil.CreateBlock(nil, tmpdir, testutil.GenSeries(1, 1, 0, 1))
+	testutildb.CreateBlock(nil, tmpdir, testutildb.GenSeries(1, 1, 0, 1))
 	db, err := tsdb.Open(tmpdir, nil, nil, &safeDBOptions)
 	if err != nil {
 		os.RemoveAll(tmpdir)
