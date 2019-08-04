@@ -39,6 +39,10 @@ import (
 	"gopkg.in/alecthomas/kingpin.v2"
 )
 
+const (
+	printBlocksTableHeader = "BLOCK ULID\tMIN TIME\tMAX TIME\tNUM SAMPLES\tNUM CHUNKS\tNUM SERIES"
+)
+
 func main() {
 	if err := execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -95,7 +99,7 @@ func execute() (err error) {
 		if err != nil {
 			return err
 		}
-		printBlocks(blocks, listCmdHumanReadable)
+		printBlocks(os.Stdout, blocks, listCmdHumanReadable)
 	case analyzeCmd.FullCommand():
 		db, err := tsdb.OpenDBReadOnly(*analyzePath, nil)
 		if err != nil {
@@ -434,11 +438,11 @@ func readPrometheusLabels(r io.Reader, n int) ([]labels.Labels, error) {
 	return mets, nil
 }
 
-func printBlocks(blocks []tsdb.BlockReader, humanReadable *bool) {
-	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+func printBlocks(w io.Writer, blocks []tsdb.BlockReader, humanReadable *bool) {
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	defer tw.Flush()
 
-	fmt.Fprintln(tw, "BLOCK ULID\tMIN TIME\tMAX TIME\tNUM SAMPLES\tNUM CHUNKS\tNUM SERIES")
+	fmt.Fprintln(tw, printBlocksTableHeader)
 	for _, b := range blocks {
 		meta := b.Meta()
 

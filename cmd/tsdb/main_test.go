@@ -14,17 +14,23 @@
 package main
 
 import (
+	"bytes"
+	"fmt"
 	"io/ioutil"
 	"os"
+	"strings"
+	"testing"
+	"text/tabwriter"
 
 	"github.com/prometheus/tsdb"
 	"github.com/prometheus/tsdb/testutil"
 )
 
-func createTestDBWithBlock() (db *tsdb.DB, close func()) {
+func createTestDBWithBlock(t *testing.T) (db *tsdb.DB, close func()) {
 	tmpdir, err := ioutil.TempDir("", "test")
 	if err != nil {
-		os.Exit(1)
+		os.RemoveAll(tmpdir)
+		t.Error(err)
 	}
 
 	safeDBOptions := *tsdb.DefaultOptions
@@ -34,7 +40,7 @@ func createTestDBWithBlock() (db *tsdb.DB, close func()) {
 	db, err = tsdb.Open(tmpdir, nil, nil, &safeDBOptions)
 	if err != nil {
 		os.RemoveAll(tmpdir)
-		os.Exit(1)
+		t.Error(err)
 	}
 	return db, func() {
 		db.Close()
@@ -42,14 +48,57 @@ func createTestDBWithBlock() (db *tsdb.DB, close func()) {
 	}
 }
 
-func ExampleCLICalls() {
-	db, close := createTestDBWithBlock()
-	defer func() {
-		close()
-	}()
+func TestCLIPrintBlocks(t *testing.T) {
+	db, closeFn := createTestDBWithBlock(t)
+	defer closeFn()
 
+	var b bytes.Buffer
 	hr := false
-	printBlocks(db.Blocks(), &hr)
-	// Output:
-	// BLOCK ULID\tMIN TIME\tMAX TIME\tNUM SAMPLES\tNUM CHUNKS\tNUM SERIES
+	tw := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
+	defer tw.Flush()
+
+	// Set table header
+	_, err := fmt.Fprintln(&b, printBlocksTableHeader)
+	if err != nil {
+		t.Error(err)
+	}
+
+	// Test table header
+	actual := b.String()
+	expected := fmt.Sprintln(printBlocksTableHeader)
+	if expected != actual {
+		t.Errorf("expected (%#v) != actual (%#v)", expected, actual)
+	}
+
+	// Set table contents
+	_, err = fmt.Fprintf(&b,
+		"%v\t%v\t%v\t%v\t%v\t%v\n",
+		db.Blocks()[0].Meta().ULID,
+		getFormatedTime(db.Blocks()[0].Meta().MinTime, &hr),
+		getFormatedTime(db.Blocks()[0].Meta().MaxTime, &hr),
+		db.Blocks()[0].Meta().Stats.NumSamples,
+		db.Blocks()[0].Meta().Stats.NumChunks,
+		db.Blocks()[0].Meta().Stats.NumSeries,
+		)
+	if err != nil {
+		t.Error(err)
+	}
+
+	// Test table contents
+	var actualStdout bytes.Buffer
+	printBlocks(&actualStdout, db.Blocks(), &hr)
+
+	actual = actualStdout.String()
+	actual = strings.Replace(actual, " ", "", -1)
+	actual = strings.Replace(actual, "\t", "", -1)
+	actual = strings.Replace(actual, "\n", "", -1)
+
+	expected = b.String()
+	expected = strings.Replace(expected, " ", "", -1)
+	expected = strings.Replace(expected, "\t", "", -1)
+	expected = strings.Replace(expected, "\n", "", -1)
+
+	if expected != actual {
+		t.Errorf("expected (%#v) != actual (%#v)", expected, actual)
+	}
 }
