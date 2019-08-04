@@ -93,7 +93,8 @@ func TestCLIPrintBlocks(t *testing.T) {
 		meta.Stats.NumSamples,
 		meta.Stats.NumChunks,
 		meta.Stats.NumSeries,
-		)
+	)
+
 	if err != nil {
 		t.Error(err)
 	}
