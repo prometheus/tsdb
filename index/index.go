@@ -1065,8 +1065,10 @@ func (dec *Decoder) Postings(b []byte, version int) (int, Postings, error) {
 	l := d.Get()
 	if version == FormatV3 {
 		return n, newPrefixCompressedPostings(l), d.Err()
-	} else {
+	} else if version == FormatV1 || version == FormatV2 {
 		return n, newBigEndianPostings(l), d.Err()
+	} else {
+		return n, EmptyPostings(), d.Err()
 	}
 }
 
