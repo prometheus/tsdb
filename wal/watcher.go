@@ -51,7 +51,7 @@ type WriteTo interface {
 	SeriesReset(int)
 }
 
-type watcherMetrics struct {
+type WatcherMetrics struct {
 	recordsRead           *prometheus.CounterVec
 	recordDecodeFails     *prometheus.CounterVec
 	samplesSentPreTailing *prometheus.CounterVec
@@ -65,7 +65,7 @@ type Watcher struct {
 	logger         log.Logger
 	walDir         string
 	lastCheckpoint string
-	metrics        *watcherMetrics
+	metrics        *WatcherMetrics
 	readerMetrics  *liveReaderMetrics
 
 	startTime int64
@@ -82,8 +82,8 @@ type Watcher struct {
 	maxSegment int
 }
 
-func NewWatcherMetrics(reg prometheus.Registerer) *watcherMetrics {
-	m := &watcherMetrics{
+func NewWatcherMetrics(reg prometheus.Registerer) *WatcherMetrics {
+	m := &WatcherMetrics{
 		recordsRead: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Namespace: "prometheus",
@@ -123,17 +123,17 @@ func NewWatcherMetrics(reg prometheus.Registerer) *watcherMetrics {
 	}
 
 	if reg != nil {
-		reg.Register(m.recordsRead)
-		reg.Register(m.recordDecodeFails)
-		reg.Register(m.samplesSentPreTailing)
-		reg.Register(m.currentSegment)
+		reg.MustRegister(m.recordsRead)
+		reg.MustRegister(m.recordDecodeFails)
+		reg.MustRegister(m.samplesSentPreTailing)
+		reg.MustRegister(m.currentSegment)
 	}
 
 	return m
 }
 
 // NewWatcher creates a new WAL watcher for a given WriteTo.
-func NewWatcher(reg prometheus.Registerer, logger log.Logger, name string, writer WriteTo, walDir string) *Watcher {
+func NewWatcher(reg prometheus.Registerer, metrics *WatcherMetrics, logger log.Logger, name string, writer WriteTo, walDir string) *Watcher {
 	if logger == nil {
 		logger = log.NewNopLogger()
 	}
@@ -141,7 +141,7 @@ func NewWatcher(reg prometheus.Registerer, logger log.Logger, name string, write
 	w := Watcher{
 		logger:        logger,
 		writer:        writer,
-		metrics:       NewWatcherMetrics(reg),
+		metrics:       metrics,
 		readerMetrics: NewLiveReaderMetrics(reg),
 		walDir:        path.Join(walDir, "wal"),
 		name:          name,

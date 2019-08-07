@@ -30,6 +30,7 @@ import (
 
 var defaultRetryInterval = 100 * time.Millisecond
 var defaultRetries = 100
+var wMetrics = NewWatcherMetrics(prometheus.DefaultRegisterer)
 
 // retry executes f() n times at each interval until it returns true.
 func retry(t *testing.T, interval time.Duration, n int, f func() bool) {
@@ -137,7 +138,7 @@ func TestTailSamples(t *testing.T) {
 			testutil.Ok(t, err)
 
 			wt := newWriteToMock()
-			watcher := NewWatcher(prometheus.DefaultRegisterer, nil, "", wt, dir)
+			watcher := NewWatcher(prometheus.DefaultRegisterer, wMetrics, nil, "", wt, dir)
 			watcher.startTime = now.UnixNano()
 
 			// Set the Watcher's metrics so they're not nil pointers.
@@ -216,7 +217,7 @@ func TestReadToEndNoCheckpoint(t *testing.T) {
 			testutil.Ok(t, err)
 
 			wt := newWriteToMock()
-			watcher := NewWatcher(prometheus.DefaultRegisterer, nil, "", wt, dir)
+			watcher := NewWatcher(prometheus.DefaultRegisterer, wMetrics, nil, "", wt, dir)
 			go watcher.Start()
 
 			expected := seriesCount
@@ -302,7 +303,7 @@ func TestReadToEndWithCheckpoint(t *testing.T) {
 			_, _, err = w.Segments()
 			testutil.Ok(t, err)
 			wt := newWriteToMock()
-			watcher := NewWatcher(prometheus.DefaultRegisterer, nil, "", wt, dir)
+			watcher := NewWatcher(prometheus.DefaultRegisterer, wMetrics, nil, "", wt, dir)
 			go watcher.Start()
 
 			expected := seriesCount * 2
@@ -367,7 +368,7 @@ func TestReadCheckpoint(t *testing.T) {
 			testutil.Ok(t, err)
 
 			wt := newWriteToMock()
-			watcher := NewWatcher(prometheus.DefaultRegisterer, nil, "", wt, dir)
+			watcher := NewWatcher(prometheus.DefaultRegisterer, wMetrics, nil, "", wt, dir)
 			// watcher.
 			go watcher.Start()
 
@@ -433,7 +434,7 @@ func TestReadCheckpointMultipleSegments(t *testing.T) {
 			}, 0)
 
 			wt := newWriteToMock()
-			watcher := NewWatcher(prometheus.DefaultRegisterer, nil, "", wt, dir)
+			watcher := NewWatcher(prometheus.DefaultRegisterer, wMetrics, nil, "", wt, dir)
 			watcher.maxSegment = -1
 
 			// Set the Watcher's metrics so they're not nil pointers.
@@ -504,7 +505,7 @@ func TestCheckpointSeriesReset(t *testing.T) {
 			testutil.Ok(t, err)
 
 			wt := newWriteToMock()
-			watcher := NewWatcher(prometheus.DefaultRegisterer, nil, "", wt, dir)
+			watcher := NewWatcher(prometheus.DefaultRegisterer, wMetrics, nil, "", wt, dir)
 			watcher.maxSegment = -1
 			go watcher.Start()
 
