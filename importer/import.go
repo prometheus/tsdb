@@ -15,6 +15,7 @@ package importer
 
 import (
 	"context"
+	"fmt"
 	"io/ioutil"
 	"math"
 	"os"
@@ -57,11 +58,22 @@ type metricSample struct {
 }
 
 // ImportFromFile imports data from a file formatted according to the Prometheus exposition format,
-// converts it into a snapshot/block, and places the newly created snapshot/block in the
+// converts it into block(s), and places the newly created block(s) in the
 // TSDB DB directory, where it is treated like any other block.
 func ImportFromFile(filePath string, contentType string, dbPath string, skipTimestampCheck bool, logger log.Logger) error {
 	if logger == nil {
 		logger = log.NewNopLogger()
+	}
+
+	tmpDbDir, err := ioutil.TempDir("", "importer")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(tmpDbDir)
+
+	dbMint, dbMaxt, err := getDbTimeLimits(dbPath)
+	if err != nil {
+		return err
 	}
 
 	f, err := os.Open(filePath)
@@ -75,30 +87,12 @@ func ImportFromFile(filePath string, contentType string, dbPath string, skipTime
 		return err
 	}
 
-	metricSamples, minValidTimestamp, maxValidTimestamp, err := parseMetrics(bytes, contentType)
+	blockPaths, err := pushMetrics(bytes, contentType, tmpDbDir, dbMint, dbMaxt, skipTimestampCheck, logger)
 	if err != nil {
 		return err
 	}
 
-	if !skipTimestampCheck {
-		err = verifyIntegration(dbPath, minValidTimestamp, maxValidTimestamp)
-		if err != nil {
-			return err
-		}
-	}
-
-	tmpDbDir, err := ioutil.TempDir("", "importer")
-	if err != nil {
-		return err
-	}
-	defer os.RemoveAll(tmpDbDir)
-
-	//snapshotPath, err := pushToDisk(metricSamples, tmpDbDir, minValidTimestamp, logger)
-	snapshotPaths, err := pushToDisk(metricSamples, tmpDbDir, logger)
-	if err != nil {
-		return err
-	}
-	level.Info(logger).Log("msg", "blocks created", "blockPaths", snapshotPaths)
+	level.Info(logger).Log("msg", "blocks created", "blockPaths", blockPaths)
 
 	err = copyToDatabase(tmpDbDir, dbPath)
 	if err != nil {
@@ -108,23 +102,25 @@ func ImportFromFile(filePath string, contentType string, dbPath string, skipTime
 	return nil
 }
 
-// parseMetrics parses metrics formatted in the Prometheus exposition format.
-// Returns the metric samples, min timestamp, max timestamp, and error.
-func parseMetrics(b []byte, contentType string) ([][]*metricSample, timestamp, timestamp, error) {
+// pushMetrics parses metrics formatted in the Prometheus exposition format,
+// and creates corresponding blocks.
+// Returns paths to the newly created blocks, and error.
+func pushMetrics(b []byte, contentType string, dbPath string, dbMint, dbMaxt timestamp, skipTimestampCheck bool, logger log.Logger) ([]string, error) {
 	var minValidTimestamp timestamp
 	minValidTimestamp = math.MaxInt64
 	var maxValidTimestamp timestamp
 	maxValidTimestamp = math.MinInt64
 
-	var buckets [][]*metricSample
+	var blockPaths []string
 	var currentBucket []*metricSample
 	var startTime time.Time
+	var currentTime time.Time
 	var err error
 	parser := textparse.New(b, contentType)
 	for {
 		var ent textparse.Entry
 		if ent, err = parser.Next(); err != nil {
-			// Error strings are just differently enough across packages,
+			// Error strings are just different enough across packages,
 			// hence this catch-all that just looks for "EOF" in the error
 			// string, and if it finds one, it means that the parsing is complete.
 			if strings.Contains(strings.ToLower(err.Error()), "eof") {
@@ -132,7 +128,7 @@ func parseMetrics(b []byte, contentType string) ([][]*metricSample, timestamp, t
 				break
 			}
 			// In case the error that we see is not related to the EOF.
-			return nil, minValidTimestamp, maxValidTimestamp, err
+			return nil, err
 		}
 		switch ent {
 		case textparse.EntryType:
@@ -147,7 +143,7 @@ func parseMetrics(b []byte, contentType string) ([][]*metricSample, timestamp, t
 		}
 		_, currentTimestampMicroS, val := parser.Series()
 
-		// Parses converts all timestamps to microseconds.
+		// The text parser converts all timestamps to microseconds.
 		// TSDB looks for timestamps in milliseconds.
 		var currentTimestampMs timestamp
 		if currentTimestampMicroS == nil {
@@ -164,7 +160,7 @@ func parseMetrics(b []byte, contentType string) ([][]*metricSample, timestamp, t
 
 		tsdbLabels := tsdb_labels.FromMap(lset.Map())
 
-		currentTime := time.Unix(currentTimestampMs/1000, 0)
+		currentTime = time.Unix(currentTimestampMs/1000, 0)
 		currentSample := &metricSample{TimestampMs: currentTimestampMs, Value: val, Labels: tsdbLabels}
 
 		if startTime.IsZero() {
@@ -176,30 +172,46 @@ func parseMetrics(b []byte, contentType string) ([][]*metricSample, timestamp, t
 		timeDelta := currentTime.Sub(startTime)
 		if timeDelta.Seconds()*1000 >= BlockDuration {
 			startTime = currentTime
-			buckets = append(buckets, currentBucket)
+
+			start := int64(startTime.Second() * 1000)
+			end := int64(currentTime.Second() * 1000)
+			blockPath, err := pushToDisk(currentBucket, dbPath, dbMint, dbMaxt, start, end, skipTimestampCheck, logger)
+			if err != nil {
+				if err == OverlappingBlocksError {
+					level.Warn(logger).Log("msg", fmt.Sprintf("could not merge with range %d to %d as it overlaps with target DB", start, end))
+				} else {
+					return nil, err
+				}
+			}
+			blockPaths = append(blockPaths, blockPath)
 			currentBucket = []*metricSample{currentSample}
 		} else {
 			currentBucket = append(currentBucket, currentSample)
 		}
 	}
 	// Last bucket to be added
-	buckets = append(buckets, currentBucket)
-
-	return buckets, minValidTimestamp, maxValidTimestamp, nil
-}
-
-// pushToDisk uses the 2h blocks partitioned for us by the parser, and creates
-// new blocks.
-func pushToDisk(samples [][]*metricSample, dbDir string, logger log.Logger) ([]string, error) {
-	paths := make([]string, 0, len(samples))
-	for _, bucket := range samples {
-		blockPath, err := createBlock(bucket, dbDir, logger)
-		if err != nil {
+	blockPath, err := pushToDisk(currentBucket, dbPath, dbMint, dbMaxt, int64(startTime.Second()*1000), int64(currentTime.Second()*1000), skipTimestampCheck, logger)
+	if err != nil {
+		if err == OverlappingBlocksError {
+			level.Warn(logger).Log("msg", fmt.Sprintf("could not merge with range %d to %d as it overlaps with target DB", int64(startTime.Second()*1000), int64(currentTime.Second()*1000)))
+		} else {
 			return nil, err
 		}
-		paths = append(paths, blockPath)
 	}
-	return paths, nil
+	blockPaths = append(blockPaths, blockPath)
+	return blockPaths, nil
+}
+
+// pushToDisk verifies the sample is compatible with the target TSDB instance, and then creates a new block
+// from the sample data.
+func pushToDisk(samples []*metricSample, dbDir string, dbMint, dbMaxt, startTime, endTime timestamp, skipTimestampCheck bool, logger log.Logger) (string, error) {
+	if !skipTimestampCheck {
+		err := verifyIntegration(dbMint, dbMaxt, startTime, endTime)
+		if err != nil {
+			return "", OverlappingBlocksError
+		}
+	}
+	return createBlock(samples, dbDir, logger)
 }
 
 // createHead creates a TSDB writer head to write the sample data to.
@@ -222,7 +234,7 @@ func createHead(samples []*metricSample, chunkRange int64, logger log.Logger) (*
 	return head, nil
 }
 
-// createBlock creates a block from the samples passed to it, and writes it to disk.
+// createBlock creates a 2h block from the samples passed to it, and writes it to disk.
 func createBlock(samples []*metricSample, dir string, logger log.Logger) (string, error) {
 	// 2h head block
 	head, err := createHead(samples, BlockDuration, logger)
@@ -255,28 +267,41 @@ func copyToDatabase(snapshotPath string, dbPath string) error {
 
 // verifyIntegration returns an error if the any of the blocks in the DB intersect with
 // the provided time range.
-func verifyIntegration(dbPath string, mint, maxt timestamp) error {
+func verifyIntegration(dbmint, dbmaxt, mint, maxt timestamp) error {
+	if dbmaxt >= mint && dbmaxt <= maxt {
+		return OverlappingBlocksError
+	}
+	if dbmint >= mint && dbmint <= maxt {
+		return OverlappingBlocksError
+	}
+	return nil
+}
+
+// getDbTimeLimits returns the first and last timestamps of the target TSDB instance.
+func getDbTimeLimits(dbPath string) (timestamp, timestamp, error) {
+	mint := int64(math.MinInt64)
+	maxt := int64(math.MaxInt64)
 	// If we try to open a regular RW handle on an active TSDB instance,
 	// it will fail. Hence, we open a RO handle.
 	db, err := tsdb.OpenDBReadOnly(dbPath, nil)
 	if err != nil {
-		return err
+		return mint, maxt, err
 	}
 	defer db.Close()
 	blocks, err := db.Blocks()
 	if err != nil {
 		if err.Error() != "no blocks found" {
-			return err
+			return mint, maxt, err
 		}
 	}
-	for _, block := range blocks {
+	for idx, block := range blocks {
 		bmint, bmaxt := block.Meta().MinTime, block.Meta().MaxTime
-		if maxt > bmint && maxt < bmaxt {
-			return OverlappingBlocksError
-		}
-		if mint > bmint && mint < bmaxt {
-			return OverlappingBlocksError
+		if idx == 0 {
+			mint, maxt = bmint, bmaxt
+		} else {
+			mint = minInt(mint, bmint)
+			maxt = maxInt(maxt, bmaxt)
 		}
 	}
-	return nil
+	return mint, maxt, nil
 }
