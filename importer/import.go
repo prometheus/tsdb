@@ -145,15 +145,15 @@ func parseMetrics(b []byte, contentType string) ([][]*metricSample, timestamp, t
 			continue
 		default:
 		}
-		_, currentTimestampNs, val := parser.Series()
+		_, currentTimestampMicroS, val := parser.Series()
 
-		// Parses converts all timestamps to nanoseconds.
+		// Parses converts all timestamps to microseconds.
 		// TSDB looks for timestamps in milliseconds.
 		var currentTimestampMs timestamp
-		if currentTimestampNs == nil {
+		if currentTimestampMicroS == nil {
 			currentTimestampMs = 0
 		} else {
-			currentTimestampMs = *currentTimestampNs / 1000
+			currentTimestampMs = *currentTimestampMicroS / 1e3
 		}
 
 		minValidTimestamp = minInt(minValidTimestamp, currentTimestampMs)
