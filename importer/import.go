@@ -14,11 +14,15 @@
 package importer
 
 import (
-	"fmt"
+	"context"
 	"io/ioutil"
 	"math"
 	"os"
+	"path/filepath"
 	"strings"
+	"time"
+
+	"github.com/go-kit/kit/log/level"
 
 	"github.com/go-kit/kit/log"
 	"github.com/otiai10/copy"
@@ -40,6 +44,9 @@ func (e Error) Error() string {
 // This error is thrown when we try to merge/add blocks to an existing TSDB instance,
 // and the new blocks have a time overlap with the current blocks.
 const OverlappingBlocksError = Error("blocks overlap with blocks currently in DB")
+
+// Duration of a block in milliseconds
+const BlockDuration = 2 * 60 * 60 * 1000
 
 type timestamp = int64
 
@@ -86,27 +93,32 @@ func ImportFromFile(filePath string, contentType string, dbPath string, skipTime
 	}
 	defer os.RemoveAll(tmpDbDir)
 
-	snapshotPath, err := pushToDisk(metricSamples, tmpDbDir, minValidTimestamp, logger)
+	//snapshotPath, err := pushToDisk(metricSamples, tmpDbDir, minValidTimestamp, logger)
+	snapshotPaths, err := pushToDisk(metricSamples, tmpDbDir, logger)
+	if err != nil {
+		return err
+	}
+	level.Info(logger).Log("msg", "blocks created", "blockPaths", snapshotPaths)
+
+	err = copyToDatabase(tmpDbDir, dbPath)
 	if err != nil {
 		return err
 	}
 
-	err = copyToDatabase(snapshotPath, dbPath)
-	if err != nil {
-		return err
-	}
 	return nil
 }
 
 // parseMetrics parses metrics formatted in the Prometheus exposition format.
 // Returns the metric samples, min timestamp, max timestamp, and error.
-func parseMetrics(b []byte, contentType string) ([]*metricSample, timestamp, timestamp, error) {
+func parseMetrics(b []byte, contentType string) ([][]*metricSample, timestamp, timestamp, error) {
 	var minValidTimestamp timestamp
 	minValidTimestamp = math.MaxInt64
 	var maxValidTimestamp timestamp
 	maxValidTimestamp = math.MinInt64
 
-	var metricSamples []*metricSample
+	var buckets [][]*metricSample
+	var currentBucket []*metricSample
+	var startTime time.Time
 	var err error
 	parser := textparse.New(b, contentType)
 	for {
@@ -151,40 +163,87 @@ func parseMetrics(b []byte, contentType string) ([]*metricSample, timestamp, tim
 		_ = parser.Metric(&lset)
 
 		tsdbLabels := tsdb_labels.FromMap(lset.Map())
-		metricSamples = append(metricSamples, &metricSample{TimestampMs: currentTimestampMs, Value: val, Labels: tsdbLabels})
-	}
-	return metricSamples, minValidTimestamp, maxValidTimestamp, nil
-}
 
-// pushToDisk writes the metric samples to disk, using the TSDB snapshot feature.
-func pushToDisk(samples []*metricSample, dbDir string, minValidTimestamp timestamp, logger log.Logger) (string, error) {
-	snapshotPath := fmt.Sprintf("%s%c%s", dbDir, os.PathSeparator, "snap")
-	db, err := tsdb.Open(dbDir, logger, nil, nil)
-	if err != nil {
-		return "", err
-	}
-	defer db.Close()
+		currentTime := time.Unix(currentTimestampMs/1000, 0)
+		currentSample := &metricSample{TimestampMs: currentTimestampMs, Value: val, Labels: tsdbLabels}
 
-	err = db.Head().Init(minValidTimestamp)
-	if err != nil {
-		return "", err
-	}
-	dbapp := db.Appender()
-	for _, msample := range samples {
-		_, err = dbapp.Add(msample.Labels, msample.TimestampMs, msample.Value)
-		if err != nil {
-			return "", err
+		if startTime.IsZero() {
+			startTime = currentTime
+			currentBucket = append(currentBucket, currentSample)
+			continue
+		}
+
+		timeDelta := currentTime.Sub(startTime)
+		if timeDelta.Seconds()*1000 >= BlockDuration {
+			startTime = currentTime
+			buckets = append(buckets, currentBucket)
+			currentBucket = []*metricSample{currentSample}
+		} else {
+			currentBucket = append(currentBucket, currentSample)
 		}
 	}
-	err = dbapp.Commit()
+	// Last bucket to be added
+	buckets = append(buckets, currentBucket)
+
+	return buckets, minValidTimestamp, maxValidTimestamp, nil
+}
+
+// pushToDisk uses the 2h blocks partitioned for us by the parser, and creates
+// new blocks.
+func pushToDisk(samples [][]*metricSample, dbDir string, logger log.Logger) ([]string, error) {
+	paths := make([]string, 0, len(samples))
+	for _, bucket := range samples {
+		blockPath, err := createBlock(bucket, dbDir, logger)
+		if err != nil {
+			return nil, err
+		}
+		paths = append(paths, blockPath)
+	}
+	return paths, nil
+}
+
+// createHead creates a TSDB writer head to write the sample data to.
+func createHead(samples []*metricSample, chunkRange int64, logger log.Logger) (*tsdb.Head, error) {
+	head, err := tsdb.NewHead(nil, logger, nil, chunkRange)
+	if err != nil {
+		return nil, err
+	}
+	app := head.Appender()
+	for _, sample := range samples {
+		_, err = app.Add(sample.Labels, sample.TimestampMs, sample.Value)
+		if err != nil {
+			return nil, err
+		}
+	}
+	err = app.Commit()
+	if err != nil {
+		return nil, err
+	}
+	return head, nil
+}
+
+// createBlock creates a block from the samples passed to it, and writes it to disk.
+func createBlock(samples []*metricSample, dir string, logger log.Logger) (string, error) {
+	// 2h head block
+	head, err := createHead(samples, BlockDuration, logger)
 	if err != nil {
 		return "", err
 	}
-	err = db.Snapshot(snapshotPath, true)
+	compactor, err := tsdb.NewLeveledCompactor(context.Background(), nil, logger, tsdb.DefaultOptions.BlockRanges, nil)
 	if err != nil {
 		return "", err
 	}
-	return snapshotPath, nil
+
+	err = os.MkdirAll(dir, 0777)
+	if err != nil {
+		return "", err
+	}
+
+	ulid, err := compactor.Write(dir, head, head.MinTime(), head.MaxTime()+1, nil)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, ulid.String()), nil
 }
 
 // copyToDatabase copies the snapshot created to the TSDB DB directory.

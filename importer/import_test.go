@@ -29,13 +29,37 @@ var contentType = "application/openmetrics-text; version=0.0.1; charset=utf-8"
 func TestParseMetrics(t *testing.T) {
 	tests := []struct {
 		ToParse  []byte
-		Expected []*metricSample
+		Expected [][]*metricSample
 		IsOk     bool
 	}{
 		{
 			ToParse:  []byte(``),
-			Expected: nil,
+			Expected: [][]*metricSample{nil},
 			IsOk:     true,
+		},
+		{
+			ToParse: []byte(`# HELP http_requests_total The total number of HTTP requests.
+# TYPE http_requests_total counter
+http_requests_total{method="post",code="200"} 1027 1565133713989
+http_requests_total{method="post",code="400"} 3 1575133713979
+`),
+			Expected: [][]*metricSample{
+				{
+					&metricSample{
+						TimestampMs: 1565133713989,
+						Value:       1027,
+						Labels:      labels.FromStrings("__name__", "http_requests_total", "method", "post", "code", "200"),
+					},
+				},
+				{
+					&metricSample{
+						TimestampMs: 1575133713979,
+						Value:       3,
+						Labels:      labels.FromStrings("__name__", "http_requests_total", "method", "post", "code", "400"),
+					},
+				},
+			},
+			IsOk: true,
 		},
 		{
 			ToParse: []byte(`# HELP http_requests_total The total number of HTTP requests.
@@ -43,16 +67,18 @@ func TestParseMetrics(t *testing.T) {
 http_requests_total{method="post",code="200"} 1027 1395066363000
 http_requests_total{method="post",code="400"} 3 1395066363000
 `),
-			Expected: []*metricSample{
-				&metricSample{
-					TimestampMs: 1395066363000,
-					Value:       1027,
-					Labels:      labels.FromStrings("__name__", "http_requests_total", "method", "post", "code", "200"),
-				},
-				&metricSample{
-					TimestampMs: 1395066363000,
-					Value:       3,
-					Labels:      labels.FromStrings("__name__", "http_requests_total", "method", "post", "code", "400"),
+			Expected: [][]*metricSample{
+				{
+					&metricSample{
+						TimestampMs: 1395066363000,
+						Value:       1027,
+						Labels:      labels.FromStrings("__name__", "http_requests_total", "method", "post", "code", "200"),
+					},
+					&metricSample{
+						TimestampMs: 1395066363000,
+						Value:       3,
+						Labels:      labels.FromStrings("__name__", "http_requests_total", "method", "post", "code", "400"),
+					},
 				},
 			},
 			IsOk: true,
@@ -62,11 +88,13 @@ http_requests_total{method="post",code="400"} 3 1395066363000
 # TYPE something_weird gauge
 something_weird{problem="division by zero"} +Inf -3982045
 `),
-			Expected: []*metricSample{
-				&metricSample{
-					TimestampMs: -3982045,
-					Value:       math.Inf(1),
-					Labels:      labels.FromStrings("__name__", "something_weird", "problem", "division by zero"),
+			Expected: [][]*metricSample{
+				{
+					&metricSample{
+						TimestampMs: -3982045,
+						Value:       math.Inf(1),
+						Labels:      labels.FromStrings("__name__", "something_weird", "problem", "division by zero"),
+					},
 				},
 			},
 			IsOk: true,
@@ -77,16 +105,18 @@ something_weird{problem="division by zero"} +Inf -3982045
 rpc_duration_seconds{quantile="0.01"} 3102
 rpc_duration_seconds{quantile="0.05"} 3272
 `),
-			Expected: []*metricSample{
-				&metricSample{
-					TimestampMs: 0,
-					Value:       3102,
-					Labels:      labels.FromStrings("__name__", "rpc_duration_seconds", "quantile", "0.01"),
-				},
-				&metricSample{
-					TimestampMs: 0,
-					Value:       3272,
-					Labels:      labels.FromStrings("__name__", "rpc_duration_seconds", "quantile", "0.05"),
+			Expected: [][]*metricSample{
+				{
+					&metricSample{
+						TimestampMs: 0,
+						Value:       3102,
+						Labels:      labels.FromStrings("__name__", "rpc_duration_seconds", "quantile", "0.01"),
+					},
+					&metricSample{
+						TimestampMs: 0,
+						Value:       3272,
+						Labels:      labels.FromStrings("__name__", "rpc_duration_seconds", "quantile", "0.05"),
+					},
 				},
 			},
 			IsOk: true,
@@ -95,11 +125,13 @@ rpc_duration_seconds{quantile="0.05"} 3272
 			ToParse: []byte(`# HELP no_type_metric This is a metric with no TYPE string
 no_type_metric{type="bad_news_bears"} 0.0 111
 `),
-			Expected: []*metricSample{
-				&metricSample{
-					TimestampMs: 111,
-					Value:       0.0,
-					Labels:      labels.FromStrings("__name__", "no_type_metric", "type", "bad_news_bears"),
+			Expected: [][]*metricSample{
+				{
+					&metricSample{
+						TimestampMs: 111,
+						Value:       0.0,
+						Labels:      labels.FromStrings("__name__", "no_type_metric", "type", "bad_news_bears"),
+					},
 				},
 			},
 			IsOk: true,
@@ -109,11 +141,13 @@ no_type_metric{type="bad_news_bears"} 0.0 111
 # TYPE bad_ts gauge
 bad_ts{type="bad_timestamp"} 420 -1e99
 `),
-			Expected: []*metricSample{
-				&metricSample{
-					TimestampMs: int64(math.MinInt64 / 1000),
-					Value:       420,
-					Labels:      labels.FromStrings("__name__", "bad_ts", "type", "bad_timestamp"),
+			Expected: [][]*metricSample{
+				{
+					&metricSample{
+						TimestampMs: int64(math.MinInt64 / 1000),
+						Value:       420,
+						Labels:      labels.FromStrings("__name__", "bad_ts", "type", "bad_timestamp"),
+					},
 				},
 			},
 			IsOk: true,
@@ -123,11 +157,13 @@ bad_ts{type="bad_timestamp"} 420 -1e99
 # TYPE bad_ts gauge
 bad_ts{type="bad_timestamp"} 420 1e99
 `),
-			Expected: []*metricSample{
-				&metricSample{
-					TimestampMs: int64(math.MinInt64 / 1000),
-					Value:       420,
-					Labels:      labels.FromStrings("__name__", "bad_ts", "type", "bad_timestamp"),
+			Expected: [][]*metricSample{
+				{
+					&metricSample{
+						TimestampMs: int64(math.MinInt64 / 1000),
+						Value:       420,
+						Labels:      labels.FromStrings("__name__", "bad_ts", "type", "bad_timestamp"),
+					},
 				},
 			},
 			IsOk: true,
@@ -135,11 +171,13 @@ bad_ts{type="bad_timestamp"} 420 1e99
 		{
 			ToParse: []byte(`no_help_no_type{foo="bar"} 42 6900
 `),
-			Expected: []*metricSample{
-				&metricSample{
-					TimestampMs: 6900,
-					Value:       42,
-					Labels:      labels.FromStrings("__name__", "no_help_no_type", "foo", "bar"),
+			Expected: [][]*metricSample{
+				{
+					&metricSample{
+						TimestampMs: 6900,
+						Value:       42,
+						Labels:      labels.FromStrings("__name__", "no_help_no_type", "foo", "bar"),
+					},
 				},
 			},
 			IsOk: true,
@@ -147,11 +185,13 @@ bad_ts{type="bad_timestamp"} 420 1e99
 		{
 			ToParse: []byte(`bare_metric 42.24
 `),
-			Expected: []*metricSample{
-				&metricSample{
-					TimestampMs: 0,
-					Value:       42.24,
-					Labels:      labels.FromStrings("__name__", "bare_metric"),
+			Expected: [][]*metricSample{
+				{
+					&metricSample{
+						TimestampMs: 0,
+						Value:       42.24,
+						Labels:      labels.FromStrings("__name__", "bare_metric"),
+					},
 				},
 			},
 			IsOk: true,
@@ -161,14 +201,14 @@ bad_ts{type="bad_timestamp"} 420 1e99
 # TYPE bad_metric bad_type
 bad_metric{type="has no type information"} 0.0 111
 `),
-			Expected: nil,
+			Expected: [][]*metricSample{nil},
 			IsOk:     false,
 		},
 		{
 			ToParse: []byte(`# HELP no_nl This test has no newline so will fail
 # TYPE no_nl gauge
 no_nl{type="no newline"}`),
-			Expected: nil,
+			Expected: [][]*metricSample{nil},
 			IsOk:     false,
 		},
 	}
@@ -177,10 +217,10 @@ no_nl{type="no newline"}`),
 		if test.IsOk {
 			testutil.Ok(t, err)
 			testutil.Assert(t, len(test.Expected) == len(metricSamples), "not enough samples parsed")
-			for idx, wantSample := range test.Expected {
-				haveSample := metricSamples[idx]
-				testutil.Assert(t, reflect.DeepEqual(wantSample, haveSample), "metric samples are different from expectations")
-			}
+			testutil.Assert(t, reflect.DeepEqual(test.Expected, metricSamples), "metric samples are different from expectations")
+			//for idx, wantSample := range test.Expected {
+			//	haveSample := metricSamples[idx]
+			//}
 		} else {
 			testutil.NotOk(t, err)
 		}
@@ -188,36 +228,38 @@ no_nl{type="no newline"}`),
 }
 
 func TestPushToDisk(t *testing.T) {
-	metricSamples := []*metricSample{
-		&metricSample{
-			TimestampMs: 01,
-			Value:       512,
-			Labels:      labels.FromStrings("__name__", "lionel", "family_name", "messi"),
+	metricSamples := [][]*metricSample{
+		{
+			&metricSample{
+				TimestampMs: 01,
+				Value:       512,
+				Labels:      labels.FromStrings("__name__", "lionel", "family_name", "messi"),
+			},
 		},
 	}
 	tmpDbDir, err := ioutil.TempDir("", "ptd")
 	testutil.Ok(t, err)
 	defer os.RemoveAll(tmpDbDir)
-	minValidTimestamp := int64(math.MinInt64)
-	_, err = pushToDisk(metricSamples, tmpDbDir, minValidTimestamp, nil)
+	_, err = pushToDisk(metricSamples, tmpDbDir, nil)
 	testutil.Ok(t, err)
 }
 
 func TestCopyToDatabase(t *testing.T) {
-	metricSamples := []*metricSample{
-		&metricSample{
-			TimestampMs: 01,
-			Value:       512,
-			Labels:      labels.FromStrings("__name__", "lionel", "family_name", "messi"),
+	metricSamples := [][]*metricSample{
+		{
+			&metricSample{
+				TimestampMs: 01,
+				Value:       512,
+				Labels:      labels.FromStrings("__name__", "lionel", "family_name", "messi"),
+			},
 		},
 	}
 	tmpDbDir, err := ioutil.TempDir("", "ptd")
 	testutil.Ok(t, err)
 	defer os.RemoveAll(tmpDbDir)
-	minValidTimestamp := int64(math.MinInt64)
-	snapshotPath, err := pushToDisk(metricSamples, tmpDbDir, minValidTimestamp, nil)
+	snapshotPath, err := pushToDisk(metricSamples, tmpDbDir, nil)
 	testutil.Ok(t, err)
-	err = copyToDatabase(snapshotPath, tmpDbDir)
+	err = copyToDatabase(snapshotPath[0], tmpDbDir)
 	testutil.Ok(t, err)
 }
 
