@@ -30,6 +30,29 @@ import (
 	"github.com/prometheus/tsdb/tsdbutil"
 )
 
+const (
+	DefaultLabelName  = "labelName"
+	defaultLabelValue = "labelValue"
+)
+
+type sample struct {
+	t int64
+	v float64
+}
+
+type mockSeries struct {
+	labels   func() labels.Labels
+	iterator func() tsdb.SeriesIterator
+}
+
+func (s sample) T() int64 {
+	return s.t
+}
+
+func (s sample) V() float64 {
+	return s.v
+}
+
 // CreateBlock creates a block with given set of series and returns its dir.
 func CreateBlock(tb testing.TB, dir string, series []tsdb.Series) string {
 	head := createHead(tb, series)
@@ -72,24 +95,6 @@ func createHead(tb testing.TB, series []tsdb.Series) *tsdb.Head {
 	return head
 }
 
-const (
-	defaultLabelName  = "labelName"
-	defaultLabelValue = "labelValue"
-)
-
-type sample struct {
-	t int64
-	v float64
-}
-
-func (s sample) T() int64 {
-	return s.t
-}
-
-func (s sample) V() float64 {
-	return s.v
-}
-
 // GenSeries generates series with a given number of labels and values.
 func GenSeries(totalSeries, labelCount int, mint, maxt int64) []tsdb.Series {
 	if totalSeries == 0 || labelCount == 0 {
@@ -100,9 +105,9 @@ func GenSeries(totalSeries, labelCount int, mint, maxt int64) []tsdb.Series {
 
 	for i := 0; i < totalSeries; i++ {
 		lbls := make(map[string]string, labelCount)
-		lbls[defaultLabelName] = strconv.Itoa(i)
+		lbls[DefaultLabelName] = strconv.Itoa(i)
 		for j := 1; len(lbls) < labelCount; j++ {
-			lbls[defaultLabelName+strconv.Itoa(j)] = defaultLabelValue + strconv.Itoa(j)
+			lbls[DefaultLabelName+strconv.Itoa(j)] = defaultLabelValue + strconv.Itoa(j)
 		}
 		samples := make([]tsdbutil.Sample, 0, maxt-mint+1)
 		for t := mint; t < maxt; t++ {
@@ -111,11 +116,6 @@ func GenSeries(totalSeries, labelCount int, mint, maxt int64) []tsdb.Series {
 		series[i] = newSeries(lbls, samples)
 	}
 	return series
-}
-
-type mockSeries struct {
-	labels   func() labels.Labels
-	iterator func() tsdb.SeriesIterator
 }
 
 func newSeries(l map[string]string, s []tsdbutil.Sample) tsdb.Series {

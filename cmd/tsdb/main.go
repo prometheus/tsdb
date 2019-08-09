@@ -32,16 +32,18 @@ import (
 
 	"github.com/go-kit/kit/log"
 	"github.com/pkg/errors"
+	"gopkg.in/alecthomas/kingpin.v2"
+
 	"github.com/prometheus/tsdb"
 	"github.com/prometheus/tsdb/chunks"
 	tsdb_errors "github.com/prometheus/tsdb/errors"
 	"github.com/prometheus/tsdb/labels"
-	"gopkg.in/alecthomas/kingpin.v2"
 )
 
 const (
 	printBlocksTableHeader = "BLOCK ULID\tMIN TIME\tMAX TIME\tNUM SAMPLES\tNUM CHUNKS\tNUM SERIES"
 	defaultAnalyzeLimit    = "20"
+	timeDelta              = 30000
 )
 
 func main() {
@@ -249,8 +251,6 @@ func (b *writeBenchmark) run() error {
 	}
 	return nil
 }
-
-const timeDelta = 30000
 
 func (b *writeBenchmark) ingestScrapes(lbls []labels.Labels, scrapeCount int) (uint64, error) {
 	var mu sync.Mutex

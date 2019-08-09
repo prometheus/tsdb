@@ -22,6 +22,7 @@ import (
 	"strings"
 	"testing"
 	"text/tabwriter"
+	"time"
 
 	"github.com/prometheus/tsdb"
 	testutildb "github.com/prometheus/tsdb/testutil/db"
@@ -112,7 +113,7 @@ func TestPrintBlocks(t *testing.T) {
 	expected = strings.Replace(expected, "\n", "", -1)
 
 	if expected != actual {
-		t.Errorf("expected (%#v) != actual (%#v)", expected, actual)
+		t.Errorf("expected (%#v) != actual (%#v)", b.String(), actualStdout.String())
 	}
 }
 
@@ -150,7 +151,7 @@ func TestExtractBlock(t *testing.T) {
 	analyzeBlockID = "foo"
 	block, err = extractBlock(blocks, &analyzeBlockID)
 	if err == nil {
-		t.Errorf("Analyzing block %q should throw error", analyzeBlockID)
+		t.Errorf("Analyzing block ID %q should throw error", analyzeBlockID)
 	}
 	if block != nil {
 		t.Error("block should be nil")
@@ -180,9 +181,48 @@ func TestAnalyzeBlocks(t *testing.T) {
 		t.Error(err)
 	}
 
-	var actual bytes.Buffer
+	var (
+		expected bytes.Buffer
+		actual   bytes.Buffer
+	)
+
+	// Actual output.
 	err = analyzeBlock(&actual, block, dal)
 	if err != nil {
 		t.Error(err)
+	}
+
+	act := actual.String()
+	act = strings.Replace(act, " ", "", -1)
+	act = strings.Replace(act, "\t", "", -1)
+	act = strings.Replace(act, "\n", "", -1)
+
+	// Expected output.
+	meta := block.Meta()
+	fmt.Fprintf(&expected, "Block ID: %s\n", meta.ULID)
+	fmt.Fprintf(&expected, "Duration: %s\n", (time.Duration(meta.MaxTime-meta.MinTime) * 1e6).String())
+	fmt.Fprintf(&expected, "Series: %d\n", 1)
+	fmt.Fprintf(&expected, "Label names: %d\n", 1)
+	fmt.Fprintf(&expected, "Postings (unique label pairs): %d\n", 1)
+	fmt.Fprintf(&expected, "Postings entries (total label pairs): %d\n", 1)
+	fmt.Fprintf(&expected, "\nLabel pairs most involved in churning:\n")
+	fmt.Fprintf(&expected, "1 %s=0", testutildb.DefaultLabelName)
+	fmt.Fprintf(&expected, "\nLabel names most involved in churning:\n")
+	fmt.Fprintf(&expected, "1 %s", testutildb.DefaultLabelName)
+	fmt.Fprintf(&expected, "\nMost common label pairs:\n")
+	fmt.Fprintf(&expected, "1 %s=0", testutildb.DefaultLabelName)
+	fmt.Fprintf(&expected, "\nLabel names with highest cumulative label value length:\n")
+	fmt.Fprintf(&expected, "1 %s", testutildb.DefaultLabelName)
+	fmt.Fprintf(&expected, "\nHighest cardinality labels:\n")
+	fmt.Fprintf(&expected, "1 %s", testutildb.DefaultLabelName)
+	fmt.Fprintf(&expected, "\nHighest cardinality metric names:\n")
+
+	exp := expected.String()
+	exp = strings.Replace(exp, " ", "", -1)
+	exp = strings.Replace(exp, "\t", "", -1)
+	exp = strings.Replace(exp, "\n", "", -1)
+
+	if exp != act {
+		t.Errorf("expected (%#v) != actual (%#v)", expected.String(), actual.String())
 	}
 }
