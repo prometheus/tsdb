@@ -26,7 +26,7 @@ import (
 	testutildb "github.com/prometheus/tsdb/testutil/db"
 )
 
-func createTestRODBWithBlock(t *testing.T) (*tsdb.DBReadOnly, func()) {
+func createRoDb(t *testing.T) (*tsdb.DBReadOnly, func()) {
 	tmpdir, err := ioutil.TempDir("", "test")
 	if err != nil {
 		os.RemoveAll(tmpdir)
@@ -56,7 +56,7 @@ func createTestRODBWithBlock(t *testing.T) (*tsdb.DBReadOnly, func()) {
 	}
 }
 
-func TestCLIPrintBlocks(t *testing.T) {
+func TestPrintBlocks(t *testing.T) {
 	db, closeFn := createTestRODBWithBlock(t)
 	defer closeFn()
 
@@ -65,7 +65,7 @@ func TestCLIPrintBlocks(t *testing.T) {
 	tw := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
 	defer tw.Flush()
 
-	// Set table header
+	// Set table header.
 	_, err := fmt.Fprintln(&b, printBlocksTableHeader)
 	if err != nil {
 		t.Error(err)
