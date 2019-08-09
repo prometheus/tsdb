@@ -37,14 +37,6 @@ func createRoDb(t *testing.T) (*tsdb.DBReadOnly, func()) {
 	safeDBOptions.RetentionDuration = 0
 
 	testutildb.CreateBlock(nil, tmpdir, testutildb.GenSeries(1, 1, 0, 1))
-	db, err := tsdb.Open(tmpdir, nil, nil, &safeDBOptions)
-	if err != nil {
-		os.RemoveAll(tmpdir)
-		t.Error(err)
-	}
-	if err = db.Close(); err != nil {
-		t.Error(err)
-	}
 
 	dbRO, err := tsdb.OpenDBReadOnly(tmpdir, nil)
 	if err != nil {
@@ -57,7 +49,7 @@ func createRoDb(t *testing.T) (*tsdb.DBReadOnly, func()) {
 }
 
 func TestPrintBlocks(t *testing.T) {
-	db, closeFn := createTestRODBWithBlock(t)
+	db, closeFn := createRoDb(t)
 	defer closeFn()
 
 	var b bytes.Buffer
@@ -71,14 +63,14 @@ func TestPrintBlocks(t *testing.T) {
 		t.Error(err)
 	}
 
-	// Test table header
+	// Test table header.
 	actual := b.String()
 	expected := fmt.Sprintln(printBlocksTableHeader)
 	if expected != actual {
 		t.Errorf("expected (%#v) != actual (%#v)", expected, actual)
 	}
 
-	// Set table contents
+	// Set table contents.
 	blocks, err := db.Blocks()
 	if err != nil {
 		t.Error(err)
@@ -99,7 +91,7 @@ func TestPrintBlocks(t *testing.T) {
 		t.Error(err)
 	}
 
-	// Test table contents
+	// Test table contents.
 	var actualStdout bytes.Buffer
 	blocks, err = db.Blocks()
 	if err != nil {
