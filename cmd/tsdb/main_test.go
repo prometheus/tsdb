@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"text/tabwriter"
@@ -92,11 +93,12 @@ func TestPrintBlocks(t *testing.T) {
 	}
 
 	// Test table contents.
-	var actualStdout bytes.Buffer
 	blocks, err = db.Blocks()
 	if err != nil {
 		t.Error(err)
 	}
+
+	var actualStdout bytes.Buffer
 	printBlocks(&actualStdout, blocks, &hr)
 
 	actual = actualStdout.String()
@@ -111,5 +113,76 @@ func TestPrintBlocks(t *testing.T) {
 
 	if expected != actual {
 		t.Errorf("expected (%#v) != actual (%#v)", expected, actual)
+	}
+}
+
+func TestExtractBlock(t *testing.T) {
+	db, closeFn := createRoDb(t)
+	defer closeFn()
+
+	blocks, err := db.Blocks()
+	if err != nil {
+		t.Error(err)
+	}
+
+	var analyzeBlockID string
+
+	// Pass: analyze last block (default).
+	block, err := extractBlock(blocks, &analyzeBlockID)
+	if err != nil {
+		t.Error(err)
+	}
+	if block == nil {
+		t.Error("block shouldn't be nil")
+	}
+
+	// Pass: analyze specific block.
+	analyzeBlockID = block.Meta().ULID.String()
+	block, err = extractBlock(blocks, &analyzeBlockID)
+	if err != nil {
+		t.Error(err)
+	}
+	if block == nil {
+		t.Error("block shouldn't be nil")
+	}
+
+	// Fail: analyze non-existing block
+	analyzeBlockID = "foo"
+	block, err = extractBlock(blocks, &analyzeBlockID)
+	if err == nil {
+		t.Errorf("Analyzing block %q should throw error", analyzeBlockID)
+	}
+	if block != nil {
+		t.Error("block should be nil")
+	}
+}
+
+func TestAnalyzeBlocks(t *testing.T) {
+	db, closeFn := createRoDb(t)
+	defer closeFn()
+
+	blocks, err := db.Blocks()
+	if err != nil {
+		t.Error(err)
+	}
+
+	var analyzeBlockID string
+	block, err := extractBlock(blocks, &analyzeBlockID)
+	if err != nil {
+		t.Error(err)
+	}
+	if block == nil {
+		t.Errorf("block shouldn't be nil")
+	}
+
+	dal, err := strconv.Atoi(defaultAnalyzeLimit)
+	if err != nil {
+		t.Error(err)
+	}
+
+	var actual bytes.Buffer
+	err = analyzeBlock(&actual, block, dal)
+	if err != nil {
+		t.Error(err)
 	}
 }

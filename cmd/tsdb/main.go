@@ -41,6 +41,7 @@ import (
 
 const (
 	printBlocksTableHeader = "BLOCK ULID\tMIN TIME\tMAX TIME\tNUM SAMPLES\tNUM CHUNKS\tNUM SERIES"
+	defaultAnalyzeLimit    = "20"
 )
 
 func main() {
@@ -66,7 +67,7 @@ func execute() (err error) {
 		analyzeCmd           = cli.Command("analyze", "analyze churn, label pair cardinality.")
 		analyzePath          = analyzeCmd.Arg("db path", "database path (default is "+defaultDBPath+")").Default(defaultDBPath).String()
 		analyzeBlockID       = analyzeCmd.Arg("block id", "block to analyze (default is the last block)").String()
-		analyzeLimit         = analyzeCmd.Flag("limit", "how many items to show in each list").Default("20").Int()
+		analyzeLimit         = analyzeCmd.Flag("limit", "how many items to show in each list").Default(defaultAnalyzeLimit).Int()
 		dumpCmd              = cli.Command("dump", "dump samples from a TSDB")
 		dumpPath             = dumpCmd.Arg("db path", "database path (default is "+defaultDBPath+")").Default(defaultDBPath).String()
 		dumpMinTime          = dumpCmd.Flag("min-time", "minimum timestamp to dump").Default(strconv.FormatInt(math.MinInt64, 10)).Int64()
@@ -114,21 +115,12 @@ func execute() (err error) {
 		if err != nil {
 			return err
 		}
-		var block tsdb.BlockReader
-		if *analyzeBlockID != "" {
-			for _, b := range blocks {
-				if b.Meta().ULID.String() == *analyzeBlockID {
-					block = b
-					break
-				}
-			}
-		} else if len(blocks) > 0 {
-			block = blocks[len(blocks)-1]
+		block, err := extractBlock(blocks, analyzeBlockID)
+		if err != nil {
+			return err
 		}
-		if block == nil {
-			return fmt.Errorf("block not found")
-		}
-		return analyzeBlock(block, *analyzeLimit)
+
+		return analyzeBlock(os.Stdout, block, *analyzeLimit)
 	case dumpCmd.FullCommand():
 		db, err := tsdb.OpenDBReadOnly(*dumpPath, nil)
 		if err != nil {
@@ -142,6 +134,25 @@ func execute() (err error) {
 		return dumpSamples(db, *dumpMinTime, *dumpMaxTime)
 	}
 	return nil
+}
+
+// extractBlock takes a slice of BlockReader and returns a specific block by ID.
+func extractBlock(blocks []tsdb.BlockReader, analyzeBlockID *string) (tsdb.BlockReader, error) {
+	var block tsdb.BlockReader
+	if *analyzeBlockID != "" {
+		for _, b := range blocks {
+			if b.Meta().ULID.String() == *analyzeBlockID {
+				block = b
+				break
+			}
+		}
+	} else if len(blocks) > 0 {
+		block = blocks[len(blocks)-1]
+	}
+	if block == nil {
+		return nil, fmt.Errorf("block not found")
+	}
+	return block, nil
 }
 
 type writeBenchmark struct {
@@ -465,12 +476,12 @@ func getFormatedTime(timestamp int64, humanReadable *bool) string {
 	return strconv.FormatInt(timestamp, 10)
 }
 
-func analyzeBlock(b tsdb.BlockReader, limit int) error {
+func analyzeBlock(w io.Writer, b tsdb.BlockReader, limit int) error {
 	meta := b.Meta()
-	fmt.Printf("Block ID: %s\n", meta.ULID)
+	fmt.Fprintf(w, "Block ID: %s\n", meta.ULID)
 	// Presume 1ms resolution that Prometheus uses.
-	fmt.Printf("Duration: %s\n", (time.Duration(meta.MaxTime-meta.MinTime) * 1e6).String())
-	fmt.Printf("Series: %d\n", meta.Stats.NumSeries)
+	fmt.Fprintf(w, "Duration: %s\n", (time.Duration(meta.MaxTime-meta.MinTime) * 1e6).String())
+	fmt.Fprintf(w, "Series: %d\n", meta.Stats.NumSeries)
 	ir, err := b.Index()
 	if err != nil {
 		return err
@@ -481,7 +492,7 @@ func analyzeBlock(b tsdb.BlockReader, limit int) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("Label names: %d\n", len(allLabelNames))
+	fmt.Fprintf(w, "Label names: %d\n", len(allLabelNames))
 
 	type postingInfo struct {
 		key    string
@@ -493,7 +504,7 @@ func analyzeBlock(b tsdb.BlockReader, limit int) error {
 		sort.Slice(postingInfos, func(i, j int) bool { return postingInfos[i].metric > postingInfos[j].metric })
 
 		for i, pc := range postingInfos {
-			fmt.Printf("%d %s\n", pc.metric, pc.key)
+			fmt.Fprintf(w, "%d %s\n", pc.metric, pc.key)
 			if i >= limit {
 				break
 			}
@@ -527,15 +538,15 @@ func analyzeBlock(b tsdb.BlockReader, limit int) error {
 	if p.Err() != nil {
 		return p.Err()
 	}
-	fmt.Printf("Postings (unique label pairs): %d\n", len(labelpairsUncovered))
-	fmt.Printf("Postings entries (total label pairs): %d\n", entries)
+	fmt.Fprintf(w, "Postings (unique label pairs): %d\n", len(labelpairsUncovered))
+	fmt.Fprintf(w, "Postings entries (total label pairs): %d\n", entries)
 
 	postingInfos = postingInfos[:0]
 	for k, m := range labelpairsUncovered {
 		postingInfos = append(postingInfos, postingInfo{k, uint64(float64(m) / float64(meta.MaxTime-meta.MinTime))})
 	}
 
-	fmt.Printf("\nLabel pairs most involved in churning:\n")
+	fmt.Fprintf(w, "\nLabel pairs most involved in churning:\n")
 	printInfo(postingInfos)
 
 	postingInfos = postingInfos[:0]
@@ -543,7 +554,7 @@ func analyzeBlock(b tsdb.BlockReader, limit int) error {
 		postingInfos = append(postingInfos, postingInfo{k, uint64(float64(m) / float64(meta.MaxTime-meta.MinTime))})
 	}
 
-	fmt.Printf("\nLabel names most involved in churning:\n")
+	fmt.Fprintf(w, "\nLabel names most involved in churning:\n")
 	printInfo(postingInfos)
 
 	postingInfos = postingInfos[:0]
@@ -551,7 +562,7 @@ func analyzeBlock(b tsdb.BlockReader, limit int) error {
 		postingInfos = append(postingInfos, postingInfo{k, m})
 	}
 
-	fmt.Printf("\nMost common label pairs:\n")
+	fmt.Fprintf(w, "\nMost common label pairs:\n")
 	printInfo(postingInfos)
 
 	postingInfos = postingInfos[:0]
@@ -575,7 +586,7 @@ func analyzeBlock(b tsdb.BlockReader, limit int) error {
 		postingInfos = append(postingInfos, postingInfo{n, cumulativeLength})
 	}
 
-	fmt.Printf("\nLabel names with highest cumulative label value length:\n")
+	fmt.Fprintf(w, "\nLabel names with highest cumulative label value length:\n")
 	printInfo(postingInfos)
 
 	postingInfos = postingInfos[:0]
@@ -586,7 +597,7 @@ func analyzeBlock(b tsdb.BlockReader, limit int) error {
 		}
 		postingInfos = append(postingInfos, postingInfo{n, uint64(lv.Len())})
 	}
-	fmt.Printf("\nHighest cardinality labels:\n")
+	fmt.Fprintf(w, "\nHighest cardinality labels:\n")
 	printInfo(postingInfos)
 
 	postingInfos = postingInfos[:0]
@@ -614,7 +625,7 @@ func analyzeBlock(b tsdb.BlockReader, limit int) error {
 			postingInfos = append(postingInfos, postingInfo{n, uint64(count)})
 		}
 	}
-	fmt.Printf("\nHighest cardinality metric names:\n")
+	fmt.Fprintf(w, "\nHighest cardinality metric names:\n")
 	printInfo(postingInfos)
 	return nil
 }
