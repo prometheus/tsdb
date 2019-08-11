@@ -25,7 +25,6 @@ import (
 	"time"
 
 	"github.com/prometheus/tsdb"
-	testutildb "github.com/prometheus/tsdb/testutil/db"
 )
 
 func createRoDb(t *testing.T) (*tsdb.DBReadOnly, func()) {
@@ -38,7 +37,7 @@ func createRoDb(t *testing.T) (*tsdb.DBReadOnly, func()) {
 	safeDBOptions := *tsdb.DefaultOptions
 	safeDBOptions.RetentionDuration = 0
 
-	testutildb.CreateBlock(nil, tmpdir, testutildb.GenSeries(1, 1, 0, 1))
+	tsdb.MockCreateBlock(nil, tmpdir, tsdb.MockGenSeries(1, 1, 0, 1))
 
 	dbRO, err := tsdb.OpenDBReadOnly(tmpdir, nil)
 	if err != nil {
@@ -206,15 +205,15 @@ func TestAnalyzeBlocks(t *testing.T) {
 	fmt.Fprintf(&expected, "Postings (unique label pairs): %d\n", 1)
 	fmt.Fprintf(&expected, "Postings entries (total label pairs): %d\n", 1)
 	fmt.Fprintf(&expected, "\nLabel pairs most involved in churning:\n")
-	fmt.Fprintf(&expected, "1 %s=0", testutildb.DefaultLabelName)
+	fmt.Fprintf(&expected, "1 %s=0", tsdb.MockDefaultLabelName)
 	fmt.Fprintf(&expected, "\nLabel names most involved in churning:\n")
-	fmt.Fprintf(&expected, "1 %s", testutildb.DefaultLabelName)
+	fmt.Fprintf(&expected, "1 %s", tsdb.MockDefaultLabelName)
 	fmt.Fprintf(&expected, "\nMost common label pairs:\n")
-	fmt.Fprintf(&expected, "1 %s=0", testutildb.DefaultLabelName)
+	fmt.Fprintf(&expected, "1 %s=0", tsdb.MockDefaultLabelName)
 	fmt.Fprintf(&expected, "\nLabel names with highest cumulative label value length:\n")
-	fmt.Fprintf(&expected, "1 %s", testutildb.DefaultLabelName)
+	fmt.Fprintf(&expected, "1 %s", tsdb.MockDefaultLabelName)
 	fmt.Fprintf(&expected, "\nHighest cardinality labels:\n")
-	fmt.Fprintf(&expected, "1 %s", testutildb.DefaultLabelName)
+	fmt.Fprintf(&expected, "1 %s", tsdb.MockDefaultLabelName)
 	fmt.Fprintf(&expected, "\nHighest cardinality metric names:\n")
 
 	exp := expected.String()

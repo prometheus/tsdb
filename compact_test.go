@@ -837,7 +837,7 @@ func BenchmarkCompaction(b *testing.B) {
 			blockDirs := make([]string, 0, len(c.ranges))
 			var blocks []*Block
 			for _, r := range c.ranges {
-				block, err := OpenBlock(nil, createBlock(b, dir, genSeries(nSeries, 10, r[0], r[1])), nil)
+				block, err := OpenBlock(nil, MockCreateBlock(b, dir, MockGenSeries(nSeries, 10, r[0], r[1])), nil)
 				testutil.Ok(b, err)
 				blocks = append(blocks, block)
 				defer func() {
@@ -923,9 +923,9 @@ func TestCancelCompactions(t *testing.T) {
 	}()
 
 	// Create some blocks to fall within the compaction range.
-	createBlock(t, tmpdir, genSeries(10, 10000, 0, 1000))
-	createBlock(t, tmpdir, genSeries(10, 10000, 1000, 2000))
-	createBlock(t, tmpdir, genSeries(1, 1, 2000, 2001)) // The most recent block is ignored so can be e small one.
+	MockCreateBlock(t, tmpdir, MockGenSeries(10, 10000, 0, 1000))
+	MockCreateBlock(t, tmpdir, MockGenSeries(10, 10000, 1000, 2000))
+	MockCreateBlock(t, tmpdir, MockGenSeries(1, 1, 2000, 2001)) // The most recent block is ignored so can be e small one.
 
 	// Copy the db so we have an exact copy to compare compaction times.
 	tmpdirCopy := tmpdir + "Copy"
@@ -1009,7 +1009,7 @@ func TestDeleteCompactionBlockAfterFailedReload(t *testing.T) {
 				{MinTime: 150, MaxTime: 200},
 			}
 			for _, m := range blocks {
-				createBlock(t, db.Dir(), genSeries(1, 1, m.MinTime, m.MaxTime))
+				MockCreateBlock(t, db.Dir(), MockGenSeries(1, 1, m.MinTime, m.MaxTime))
 			}
 			testutil.Ok(t, db.reload())
 			testutil.Equals(t, len(blocks), len(db.Blocks()), "unexpected block count after a reload")
@@ -1032,7 +1032,7 @@ func TestDeleteCompactionBlockAfterFailedReload(t *testing.T) {
 			expBlocks := bootStrap(db)
 
 			// Create a block that will trigger the reload to fail.
-			blockPath := createBlock(t, db.Dir(), genSeries(1, 1, 200, 300))
+			blockPath := MockCreateBlock(t, db.Dir(), MockGenSeries(1, 1, 200, 300))
 			lastBlockIndex := path.Join(blockPath, indexFilename)
 			actBlocks, err := blockDirs(db.Dir())
 			testutil.Ok(t, err)

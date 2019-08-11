@@ -1,17 +1,19 @@
-// Copyright 2019 The Prometheus Authors
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+/*
+ * Copyright 2019 The Prometheus Authors
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
-package db
+package tsdb
 
 import (
 	"context"
@@ -24,39 +26,29 @@ import (
 
 	"github.com/go-kit/kit/log"
 
-	"github.com/prometheus/tsdb"
 	"github.com/prometheus/tsdb/labels"
 	"github.com/prometheus/tsdb/testutil"
 	"github.com/prometheus/tsdb/tsdbutil"
 )
 
-const (
-	DefaultLabelName  = "labelName"
-	defaultLabelValue = "labelValue"
-)
+// This file holds types and functions that are used for testing
+// purposes.
 
-type sample struct {
-	t int64
-	v float64
-}
+const (
+	MockDefaultLabelName  = "labelName"
+	MockDefaultLabelValue = "labelValue"
+)
 
 type mockSeries struct {
 	labels   func() labels.Labels
-	iterator func() tsdb.SeriesIterator
+	iterator func() SeriesIterator
 }
 
-func (s sample) T() int64 {
-	return s.t
-}
-
-func (s sample) V() float64 {
-	return s.v
-}
-
-// CreateBlock creates a block with given set of series and returns its dir.
-func CreateBlock(tb testing.TB, dir string, series []tsdb.Series) string {
+// MockCreateBlock creates a block with given set of series and returns its dir.
+// Intended for testing purposes.
+func MockCreateBlock(tb testing.TB, dir string, series []Series) string {
 	head := createHead(tb, series)
-	compactor, err := tsdb.NewLeveledCompactor(context.Background(), nil, log.NewNopLogger(), []int64{1000000}, nil)
+	compactor, err := NewLeveledCompactor(context.Background(), nil, log.NewNopLogger(), []int64{1000000}, nil)
 	testutil.Ok(tb, err)
 
 	testutil.Ok(tb, os.MkdirAll(dir, 0777))
@@ -68,8 +60,8 @@ func CreateBlock(tb testing.TB, dir string, series []tsdb.Series) string {
 	return filepath.Join(dir, ulid.String())
 }
 
-func createHead(tb testing.TB, series []tsdb.Series) *tsdb.Head {
-	head, err := tsdb.NewHead(nil, nil, nil, 2*60*60*1000)
+func createHead(tb testing.TB, series []Series) *Head {
+	head, err := NewHead(nil, nil, nil, 2*60*60*1000)
 	testutil.Ok(tb, err)
 	defer head.Close()
 
@@ -95,19 +87,20 @@ func createHead(tb testing.TB, series []tsdb.Series) *tsdb.Head {
 	return head
 }
 
-// GenSeries generates series with a given number of labels and values.
-func GenSeries(totalSeries, labelCount int, mint, maxt int64) []tsdb.Series {
+// MockGenSeries generates series with a given number of labels and values.
+// Intended for testing purposes.
+func MockGenSeries(totalSeries, labelCount int, mint, maxt int64) []Series {
 	if totalSeries == 0 || labelCount == 0 {
 		return nil
 	}
 
-	series := make([]tsdb.Series, totalSeries)
+	series := make([]Series, totalSeries)
 
 	for i := 0; i < totalSeries; i++ {
 		lbls := make(map[string]string, labelCount)
-		lbls[DefaultLabelName] = strconv.Itoa(i)
+		lbls[MockDefaultLabelName] = strconv.Itoa(i)
 		for j := 1; len(lbls) < labelCount; j++ {
-			lbls[DefaultLabelName+strconv.Itoa(j)] = defaultLabelValue + strconv.Itoa(j)
+			lbls[MockDefaultLabelName+strconv.Itoa(j)] = MockDefaultLabelValue + strconv.Itoa(j)
 		}
 		samples := make([]tsdbutil.Sample, 0, maxt-mint+1)
 		for t := mint; t < maxt; t++ {
@@ -118,14 +111,14 @@ func GenSeries(totalSeries, labelCount int, mint, maxt int64) []tsdb.Series {
 	return series
 }
 
-func newSeries(l map[string]string, s []tsdbutil.Sample) tsdb.Series {
+func newSeries(l map[string]string, s []tsdbutil.Sample) Series {
 	return &mockSeries{
 		labels:   func() labels.Labels { return labels.FromMap(l) },
-		iterator: func() tsdb.SeriesIterator { return newListSeriesIterator(s) },
+		iterator: func() SeriesIterator { return newListSeriesIterator(s) },
 	}
 }
-func (m *mockSeries) Labels() labels.Labels         { return m.labels() }
-func (m *mockSeries) Iterator() tsdb.SeriesIterator { return m.iterator() }
+func (m *mockSeries) Labels() labels.Labels    { return m.labels() }
+func (m *mockSeries) Iterator() SeriesIterator { return m.iterator() }
 
 type listSeriesIterator struct {
 	list []tsdbutil.Sample
