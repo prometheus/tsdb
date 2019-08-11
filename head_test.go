@@ -36,7 +36,7 @@ import (
 )
 
 func BenchmarkCreateSeries(b *testing.B) {
-	series := MockGenSeries(b.N, 10, 0, 0)
+	series := GenSeries(b.N, 10, 0, 0)
 
 	h, err := NewHead(nil, nil, nil, 10000)
 	testutil.Ok(b, err)

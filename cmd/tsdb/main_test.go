@@ -37,7 +37,7 @@ func createRoDb(t *testing.T) (*tsdb.DBReadOnly, func()) {
 	safeDBOptions := *tsdb.DefaultOptions
 	safeDBOptions.RetentionDuration = 0
 
-	tsdb.MockCreateBlock(nil, tmpdir, tsdb.MockGenSeries(1, 1, 0, 1))
+	tsdb.CreateBlock(nil, tmpdir, tsdb.GenSeries(1, 1, 0, 1))
 
 	dbRO, err := tsdb.OpenDBReadOnly(tmpdir, nil)
 	if err != nil {

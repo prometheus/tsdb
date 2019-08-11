@@ -56,7 +56,7 @@ func TestSetCompactionFailed(t *testing.T) {
 		testutil.Ok(t, os.RemoveAll(tmpdir))
 	}()
 
-	blockDir := MockCreateBlock(t, tmpdir, MockGenSeries(1, 1, 0, 1))
+	blockDir := CreateBlock(t, tmpdir, GenSeries(1, 1, 0, 1))
 	b, err := OpenBlock(nil, blockDir, nil)
 	testutil.Ok(t, err)
 	testutil.Equals(t, false, b.meta.Compaction.Failed)
@@ -76,7 +76,7 @@ func TestCreateBlock(t *testing.T) {
 	defer func() {
 		testutil.Ok(t, os.RemoveAll(tmpdir))
 	}()
-	b, err := OpenBlock(nil, MockCreateBlock(t, tmpdir, MockGenSeries(1, 1, 0, 10)), nil)
+	b, err := OpenBlock(nil, CreateBlock(t, tmpdir, GenSeries(1, 1, 0, 10)), nil)
 	if err == nil {
 		testutil.Ok(t, b.Close())
 	}
@@ -133,7 +133,7 @@ func TestCorruptedChunk(t *testing.T) {
 				testutil.Ok(t, os.RemoveAll(tmpdir))
 			}()
 
-			blockDir := MockCreateBlock(t, tmpdir, MockGenSeries(1, 1, 0, 1))
+			blockDir := CreateBlock(t, tmpdir, GenSeries(1, 1, 0, 1))
 			files, err := sequenceFiles(chunkDir(blockDir))
 			testutil.Ok(t, err)
 			testutil.Assert(t, len(files) > 0, "No chunk created.")
@@ -167,7 +167,7 @@ func TestBlockSize(t *testing.T) {
 
 	// Create a block and compare the reported size vs actual disk size.
 	{
-		blockDirInit = MockCreateBlock(t, tmpdir, MockGenSeries(10, 1, 1, 100))
+		blockDirInit = CreateBlock(t, tmpdir, GenSeries(10, 1, 1, 100))
 		blockInit, err = OpenBlock(nil, blockDirInit, nil)
 		testutil.Ok(t, err)
 		defer func() {

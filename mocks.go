@@ -46,7 +46,7 @@ type mockSeries struct {
 
 // MockCreateBlock creates a block with given set of series and returns its dir.
 // Intended for testing purposes.
-func MockCreateBlock(tb testing.TB, dir string, series []Series) string {
+func CreateBlock(tb testing.TB, dir string, series []Series) string {
 	head := createHead(tb, series)
 	compactor, err := NewLeveledCompactor(context.Background(), nil, log.NewNopLogger(), []int64{1000000}, nil)
 	testutil.Ok(tb, err)
@@ -89,7 +89,7 @@ func createHead(tb testing.TB, series []Series) *Head {
 
 // MockGenSeries generates series with a given number of labels and values.
 // Intended for testing purposes.
-func MockGenSeries(totalSeries, labelCount int, mint, maxt int64) []Series {
+func GenSeries(totalSeries, labelCount int, mint, maxt int64) []Series {
 	if totalSeries == 0 || labelCount == 0 {
 		return nil
 	}

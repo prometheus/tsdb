@@ -1466,14 +1466,14 @@ func BenchmarkQueryIterator(b *testing.B) {
 					mint := i*int64(c.numSamplesPerSeriesPerBlock) - offset
 					maxt := mint + int64(c.numSamplesPerSeriesPerBlock) - 1
 					if len(prefilledLabels) == 0 {
-						generatedSeries = MockGenSeries(c.numSeries, 10, mint, maxt)
+						generatedSeries = GenSeries(c.numSeries, 10, mint, maxt)
 						for _, s := range generatedSeries {
 							prefilledLabels = append(prefilledLabels, s.Labels().Map())
 						}
 					} else {
 						generatedSeries = populateSeries(prefilledLabels, mint, maxt)
 					}
-					block, err := OpenBlock(nil, MockCreateBlock(b, dir, generatedSeries), nil)
+					block, err := OpenBlock(nil, CreateBlock(b, dir, generatedSeries), nil)
 					testutil.Ok(b, err)
 					blocks = append(blocks, block)
 					defer block.Close()
@@ -1540,14 +1540,14 @@ func BenchmarkQuerySeek(b *testing.B) {
 					mint := i*int64(c.numSamplesPerSeriesPerBlock) - offset
 					maxt := mint + int64(c.numSamplesPerSeriesPerBlock) - 1
 					if len(prefilledLabels) == 0 {
-						generatedSeries = MockGenSeries(c.numSeries, 10, mint, maxt)
+						generatedSeries = GenSeries(c.numSeries, 10, mint, maxt)
 						for _, s := range generatedSeries {
 							prefilledLabels = append(prefilledLabels, s.Labels().Map())
 						}
 					} else {
 						generatedSeries = populateSeries(prefilledLabels, mint, maxt)
 					}
-					block, err := OpenBlock(nil, MockCreateBlock(b, dir, generatedSeries), nil)
+					block, err := OpenBlock(nil, CreateBlock(b, dir, generatedSeries), nil)
 					testutil.Ok(b, err)
 					blocks = append(blocks, block)
 					defer block.Close()
@@ -1685,14 +1685,14 @@ func BenchmarkSetMatcher(b *testing.B) {
 			mint := i * int64(c.numSamplesPerSeriesPerBlock)
 			maxt := mint + int64(c.numSamplesPerSeriesPerBlock) - 1
 			if len(prefilledLabels) == 0 {
-				generatedSeries = MockGenSeries(c.numSeries, 10, mint, maxt)
+				generatedSeries = GenSeries(c.numSeries, 10, mint, maxt)
 				for _, s := range generatedSeries {
 					prefilledLabels = append(prefilledLabels, s.Labels().Map())
 				}
 			} else {
 				generatedSeries = populateSeries(prefilledLabels, mint, maxt)
 			}
-			block, err := OpenBlock(nil, MockCreateBlock(b, dir, generatedSeries), nil)
+			block, err := OpenBlock(nil, CreateBlock(b, dir, generatedSeries), nil)
 			testutil.Ok(b, err)
 			blocks = append(blocks, block)
 			defer block.Close()
@@ -2040,8 +2040,8 @@ func TestClose(t *testing.T) {
 		testutil.Ok(t, os.RemoveAll(dir))
 	}()
 
-	MockCreateBlock(t, dir, MockGenSeries(1, 1, 0, 10))
-	MockCreateBlock(t, dir, MockGenSeries(1, 1, 10, 20))
+	CreateBlock(t, dir, GenSeries(1, 1, 0, 10))
+	CreateBlock(t, dir, GenSeries(1, 1, 10, 20))
 
 	db, err := Open(dir, nil, nil, DefaultOptions)
 	if err != nil {
@@ -2105,7 +2105,7 @@ func BenchmarkQueries(b *testing.B) {
 					testutil.Ok(b, os.RemoveAll(dir))
 				}()
 
-				series := MockGenSeries(nSeries, 5, 1, int64(nSamples))
+				series := GenSeries(nSeries, 5, 1, int64(nSamples))
 
 				// Add some common labels to make the matchers select these series.
 				{
@@ -2131,7 +2131,7 @@ func BenchmarkQueries(b *testing.B) {
 
 				qs := []Querier{}
 				for x := 0; x <= 10; x++ {
-					block, err := OpenBlock(nil, MockCreateBlock(b, dir, series), nil)
+					block, err := OpenBlock(nil, CreateBlock(b, dir, series), nil)
 					testutil.Ok(b, err)
 					q, err := NewBlockQuerier(block, 1, int64(nSamples))
 					testutil.Ok(b, err)
