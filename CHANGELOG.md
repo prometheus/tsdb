@@ -1,5 +1,8 @@
 ## master / unreleased
 
+- [CHANGE] `chunks.MergeOverlappingChunks` moved to `tsdb.MergeOverlappingChunks`
+- [CHANGE] `Series` interface allows return chunk iterator that allows iterating over encoded chunks.
+
 ## 0.10.0
 
  - [FEATURE] Added `DBReadOnly` to allow opening a database in read only mode.

@@ -811,7 +811,7 @@ func (c *LeveledCompactor) populateBlock(blocks []BlockReader, meta *BlockMeta, 
 
 		mergedChks := chks
 		if overlapping {
-			mergedChks, err = chunks.MergeOverlappingChunks(chks)
+			mergedChks, err = MergeOverlappingChunks(chks)
 			if err != nil {
 				return errors.Wrap(err, "merge overlapping chunks")
 			}
@@ -1031,4 +1031,35 @@ func (c *compactionMerger) Err() error {
 
 func (c *compactionMerger) At() (labels.Labels, []chunks.Meta, Intervals) {
 	return c.l, c.c, c.intervals
+}
+
+// MergeOverlappingChunks removes the samples whose timestamp is overlapping.
+// The last appearing sample is retained in case there is overlapping.
+// This assumes that `chks []Meta` is sorted w.r.t. MinTime.
+func MergeOverlappingChunks(chks []chunks.Meta) ([]chunks.Meta, error) {
+	if len(chks) < 2 {
+		return chks, nil
+	}
+	newChks := make([]chunks.Meta, 0, len(chks)) // Will contain the merged chunks.
+	newChks = append(newChks, chks[0])
+	last := 0
+	var aReuseIter, bReuseIter chunkenc.Iterator
+	for _, c := range chks[1:] {
+		// We need to check only the last chunk in newChks.
+		// Reason: (1) newChks[last-1].MaxTime < newChks[last].MinTime (non overlapping)
+		//         (2) As chks are sorted w.r.t. MinTime, newChks[last].MinTime < c.MinTime.
+		// So never overlaps with newChks[last-1] or anything before that.
+		if c.MinTime > newChks[last].MaxTime {
+			newChks = append(newChks, c)
+			last++
+			continue
+		}
+		chk, err := mergeOverlappingChunks(newChks[last], c, aReuseIter, bReuseIter)
+		if err != nil {
+			return nil, err
+		}
+		newChks[last] = chk
+	}
+
+	return newChks, nil
 }
