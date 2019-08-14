@@ -29,11 +29,16 @@ var (
 
 // Encbuf is a helper type to populate a byte slice with various types.
 type Encbuf struct {
-	B []byte
-	C [binary.MaxVarintLen64]byte
+	B     []byte
+	C     [binary.MaxVarintLen64]byte
+	Count uint8
 }
 
-func (e *Encbuf) Reset()      { e.B = e.B[:0] }
+func (e *Encbuf) Reset() {
+	e.B = e.B[:0]
+	e.Count = 0
+}
+
 func (e *Encbuf) Get() []byte { return e.B }
 func (e *Encbuf) Len() int    { return len(e.B) }
 
@@ -80,6 +85,55 @@ func (e *Encbuf) PutHash(h hash.Hash) {
 		panic(err) // The CRC32 implementation does not error
 	}
 	e.B = h.Sum(e.B)
+}
+
+type bit bool
+
+func (e *Encbuf) putBit(bit bit) {
+	if e.Count == 0 {
+		e.B = append(e.B, 0)
+		e.Count = 8
+	}
+
+	i := len(e.B) - 1
+
+	if bit {
+		e.B[i] |= 1 << (e.Count - 1)
+	}
+
+	e.Count--
+}
+
+func (e *Encbuf) putByte(byt byte) {
+	if e.Count == 0 {
+		e.B = append(e.B, 0)
+		e.Count = 8
+	}
+
+	i := len(e.B) - 1
+
+	// fill up e.B with e.Count bits from byt
+	e.B[i] |= byt >> (8 - e.Count)
+
+	e.B = append(e.B, 0)
+	i++
+	e.B[i] = byt << e.Count
+}
+
+func (e *Encbuf) PutBits(u uint64, nbits int) {
+	u <<= (64 - uint(nbits))
+	for nbits >= 8 {
+		byt := byte(u >> 56)
+		e.putByte(byt)
+		u <<= 8
+		nbits -= 8
+	}
+
+	for nbits > 0 {
+		e.putBit((u >> 63) == 1)
+		u <<= 1
+		nbits--
+	}
 }
 
 // Decbuf provides safe methods to extract data from a byte slice. It does all
