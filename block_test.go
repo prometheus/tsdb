@@ -15,9 +15,12 @@ package tsdb
 
 import (
 	"context"
+	"crypto/md5"
 	"encoding/binary"
+	"io"
 
 	"errors"
+	"github.com/prometheus/tsdb/testutil/fuse"
 	"io/ioutil"
 	"math/rand"
 	"os"
@@ -292,4 +295,75 @@ func populateSeries(lbls []map[string]string, mint, maxt int64) []Series {
 		series = append(series, newSeries(lbl, samples))
 	}
 	return series
+}
+
+// TestFailedDelete ensures that the block is in its original state when a delete fails.
+func TestFailedDelete(t *testing.T) {
+	original, err := ioutil.TempDir("", "original")
+	testutil.Ok(t, err)
+	mountpoint, err := ioutil.TempDir("", "mountpoint")
+	testutil.Ok(t, err)
+
+	defer func() {
+		testutil.Ok(t, os.RemoveAll(mountpoint))
+		testutil.Ok(t, os.RemoveAll(original))
+	}()
+
+	_, file := filepath.Split(createBlock(t, original, genSeries(1, 1, 1, 100)))
+	server, err := fuse.NewServer(original, mountpoint, fuse.FailingRenameHook{})
+	if err != nil {
+		t.Skip(err) // Skip the test for any error. These tests are optional.
+	}
+	defer func() {
+		testutil.Ok(t, server.Close())
+	}()
+
+	expHash, err := dirHash(original)
+	testutil.Ok(t, err)
+	pb, err := OpenBlock(nil, filepath.Join(mountpoint, file), nil)
+	testutil.Ok(t, err)
+	defer func() {
+		testutil.Ok(t, pb.Close())
+	}()
+
+	testutil.NotOk(t, pb.Delete(1, 10, labels.NewMustRegexpMatcher("", ".*")))
+
+	actHash, err := dirHash(original)
+	testutil.Ok(t, err)
+	testutil.Equals(t, expHash, actHash, "the block dir hash has changed after a failed delete")
+}
+
+// DirHash returns a hash of all files attributes and their content within a directory.
+func dirHash(path string) ([]byte, error) {
+	hash := md5.New()
+	err := filepath.Walk(path, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			f, err := os.Open(path)
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+
+			if _, err := io.Copy(hash, f); err != nil {
+				return err
+			}
+
+			if _, err := io.WriteString(hash, strconv.Itoa(int(info.Size()))); err != nil {
+				return err
+			}
+			if _, err := io.WriteString(hash, info.Name()); err != nil {
+				return err
+			}
+
+			if _, err := io.WriteString(hash, string(info.ModTime().Unix())); err != nil {
+				return err
+			}
+
+		}
+		return err
+	})
+	return hash.Sum(nil), err
 }
