@@ -34,6 +34,8 @@ import (
 	"github.com/prometheus/tsdb/encoding"
 	"github.com/prometheus/tsdb/fileutil"
 	"github.com/prometheus/tsdb/labels"
+	"github.com/prometheus/tsdb/record"
+	"github.com/prometheus/tsdb/tombstones"
 	"github.com/prometheus/tsdb/wal"
 )
 
@@ -89,9 +91,9 @@ func newWalMetrics(wal *SegmentWAL, r prometheus.Registerer) *walMetrics {
 // DEPRECATED: use wal pkg combined with the record codex instead.
 type WAL interface {
 	Reader() WALReader
-	LogSeries([]RefSeries) error
-	LogSamples([]RefSample) error
-	LogDeletes([]Stone) error
+	LogSeries([]record.RefSeries) error
+	LogSamples([]record.RefSample) error
+	LogDeletes([]tombstones.Stone) error
 	Truncate(mint int64, keep func(uint64) bool) error
 	Close() error
 }
@@ -99,25 +101,10 @@ type WAL interface {
 // WALReader reads entries from a WAL.
 type WALReader interface {
 	Read(
-		seriesf func([]RefSeries),
-		samplesf func([]RefSample),
-		deletesf func([]Stone),
+		seriesf func([]record.RefSeries),
+		samplesf func([]record.RefSample),
+		deletesf func([]tombstones.Stone),
 	) error
-}
-
-// RefSeries is the series labels with the series ID.
-type RefSeries struct {
-	Ref    uint64
-	Labels labels.Labels
-}
-
-// RefSample is a timestamp/value pair associated with a reference to a series.
-type RefSample struct {
-	Ref uint64
-	T   int64
-	V   float64
-
-	series *memSeries
 }
 
 // segmentFile wraps a file object of a segment and tracks the highest timestamp
@@ -240,9 +227,9 @@ type repairingWALReader struct {
 }
 
 func (r *repairingWALReader) Read(
-	seriesf func([]RefSeries),
-	samplesf func([]RefSample),
-	deletesf func([]Stone),
+	seriesf func([]record.RefSeries),
+	samplesf func([]record.RefSample),
+	deletesf func([]tombstones.Stone),
 ) error {
 	err := r.r.Read(seriesf, samplesf, deletesf)
 	if err == nil {
@@ -348,8 +335,8 @@ func (w *SegmentWAL) Truncate(mint int64, keep func(uint64) bool) error {
 	var (
 		csf          = newSegmentFile(f)
 		crc32        = newCRC32()
-		decSeries    = []RefSeries{}
-		activeSeries = []RefSeries{}
+		decSeries    = []record.RefSeries{}
+		activeSeries = []record.RefSeries{}
 	)
 
 	for r.next() {
@@ -427,7 +414,7 @@ func (w *SegmentWAL) Truncate(mint int64, keep func(uint64) bool) error {
 
 // LogSeries writes a batch of new series labels to the log.
 // The series have to be ordered.
-func (w *SegmentWAL) LogSeries(series []RefSeries) error {
+func (w *SegmentWAL) LogSeries(series []record.RefSeries) error {
 	buf := w.getBuffer()
 
 	flag := w.encodeSeries(buf, series)
@@ -454,7 +441,7 @@ func (w *SegmentWAL) LogSeries(series []RefSeries) error {
 }
 
 // LogSamples writes a batch of new samples to the log.
-func (w *SegmentWAL) LogSamples(samples []RefSample) error {
+func (w *SegmentWAL) LogSamples(samples []record.RefSample) error {
 	buf := w.getBuffer()
 
 	flag := w.encodeSamples(buf, samples)
@@ -480,7 +467,7 @@ func (w *SegmentWAL) LogSamples(samples []RefSample) error {
 }
 
 // LogDeletes write a batch of new deletes to the log.
-func (w *SegmentWAL) LogDeletes(stones []Stone) error {
+func (w *SegmentWAL) LogDeletes(stones []tombstones.Stone) error {
 	buf := w.getBuffer()
 
 	flag := w.encodeDeletes(buf, stones)
@@ -498,7 +485,7 @@ func (w *SegmentWAL) LogDeletes(stones []Stone) error {
 	tf := w.head()
 
 	for _, s := range stones {
-		for _, iv := range s.intervals {
+		for _, iv := range s.Intervals {
 			if tf.maxTime < iv.Maxt {
 				tf.maxTime = iv.Maxt
 			}
@@ -791,7 +778,7 @@ const (
 	walDeletesSimple = 1
 )
 
-func (w *SegmentWAL) encodeSeries(buf *encoding.Encbuf, series []RefSeries) uint8 {
+func (w *SegmentWAL) encodeSeries(buf *encoding.Encbuf, series []record.RefSeries) uint8 {
 	for _, s := range series {
 		buf.PutBE64(s.Ref)
 		buf.PutUvarint(len(s.Labels))
@@ -804,7 +791,7 @@ func (w *SegmentWAL) encodeSeries(buf *encoding.Encbuf, series []RefSeries) uint
 	return walSeriesSimple
 }
 
-func (w *SegmentWAL) encodeSamples(buf *encoding.Encbuf, samples []RefSample) uint8 {
+func (w *SegmentWAL) encodeSamples(buf *encoding.Encbuf, samples []record.RefSample) uint8 {
 	if len(samples) == 0 {
 		return walSamplesSimple
 	}
@@ -825,10 +812,10 @@ func (w *SegmentWAL) encodeSamples(buf *encoding.Encbuf, samples []RefSample) ui
 	return walSamplesSimple
 }
 
-func (w *SegmentWAL) encodeDeletes(buf *encoding.Encbuf, stones []Stone) uint8 {
+func (w *SegmentWAL) encodeDeletes(buf *encoding.Encbuf, stones []tombstones.Stone) uint8 {
 	for _, s := range stones {
-		for _, iv := range s.intervals {
-			buf.PutBE64(s.ref)
+		for _, iv := range s.Intervals {
+			buf.PutBE64(s.Ref)
 			buf.PutVarint64(iv.Mint)
 			buf.PutVarint64(iv.Maxt)
 		}
@@ -871,9 +858,9 @@ func (r *walReader) Err() error {
 }
 
 func (r *walReader) Read(
-	seriesf func([]RefSeries),
-	samplesf func([]RefSample),
-	deletesf func([]Stone),
+	seriesf func([]record.RefSeries),
+	samplesf func([]record.RefSample),
+	deletesf func([]tombstones.Stone),
 ) error {
 	// Concurrency for replaying the WAL is very limited. We at least split out decoding and
 	// processing into separate threads.
@@ -892,19 +879,19 @@ func (r *walReader) Read(
 
 		for x := range datac {
 			switch v := x.(type) {
-			case []RefSeries:
+			case []record.RefSeries:
 				if seriesf != nil {
 					seriesf(v)
 				}
 				//lint:ignore SA6002 safe to ignore and actually fixing it has some performance penalty.
 				seriesPool.Put(v[:0])
-			case []RefSample:
+			case []record.RefSample:
 				if samplesf != nil {
 					samplesf(v)
 				}
 				//lint:ignore SA6002 safe to ignore and actually fixing it has some performance penalty.
 				samplePool.Put(v[:0])
-			case []Stone:
+			case []tombstones.Stone:
 				if deletesf != nil {
 					deletesf(v)
 				}
@@ -925,11 +912,11 @@ func (r *walReader) Read(
 		// Those should generally be catched by entry decoding before.
 		switch et {
 		case WALEntrySeries:
-			var series []RefSeries
+			var series []record.RefSeries
 			if v := seriesPool.Get(); v == nil {
-				series = make([]RefSeries, 0, 512)
+				series = make([]record.RefSeries, 0, 512)
 			} else {
-				series = v.([]RefSeries)
+				series = v.([]record.RefSeries)
 			}
 
 			err = r.decodeSeries(flag, b, &series)
@@ -946,11 +933,11 @@ func (r *walReader) Read(
 				}
 			}
 		case WALEntrySamples:
-			var samples []RefSample
+			var samples []record.RefSample
 			if v := samplePool.Get(); v == nil {
-				samples = make([]RefSample, 0, 512)
+				samples = make([]record.RefSample, 0, 512)
 			} else {
-				samples = v.([]RefSample)
+				samples = v.([]record.RefSample)
 			}
 
 			err = r.decodeSamples(flag, b, &samples)
@@ -968,11 +955,11 @@ func (r *walReader) Read(
 				}
 			}
 		case WALEntryDeletes:
-			var deletes []Stone
+			var deletes []tombstones.Stone
 			if v := deletePool.Get(); v == nil {
-				deletes = make([]Stone, 0, 512)
+				deletes = make([]tombstones.Stone, 0, 512)
 			} else {
-				deletes = v.([]Stone)
+				deletes = v.([]tombstones.Stone)
 			}
 
 			err = r.decodeDeletes(flag, b, &deletes)
@@ -985,7 +972,7 @@ func (r *walReader) Read(
 			// Update the times for the WAL segment file.
 			cf := r.current()
 			for _, s := range deletes {
-				for _, iv := range s.intervals {
+				for _, iv := range s.Intervals {
 					if cf.maxTime < iv.Maxt {
 						cf.maxTime = iv.Maxt
 					}
@@ -1122,7 +1109,7 @@ func (r *walReader) entry(cr io.Reader) (WALEntryType, byte, []byte, error) {
 	return etype, flag, buf, nil
 }
 
-func (r *walReader) decodeSeries(flag byte, b []byte, res *[]RefSeries) error {
+func (r *walReader) decodeSeries(flag byte, b []byte, res *[]record.RefSeries) error {
 	dec := encoding.Decbuf{B: b}
 
 	for len(dec.B) > 0 && dec.Err() == nil {
@@ -1136,7 +1123,7 @@ func (r *walReader) decodeSeries(flag byte, b []byte, res *[]RefSeries) error {
 		}
 		sort.Sort(lset)
 
-		*res = append(*res, RefSeries{
+		*res = append(*res, record.RefSeries{
 			Ref:    ref,
 			Labels: lset,
 		})
@@ -1150,7 +1137,7 @@ func (r *walReader) decodeSeries(flag byte, b []byte, res *[]RefSeries) error {
 	return nil
 }
 
-func (r *walReader) decodeSamples(flag byte, b []byte, res *[]RefSample) error {
+func (r *walReader) decodeSamples(flag byte, b []byte, res *[]record.RefSample) error {
 	if len(b) == 0 {
 		return nil
 	}
@@ -1166,7 +1153,7 @@ func (r *walReader) decodeSamples(flag byte, b []byte, res *[]RefSample) error {
 		dtime := dec.Varint64()
 		val := dec.Be64()
 
-		*res = append(*res, RefSample{
+		*res = append(*res, record.RefSample{
 			Ref: uint64(int64(baseRef) + dref),
 			T:   baseTime + dtime,
 			V:   math.Float64frombits(val),
@@ -1182,13 +1169,13 @@ func (r *walReader) decodeSamples(flag byte, b []byte, res *[]RefSample) error {
 	return nil
 }
 
-func (r *walReader) decodeDeletes(flag byte, b []byte, res *[]Stone) error {
+func (r *walReader) decodeDeletes(flag byte, b []byte, res *[]tombstones.Stone) error {
 	dec := &encoding.Decbuf{B: b}
 
 	for dec.Len() > 0 && dec.Err() == nil {
-		*res = append(*res, Stone{
-			ref: dec.Be64(),
-			intervals: Intervals{
+		*res = append(*res, tombstones.Stone{
+			Ref: dec.Be64(),
+			Intervals: tombstones.Intervals{
 				{Mint: dec.Varint64(), Maxt: dec.Varint64()},
 			},
 		})
@@ -1268,23 +1255,23 @@ func MigrateWAL(logger log.Logger, dir string) (err error) {
 	rdr := w.Reader()
 
 	var (
-		enc RecordEncoder
+		enc record.Encoder
 		b   []byte
 	)
 	decErr := rdr.Read(
-		func(s []RefSeries) {
+		func(s []record.RefSeries) {
 			if err != nil {
 				return
 			}
 			err = repl.Log(enc.Series(s, b[:0]))
 		},
-		func(s []RefSample) {
+		func(s []record.RefSample) {
 			if err != nil {
 				return
 			}
 			err = repl.Log(enc.Samples(s, b[:0]))
 		},
-		func(s []Stone) {
+		func(s []tombstones.Stone) {
 			if err != nil {
 				return
 			}

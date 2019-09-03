@@ -25,6 +25,7 @@ import (
 	tsdb_errors "github.com/prometheus/tsdb/errors"
 	"github.com/prometheus/tsdb/index"
 	"github.com/prometheus/tsdb/labels"
+	"github.com/prometheus/tsdb/tombstones"
 )
 
 // Querier provides querying access over time series data of a fixed
@@ -204,7 +205,7 @@ func NewBlockQuerier(b BlockReader, mint, maxt int64) (Querier, error) {
 type blockQuerier struct {
 	index      IndexReader
 	chunks     ChunkReader
-	tombstones TombstoneReader
+	tombstones tombstones.TombstoneReader
 
 	closed bool
 
@@ -670,7 +671,7 @@ func (s *mergedVerticalSeriesSet) Next() bool {
 // actual series itself.
 type ChunkSeriesSet interface {
 	Next() bool
-	At() (labels.Labels, []chunks.Meta, Intervals)
+	At() (labels.Labels, []chunks.Meta, tombstones.Intervals)
 	Err() error
 }
 
@@ -679,19 +680,19 @@ type ChunkSeriesSet interface {
 type baseChunkSeries struct {
 	p          index.Postings
 	index      IndexReader
-	tombstones TombstoneReader
+	tombstones tombstones.TombstoneReader
 
 	lset      labels.Labels
 	chks      []chunks.Meta
-	intervals Intervals
+	intervals tombstones.Intervals
 	err       error
 }
 
 // LookupChunkSeries retrieves all series for the given matchers and returns a ChunkSeriesSet
 // over them. It drops chunks based on tombstones in the given reader.
-func LookupChunkSeries(ir IndexReader, tr TombstoneReader, ms ...labels.Matcher) (ChunkSeriesSet, error) {
+func LookupChunkSeries(ir IndexReader, tr tombstones.TombstoneReader, ms ...labels.Matcher) (ChunkSeriesSet, error) {
 	if tr == nil {
-		tr = newMemTombstones()
+		tr = tombstones.NewMemTombstones()
 	}
 	p, err := PostingsForMatchers(ir, ms...)
 	if err != nil {
@@ -704,7 +705,7 @@ func LookupChunkSeries(ir IndexReader, tr TombstoneReader, ms ...labels.Matcher)
 	}, nil
 }
 
-func (s *baseChunkSeries) At() (labels.Labels, []chunks.Meta, Intervals) {
+func (s *baseChunkSeries) At() (labels.Labels, []chunks.Meta, tombstones.Intervals) {
 	return s.lset, s.chks, s.intervals
 }
 
@@ -740,7 +741,7 @@ func (s *baseChunkSeries) Next() bool {
 			// Only those chunks that are not entirely deleted.
 			chks := make([]chunks.Meta, 0, len(s.chks))
 			for _, chk := range s.chks {
-				if !(Interval{chk.MinTime, chk.MaxTime}.isSubrange(s.intervals)) {
+				if !(tombstones.Interval{chk.MinTime, chk.MaxTime}.IsSubrange(s.intervals)) {
 					chks = append(chks, chk)
 				}
 			}
@@ -767,10 +768,10 @@ type populatedChunkSeries struct {
 	err       error
 	chks      []chunks.Meta
 	lset      labels.Labels
-	intervals Intervals
+	intervals tombstones.Intervals
 }
 
-func (s *populatedChunkSeries) At() (labels.Labels, []chunks.Meta, Intervals) {
+func (s *populatedChunkSeries) At() (labels.Labels, []chunks.Meta, tombstones.Intervals) {
 	return s.lset, s.chks, s.intervals
 }
 
@@ -865,7 +866,7 @@ type chunkSeries struct {
 
 	mint, maxt int64
 
-	intervals Intervals
+	intervals tombstones.Intervals
 }
 
 func (s *chunkSeries) Labels() labels.Labels {
@@ -1066,10 +1067,10 @@ type chunkSeriesIterator struct {
 
 	maxt, mint int64
 
-	intervals Intervals
+	intervals tombstones.Intervals
 }
 
-func newChunkSeriesIterator(cs []chunks.Meta, dranges Intervals, mint, maxt int64) *chunkSeriesIterator {
+func newChunkSeriesIterator(cs []chunks.Meta, dranges tombstones.Intervals, mint, maxt int64) *chunkSeriesIterator {
 	csi := &chunkSeriesIterator{
 		chunks: cs,
 		i:      0,
@@ -1168,7 +1169,7 @@ func (it *chunkSeriesIterator) Err() error {
 type deletedIterator struct {
 	it chunkenc.Iterator
 
-	intervals Intervals
+	intervals tombstones.Intervals
 }
 
 func (it *deletedIterator) At() (int64, float64) {
@@ -1181,7 +1182,7 @@ Outer:
 		ts, _ := it.it.At()
 
 		for _, tr := range it.intervals {
-			if tr.inBounds(ts) {
+			if tr.InBounds(ts) {
 				continue Outer
 			}
 
