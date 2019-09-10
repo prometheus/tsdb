@@ -123,9 +123,9 @@ func (ls Labels) WithoutEmpty() Labels {
 // New returns a sorted Labels from the given labels.
 // The caller has to guarantee that all label names are unique.
 func New(ls ...Label) Labels {
-	set := make(Labels, 0, len(ls))
-	for _, l := range ls {
-		set = append(set, l)
+	set := make(Labels, len(ls))
+	for i, l := range ls {
+		set[i] = l
 	}
 	sort.Sort(set)
 
